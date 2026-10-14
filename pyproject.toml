@@ -53,6 +53,12 @@ ignore = ["S101", "E501"]
 "socket".msg = "Raw sockets are forbidden in the simulator core (no external delivery)."
 "requests".msg = "Network clients are forbidden in the simulator core."
 "httpx".msg = "Network clients are forbidden in the simulator core."
+"aiohttp".msg = "Network clients are forbidden in the simulator core."
+"http.client".msg = "Network clients are forbidden in the simulator core."
+"ssl".msg = "TLS/socket helpers are forbidden in the simulator core."
+"imaplib".msg = "Real IMAP is forbidden in the simulator core."
+"ftplib".msg = "Network clients are forbidden in the simulator core."
+"subprocess".msg = "Spawning processes is forbidden in the simulator core."
 "urllib.request".msg = "Network clients are forbidden in the simulator core."
 
 [tool.mypy]

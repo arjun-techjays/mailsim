@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import uuid
 from pathlib import Path
 from typing import Protocol
 
@@ -26,7 +27,7 @@ class FilesystemBlobStore:
         self.root.mkdir(parents=True, exist_ok=True)
 
     def _path(self, key: str) -> Path:
-        if not _KEY.match(key):  # also blocks path traversal
+        if not _KEY.fullmatch(key):  # also blocks path traversal
             raise InvalidRequest(f"invalid blob key {key!r}")
         return self.root / key[:2] / key
 
@@ -35,7 +36,7 @@ class FilesystemBlobStore:
         path = self._path(key)
         if not path.exists():
             path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".tmp")
+            tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
             tmp.write_bytes(data)
             tmp.replace(path)
         return key

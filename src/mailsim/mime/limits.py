@@ -26,5 +26,6 @@ class MimeLimits:
     max_attachment_bytes: int = 10 * 1024 * 1024
     max_message_bytes: int = 25 * 1024 * 1024
     max_attachments: int = 50
+    max_depth: int = 20
     denied_mime_types: frozenset[str] = DENIED_MIME_TYPES
     denied_extensions: frozenset[str] = DENIED_EXTENSIONS

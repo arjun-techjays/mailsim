@@ -218,3 +218,38 @@ def test_build_is_deterministic_and_never_writes_bcc():
     assert b"Bcc" not in _build()
     assert b"To:" not in _build(to=[])
     assert b"A <a@example.test>" in _build()
+
+
+def test_deep_nesting_is_rejected_cleanly():
+    part = h.text_part("x")
+    for i in range(30):
+        part = h.multipart_part([part], "mixed", f"B{i}")
+    raw = b"Message-ID: <d@x>\r\nFrom: a@x.test\r\nMIME-Version: 1.0\r\n" + part + b"\r\n"
+    with pytest.raises(InvalidRequest, match="nested"):
+        parse_mime(raw)
+
+
+def test_extreme_nesting_recursion_error_is_typed():
+    from unittest.mock import patch
+
+    with (
+        patch("mailsim.mime.parse.BytesParser.parsebytes", side_effect=RecursionError),
+        pytest.raises(InvalidRequest, match="nested"),
+    ):
+        parse_mime(b"From: a@x.test\r\n\r\nx")
+    msg = parse_mime(h.PLAIN)
+    with (
+        patch("mailsim.mime.parse._walk", side_effect=RecursionError),
+        pytest.raises(InvalidRequest),
+    ):
+        parse_mime(h.PLAIN)
+    assert msg
+
+
+def test_trailing_dot_space_cannot_hide_an_extension():
+    assert sanitize_filename("a.exe .") == "a.exe"
+    raw = h.multipart(
+        [h.text_part("x"), h.attachment_part("evil.exe .", "application/octet-stream", b"MZ")]
+    )
+    with pytest.raises(InvalidRequest):
+        parse_mime(raw)

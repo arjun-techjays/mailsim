@@ -60,7 +60,7 @@ def sanitize_filename(name: str | None, fallback: str = "attachment") -> str:
     if not name:
         return fallback
     base = PureWindowsPath(PurePosixPath(name.replace("\\", "/")).name).name
-    base = _CTRL.sub("", base).strip().strip(".")
+    base = _CTRL.sub("", base).strip(" .\t")
     return base[:255] or fallback
 
 
@@ -83,11 +83,13 @@ def _decode_text(part: Message) -> str:
     return str(content).replace("\r\n", "\n")
 
 
-def _walk(part: Message, out: ParsedMessage, limits: MimeLimits) -> None:
+def _walk(part: Message, out: ParsedMessage, limits: MimeLimits, depth: int = 0) -> None:
+    if depth > limits.max_depth:
+        raise InvalidRequest("MIME structure too deeply nested", details={"max": limits.max_depth})
     ctype = part.get_content_type()
     if part.is_multipart() and ctype != "message/rfc822":
         for sub in part.iter_parts():  # type: ignore[attr-defined]
-            _walk(sub, out, limits)
+            _walk(sub, out, limits, depth + 1)
         return
 
     disposition = (part.get_content_disposition() or "").lower()
@@ -152,7 +154,10 @@ def parse_mime(raw: bytes, limits: MimeLimits | None = None) -> ParsedMessage:
         raise InvalidRequest("empty message")
     if len(raw) > limits.max_message_bytes:
         raise InvalidRequest("message too large", details={"size": len(raw)})
-    msg = BytesParser(policy=policy.default).parsebytes(raw)
+    try:
+        msg = BytesParser(policy=policy.default).parsebytes(raw)
+    except RecursionError:
+        raise InvalidRequest("MIME structure too deeply nested") from None
 
     warnings: list[str] = []
     ids = _msgids(str(msg.get("Message-ID", "")))
@@ -187,5 +192,8 @@ def parse_mime(raw: bytes, limits: MimeLimits | None = None) -> ParsedMessage:
         headers=[(str(k), str(v)) for k, v in msg.items()],
         warnings=warnings,
     )
-    _walk(msg, parsed, limits)
+    try:
+        _walk(msg, parsed, limits)
+    except RecursionError:
+        raise InvalidRequest("MIME structure too deeply nested") from None
     return parsed

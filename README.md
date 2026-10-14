@@ -52,5 +52,12 @@ cli -> engine -> scenario -> store -> (mime | threads | providers) -> domain
 
 ## Known limitations / deliberate deviations
 
+* Determinism is per event log: after a reset the id counter keeps counting, so agent-created ids
+  differ from a fresh run's (baseline ids are re-applied unchanged). Replay reproduces the log exactly.
+* Reset is allowed only from READY/RUNNING. Every agent command that passes the permission/mailbox
+  guard consumes action budget, whether it succeeds or fails.
+* The audit action log records recipients, counts and sizes but not subjects, bcc or bodies.
+* `actor` is a trusted-caller argument; Phase 2/3 must expose agent-facing facades that hard-code it.
+
 See the PR notes: provider id mapping tables, PASSED/FAILED verdicts (need the Phase 2
 evaluator), scheduled events support only `email.receive`, persona runtime is not implemented.

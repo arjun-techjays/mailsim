@@ -8,6 +8,7 @@ Provider adapters (later phases) translate their native semantics into these com
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -20,6 +21,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from mailsim.domain.clock import iso, parse_ts
 from mailsim.domain.errors import (
     Conflict,
+    ExternalDeliveryBlocked,
     InvalidRequest,
     NotFound,
     PermissionDenied,
@@ -101,7 +103,7 @@ class ReplayResult:
 
 def _addr(email: str) -> Address:
     email = email.strip().lower()
-    if "@" not in email or " " in email:
+    if "@" not in email or any(ch.isspace() or ord(ch) < 32 for ch in email):
         raise InvalidRequest(f"invalid email address {email!r}")
     return Address(email=email)
 
@@ -141,12 +143,18 @@ class SimEngine:
         require_running: bool = True,
         mailbox_id: str | None = None,
     ) -> T:
+        guarded = False
         try:
             with self._sf.begin() as s:
                 run = lock_run(s, scope, run_id)
                 ctx = Ctx(s, run, id_generator(run))
                 self._guard(ctx, actor, operation, mailbox_id, require_running)
-                result = fn(ctx)
+                guarded = True
+                try:
+                    result = fn(ctx)
+                except (ValueError, OverflowError, RecursionError) as exc:
+                    # untyped failures (e.g. header injection) become audited INVALID_REQUESTs
+                    raise InvalidRequest(f"invalid input: {exc}"[:300]) from exc
                 if actor == AGENT:
                     run.agent_actions += 1
                     self._arm_triggers(ctx, operation)
@@ -164,7 +172,11 @@ class SimEngine:
                 )
                 return result
         except SimError as exc:
-            self._record_denied(scope, run_id, actor, operation, input_, exc)
+            # Budget rule: every agent command that passed the permission/mailbox/limit guard
+            # consumes budget, whether it then succeeds or fails.
+            self._record_denied(
+                scope, run_id, actor, operation, input_, exc, count=guarded and actor == AGENT
+            )
             raise
 
     def _record_denied(
@@ -175,6 +187,7 @@ class SimEngine:
         operation: str,
         input_: dict[str, Any],
         exc: SimError,
+        count: bool = False,
     ) -> None:
         with self._sf.begin() as s:
             try:
@@ -192,6 +205,8 @@ class SimEngine:
                     virtual_time=run.virtual_time,
                 )
             )
+            if count:
+                run.agent_actions += 1
 
     def _guard(
         self, ctx: Ctx, actor: str, operation: str, mailbox_id: str | None, require_running: bool
@@ -582,8 +597,11 @@ class SimEngine:
         """Restore the scenario baseline: new epoch, same run, history kept in the log."""
 
         def fn(c: Ctx) -> int:
-            if c.run.status in (RunStatus.DRAFT, RunStatus.VALIDATED):
-                raise Conflict(f"run is {c.run.status}; nothing to reset")
+            if c.run.status not in (RunStatus.READY, RunStatus.RUNNING):
+                raise Conflict(
+                    f"run is {c.run.status}; only READY or RUNNING runs can be reset",
+                    details={"status": c.run.status},
+                )
             baseline = (
                 c.session.execute(
                     select(m.EventRow)
@@ -593,6 +611,8 @@ class SimEngine:
                 .scalars()
                 .all()
             )
+            if not baseline:  # pragma: no cover - READY/RUNNING runs always have a baseline
+                raise Conflict("run has no baseline to restore")
             epoch = c.run.epoch + 1
             c.emit("run.reset", {"epoch": epoch, "from_epoch": c.run.epoch},
                    actor=CONTROLLER, operation="reset")  # fmt: skip
@@ -782,12 +802,12 @@ class SimEngine:
         return self._command(scope, run_id, CONTROLLER, "tick", {}, lambda c: self._advance(c, 0))
 
     def advance(self, scope: Scope, run_id: str, seconds: float) -> dict[str, Any]:
-        return self._command(scope, run_id, CONTROLLER, "advance", {"seconds": seconds},
+        return self._command(scope, run_id, CONTROLLER, "advance", {"seconds": seconds if math.isfinite(seconds) else str(seconds)},
                              lambda c: self._advance(c, seconds))  # fmt: skip
 
     def _advance(self, c: Ctx, seconds: float) -> dict[str, Any]:
-        if seconds < 0:
-            raise InvalidRequest("clock cannot move backwards")
+        if not math.isfinite(seconds) or seconds < 0 or seconds > 10 * 365 * 86400:
+            raise InvalidRequest("seconds must be a finite, non-negative duration")
         start = c.run.start_time
         assert start is not None
         target = c.now + timedelta(seconds=seconds)
@@ -868,7 +888,7 @@ class SimEngine:
 
         return self._command(
             scope, run_id, actor, "send",
-            {"to": to, "cc": cc or [], "bcc": bcc or [], "subject": subject, "body_chars": len(text)},
+            {"to": to, "cc": cc or [], "bcc_count": len(bcc or []), "subject_chars": len(subject), "body_chars": len(text)},
             fn, mailbox_id=mailbox_id,
         )  # fmt: skip
 
@@ -887,12 +907,18 @@ class SimEngine:
             mb = self._mailbox(c, mailbox_id)
             orig = self._message(c, mailbox_id, message_id)
             me = mb.email
-            to = [orig.from_["email"]]
+            to = (
+                [orig.from_["email"]]
+                if orig.from_["email"] != me
+                else [a["email"] for a in orig.to]
+            )
             cc: list[str] = []
             if reply_all:
                 to += [a["email"] for a in orig.to if a["email"] != me]
                 cc = [a["email"] for a in orig.cc if a["email"] != me]
             to = [a for a in dict.fromkeys(to) if a != me] or [orig.from_["email"]]
+            if not to:
+                raise InvalidRequest("no recipients to reply to")
             subj = orig.subject if orig.subject.lower().startswith("re:") else f"Re: {orig.subject}"
             refs = [*orig.references, orig.message_id_header]
             result = self._send(c, mailbox_id, to, cc, [], subj, text, None,
@@ -928,6 +954,15 @@ class SimEngine:
             raise InvalidRequest("at least one recipient is required")
         policy = DeliveryPolicy(c.config["external_delivery"])
         plan = policy.plan([a.email for a in (*to_a, *cc_a, *bcc_a)], self._emails(c))
+        if (
+            actor == AGENT
+            and plan.external
+            and "external_delivery" in c.config["agent"]["prohibited"]
+        ):
+            raise ExternalDeliveryBlocked(
+                "agent is prohibited from external delivery",
+                details={"recipients": plan.external},
+            )
         header = c.gen.message_id_header(c.config["domain"])
         raw = build_mime(
             message_id=header, from_=Address(email=mb.email), to=to_a, cc=cc_a, subject=subject,
@@ -979,7 +1014,7 @@ class SimEngine:
             )  # fmt: skip
             return {"message_id": mid}
 
-        return self._command(scope, run_id, actor, "draft", {"to": to, "subject": subject}, fn,
+        return self._command(scope, run_id, actor, "draft", {"to": to, "subject_chars": len(subject)}, fn,
                              mailbox_id=mailbox_id)  # fmt: skip
 
     def move(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str, folder: str,
@@ -1118,20 +1153,26 @@ class SimEngine:
                         *, actor: str = AGENT) -> list[CanonicalMessage]:  # fmt: skip
         def fn(c: Ctx) -> list[CanonicalMessage]:
             self._mailbox(c, mailbox_id)
-            needle = f"%{query.lower()}%"
+            needle = (
+                "%"
+                + query.lower().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                + "%"
+            )
             rows = c.session.execute(
                 select(m.Message).where(
                     m.Message.run_id == c.run.id, m.Message.mailbox_id == mailbox_id,
-                    (func.lower(m.Message.subject).like(needle))
-                    | (func.lower(func.coalesce(m.Message.body_text, "")).like(needle))
-                    | (func.lower(m.Message.from_["email"].astext).like(needle)),
+                    (func.lower(m.Message.subject).like(needle, escape="\\"))
+                    | (func.lower(func.coalesce(m.Message.body_text, "")).like(needle, escape="\\"))
+                    | (func.lower(m.Message.from_["email"].astext).like(needle, escape="\\")),
                 ).order_by(m.Message.created_at, m.Message.id)
             ).scalars()  # fmt: skip
             return [self._canonical(c, r) for r in rows]
 
         if not query.strip():
             raise InvalidRequest("empty search query")
-        return self._read(scope, run_id, actor, "search", {"query": query}, fn, mailbox_id)
+        return self._read(
+            scope, run_id, actor, "search", {"query_chars": len(query)}, fn, mailbox_id
+        )
 
     def list_folders(
         self, scope: Scope, run_id: str, mailbox_id: str, *, actor: str = AGENT

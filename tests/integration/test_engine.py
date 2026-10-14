@@ -621,3 +621,111 @@ def test_message_without_message_id_gets_a_deterministic_one(env):
     )
     got = [m for m in inbox(env, run) if m.subject == "n"][0]
     assert got.message_id_header.endswith("@example.test>")
+
+
+def test_reset_only_from_ready_or_running(env):
+    run = env.run()
+    env.engine.cancel_run(env.scope, run)
+    with pytest.raises(Conflict, match="only READY or RUNNING"):
+        env.engine.reset_run(env.scope, run)
+    errored = env.run()
+    env.engine.fail_run_with_error(env.scope, errored, "boom")
+    with pytest.raises(Conflict):
+        env.engine.reset_run(env.scope, errored)
+    assert env.engine.run_info(env.scope, errored)["status"] == "ERROR"
+
+
+def test_failed_agent_calls_consume_the_action_budget(env, tmp_path):
+    run = env.run(
+        write_variant(tmp_path, lambda s: s["evaluation"]["limits"].update(max_agent_actions=3))
+    )
+    fm = env.mbx(run, "finance_manager")
+    for _ in range(3):
+        with pytest.raises(NotFound):
+            env.engine.get_message(env.scope, run, fm, "msg_nope")
+    assert env.engine.run_info(env.scope, run)["agent_actions"] == 3
+    with pytest.raises(SimulationLimitExceeded):
+        env.engine.get_message(env.scope, run, fm, "msg_nope")
+    assert env.engine.run_info(env.scope, run)["agent_actions"] == 3  # denied-by-limit is free
+
+
+def test_untyped_input_errors_become_audited_invalid_requests(env):
+    run = env.run()
+    fm = env.mbx(run, "finance_manager")
+    with pytest.raises(InvalidRequest):
+        env.engine.send(
+            env.scope,
+            run,
+            fm,
+            to=["vendor@example.test"],
+            subject="x\r\nBcc: evil@x.test",
+            actor=CONTROLLER,
+        )
+    with pytest.raises(InvalidRequest):
+        env.engine.advance(env.scope, run, float("nan"))
+    with pytest.raises(InvalidRequest):
+        env.engine.advance(env.scope, run, 1e300)
+    with pytest.raises(InvalidRequest):
+        env.engine.send(
+            env.scope,
+            run,
+            fm,
+            to=["vendor@example.test\r\nBcc: x@y.z"],
+            subject="x",
+            actor=CONTROLLER,
+        )
+    assert [a["outcome"] for a in env.engine.actions(env.scope, run)[-4:]] == [
+        "INVALID_REQUEST"
+    ] * 4
+
+
+def test_audit_log_omits_bcc_and_subject_content(env):
+    run = env.run()
+    fm = env.mbx(run, "finance_manager")
+    env.engine.send(
+        env.scope,
+        run,
+        fm,
+        to=["vendor@example.test"],
+        bcc=["finance@example.test"],
+        subject="secret-subject",
+        text="b",
+        actor=CONTROLLER,
+    )
+    logged = str(env.engine.actions(env.scope, run)[-1])
+    assert "secret-subject" not in logged and "bcc_count" in logged
+
+
+def test_search_treats_wildcards_literally(env):
+    run = env.run()
+    fm = env.mbx(run, "finance_manager")
+    assert env.engine.search_messages(env.scope, run, fm, "%", actor=CONTROLLER) == []
+    assert env.engine.search_messages(env.scope, run, fm, "_nvoice", actor=CONTROLLER) == []
+
+
+def test_reply_to_own_sent_message_goes_to_original_recipients(env):
+    run = env.run()
+    fm = env.mbx(run, "finance_manager")
+    env.engine.send(
+        env.scope, run, fm, to=["vendor@example.test"], subject="hi", text="b", actor=CONTROLLER
+    )
+    sent = env.engine.list_messages(env.scope, run, fm, folder="sent", actor=CONTROLLER)[0]
+    env.engine.reply(env.scope, run, fm, sent.id, text="again", actor=CONTROLLER)
+    vendor_inbox = env.engine.list_messages(
+        env.scope, run, env.mbx(run, "vendor"), folder="inbox", actor=CONTROLLER
+    )
+    assert len(vendor_inbox) == 2
+
+
+def test_agent_prohibited_from_external_delivery_in_sink_mode(env, tmp_path):
+    def tweak(s):
+        s["environment"]["delivery"]["external_delivery"] = "sink"
+        s["agent"]["allowed_operations"] = ["send", "read"]
+        s["agent"]["prohibited_operations"] = ["external_delivery"]
+
+    run = env.run(write_variant(tmp_path, tweak))
+    fm = env.mbx(run, "finance_manager")
+    with pytest.raises(ExternalDeliveryBlocked):
+        env.engine.send(env.scope, run, fm, to=["x@outside.example"], subject="s")
+    assert env.engine.state(env.scope, run)["sink_messages"] == []
+    env.engine.send(env.scope, run, fm, to=["vendor@example.test"], subject="internal ok")
