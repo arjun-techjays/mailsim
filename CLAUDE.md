@@ -18,3 +18,7 @@ Phase 1 (core engine, no HTTP) only; Gmail/Graph/IMAP/SMTP/MCP/REST/LLM are late
 - State changes go through events (append-only `events` table) and the projector; never write projection tables directly.
 - Scenario versions and events are immutable (DB triggers). Use `yaml.safe_load` only.
 - Tests: real PostgreSQL (no SQLite). Each test uses its own tenant/run; never truncate events.
+
+## Local quirk (macOS)
+If `import mailsim` fails after `uv sync`/`uv run`, the editable `.pth` got the hidden flag:
+`chflags nohidden .venv/lib/python3.12/site-packages/*.pth`. pytest is unaffected (`pythonpath`).
