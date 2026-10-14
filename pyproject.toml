@@ -31,6 +31,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mailsim"]
+dev-mode-dirs = ["src"]
 
 [tool.ruff]
 line-length = 100
@@ -85,4 +86,4 @@ root_package = "mailsim"
 [[tool.importlinter.contracts]]
 name = "Layering: domain is the bottom layer"
 type = "layers"
-layers = ["(mailsim.cli)", "(mailsim.engine)", "(mailsim.scenario)", "mailsim.store", "(mailsim.mime) | (mailsim.threads) | mailsim.providers", "mailsim.domain"]
+layers = ["(mailsim.cli)", "(mailsim.engine)", "(mailsim.scenario)", "mailsim.store", "mailsim.mime | mailsim.threads | mailsim.providers", "mailsim.domain"]
