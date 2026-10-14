@@ -2,8 +2,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from mailsim.domain.clock import VirtualClock, iso, parse_ts
 from mailsim.domain.errors import InvalidRequest, NotFound
-from mailsim.engine.clock import VirtualClock, iso, parse_ts
 from mailsim.engine.scheduler import Scheduled, due_in_order
 from mailsim.store.blob import FilesystemBlobStore
 

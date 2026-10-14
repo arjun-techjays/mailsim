@@ -112,7 +112,7 @@ def wipe_projection(session: Session, run_id: str) -> None:
 
 @projector("clock.set")
 def _clock_set(session: Session, run: m.Run, p: dict[str, Any]) -> None:
-    from mailsim.engine.clock import parse_ts
+    from mailsim.domain.clock import parse_ts
 
     run.virtual_time = parse_ts(p["at"])
     if p.get("initial"):
@@ -121,7 +121,7 @@ def _clock_set(session: Session, run: m.Run, p: dict[str, Any]) -> None:
 
 @projector("clock.advanced")
 def _clock_advanced(session: Session, run: m.Run, p: dict[str, Any]) -> None:
-    from mailsim.engine.clock import parse_ts
+    from mailsim.domain.clock import parse_ts
 
     run.virtual_time = parse_ts(p["to"])
 
@@ -137,6 +137,7 @@ def _reset(session: Session, run: m.Run, p: dict[str, Any]) -> None:
     wipe_projection(session, run.id)
     run.agent_actions = 0
     run.virtual_time = run.start_time
+    run.status = "READY"  # reset restores the baseline; the run must be started again
 
 
 @projector("run.seeded")

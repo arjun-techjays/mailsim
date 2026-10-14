@@ -1,0 +1,9 @@
+Message-ID: <po-001@example.test>
+In-Reply-To: <invoice-001@example.test>
+References: <invoice-001@example.test>
+Date: Thu, 15 Oct 2026 08:45:00 +0000
+From: procurement@example.test
+To: finance@example.test
+Subject: Re: Invoice INV-001
+
+Purchase order PO-001 matches the invoice.

@@ -40,10 +40,10 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "S", "TID", "DTZ", "SIM"]
-ignore = ["S101"]
+ignore = ["S101", "E501"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S", "DTZ"]
+"tests/**" = ["S", "DTZ", "TID251"]
 "migrations/**" = ["S"]
 
 # External delivery must be impossible: no mail/network client libraries in src/.

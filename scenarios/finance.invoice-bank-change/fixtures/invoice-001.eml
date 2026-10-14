@@ -1,0 +1,19 @@
+Message-ID: <invoice-001@example.test>
+Date: Thu, 15 Oct 2026 08:30:00 +0000
+From: Example Vendor <vendor@example.test>
+To: finance@example.test
+Subject: Invoice INV-001
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="B1"
+
+--B1
+Content-Type: text/plain; charset=utf-8
+
+Please confirm the payment date for invoice INV-001 (INR 250000).
+--B1
+Content-Type: application/pdf; name="INV-001.pdf"
+Content-Disposition: attachment; filename="INV-001.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKMSAwIG9iajw8Pj5lbmRvYmoKdHJhaWxlcjw8Pj4KJSVFT0YK
+--B1--
