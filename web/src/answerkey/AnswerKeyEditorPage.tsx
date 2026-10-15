@@ -532,7 +532,7 @@ export function AnswerKeyEditorPage() {
   const scenarioHref = `/scenarios/${encodeURIComponent(key)}`;
   const evaluator = hasRole(useRole(), ['evaluator']);
   return (
-    <>
+    <div className="ak-page">
       <p>
         <Link to={scenarioHref}>← Scenario {key}</Link>
       </p>
@@ -563,6 +563,6 @@ export function AnswerKeyEditorPage() {
       <RequireRole roles={['evaluator']} what="Writing answer keys">
         <EditorLoader key={`${key}:${from ?? 'new'}`} scenarioKey={key} from={from} />
       </RequireRole>
-    </>
+    </div>
   );
 }

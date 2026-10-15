@@ -150,3 +150,9 @@
     grid-template-columns: 1fr;
   }
 }
+/* WCAG 2.5.8: the shared PageIntro's next-step links need a 24px target on this page. */
+.ak-page .page-intro-next a {
+  display: inline-block;
+  min-height: 24px;
+  line-height: 24px;
+}

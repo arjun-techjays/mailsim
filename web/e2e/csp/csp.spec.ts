@@ -32,7 +32,7 @@ test('production build works under the strict CSP and security headers', async (
   const run = new RunPage(page);
   await run.goto('run_demo');
   await run.tab('Mailboxes');
-  await run.openMessage('Re: Invoice 4471 - updated bank details');
+  await run.openMessage('Re: Invoice 4471 - updated bank details', 1); // the vendor's HTML mail (newest first: our reply is 0)
   await page.getByRole('button', { name: 'Show HTML (sandboxed)' }).click();
   const frame = page.frameLocator('[data-testid="email-html-frame"]');
   await expect(frame.getByText('new bank account')).toBeVisible();
@@ -63,4 +63,21 @@ test('the policy is enforced (inline script blocked) and the violation watcher s
   await page.addScriptTag({ content: 'window.__inlineRan = true;' }).catch(() => undefined);
   expect(await page.evaluate(() => (window as unknown as { __inlineRan?: boolean }).__inlineRan)).toBeUndefined();
   await expect.poll(() => violations.length).toBeGreaterThan(0);
+});
+
+test('answer-key editor, mailbox browser and activity work under the strict CSP', async ({ page }) => {
+  const violations = watchCsp(page);
+  await new ConnectPage(page).connectAs(KEYS.evaluator, 'evaluator');
+  await page.goto('/scenarios/finance.invoice-bank-change/answer-key?from=2');
+  await expect(page.locator('.ak-card')).toHaveCount(3);
+  await expect(page.getByTestId('validation-status')).toContainText('No problems found');
+  await page.getByRole('button', { name: 'YAML' }).click();
+  await expect(page.getByLabel('Answer key as YAML')).toHaveValue(/answer_key:/);
+  const run = new RunPage(page);
+  await run.goto('run_demo');
+  await run.tab('Mailboxes');
+  await run.openMessage('Invoice 4471');
+  await run.tab('Activity');
+  await expect(page.getByTestId('activity-table')).toBeVisible();
+  expect(violations).toEqual([]);
 });
