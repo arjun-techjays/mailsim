@@ -597,3 +597,123 @@ class GraphDriver(RestDriver):
 
 
 DRIVERS.append(GraphDriver)
+
+
+# ---- Wave 2 (WS-F): the MCP agent tools, driven by the official MCP client ------------------
+class McpToolError(Exception):
+    """An MCP tool result with isError; `code` comes from its structured error."""
+
+    def __init__(self, error: dict[str, Any]) -> None:
+        self.error = error
+        self.code = str(error.get("code"))
+        super().__init__(f"{self.code}: {error.get('message')}")
+
+
+class McpDriver(NeutralDriver):
+    """The MCP agent tools over streamable HTTP (`/mcp`, ASGI in-process), through the official
+    MCP client and an agent key bound to this run and `mailbox.mailbox_id`. Every operation
+    is one MCP connection + one `tools/call`, authenticated per request."""
+
+    name: ClassVar[str] = "mcp"
+    capabilities: ClassVar[frozenset[str]] = ALL_CAPABILITIES
+
+    def __init__(self, mailbox: AgentMailbox) -> None:
+        from mailsim.api.app import create_app
+        from mailsim.api.auth import issue_key
+        from mailsim.mcp.http import router
+
+        engine, scope = harness_parts(mailbox)
+        with engine.session_factory.begin() as s:
+            self.key = issue_key(s, tenant_id=scope.tenant_id, project_id=scope.project_id,
+                                 role="agent", run_id=mailbox.run_id,
+                                 mailbox_id=mailbox.mailbox_id).api_key  # fmt: skip
+        self.app = create_app(engine=engine, session_factory=engine.session_factory,
+                              blobs=engine.blobs)  # fmt: skip
+        self.app.include_router(router)
+
+    def _call(self, tool: str, args: dict[str, Any] | None = None) -> Any:
+        import anyio
+        import httpx2
+        from mcp.client.streamable_http import streamable_http_client
+
+        from mcp import Client
+
+        async def go() -> Any:
+            http = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=self.app),
+                                      base_url="http://127.0.0.1",
+                                      headers={"Authorization": f"Bearer {self.key}"})  # fmt: skip
+            async with http, Client(streamable_http_client("http://127.0.0.1/mcp",
+                                                           http_client=http)) as client:  # fmt: skip
+                return await client.call_tool(tool, args or {})
+
+        result = anyio.run(go)
+        if result.is_error:
+            raise McpToolError(result.structured_content["error"])
+        return result.structured_content
+
+    @staticmethod
+    def _mmsg(d: dict[str, Any]) -> Msg:
+        return RestDriver._rmsg(d)
+
+    def _all(self, tool: str, **args: Any) -> list[Msg]:
+        out, cursor = [], None
+        while True:
+            page = self._call(
+                tool, {**args, "page_size": 500, **({"cursor": cursor} if cursor else {})}
+            )
+            out += [self._mmsg(d) for d in page["items"]]
+            cursor = page["next_cursor"]
+            if cursor is None:
+                return out
+
+    def list(self, folder: str | None = None) -> list[Msg]:
+        return self._all("list_messages", **({"folder": folder} if folder else {}))
+
+    def page(self, size: int, cursor: str | None) -> tuple[list[Msg], str | None]:
+        p = self._call(
+            "list_messages", {"page_size": size, **({"cursor": cursor} if cursor else {})}
+        )
+        return [self._mmsg(d) for d in p["items"]], p["next_cursor"]
+
+    def get(self, ref: str) -> Msg:
+        return self._mmsg(self._call("get_message", {"message_id": ref}))
+
+    def thread(self, thread_ref: str) -> list[Msg]:
+        return [self._mmsg(d) for d in self._call("get_thread", {"thread_id": thread_ref})["items"]]
+
+    def search(self, text: str) -> list[Msg]:
+        return self._all("search_messages", query=text)
+
+    def send(self, to: list[str], subject: str, text: str) -> str:
+        out = self._call("send_message", {"to": to, "subject": subject, "text": text})
+        return str(out["message_id_header"])
+
+    def reply(self, ref: str, text: str) -> None:
+        self._call("reply_to_message", {"message_id": ref, "text": text})
+
+    def move(self, ref: str, folder: str) -> None:
+        self._call("manage_labels", {"message_id": ref, "folder": folder})
+
+    def flag(self, ref: str, add: list[str]) -> None:
+        self._call("manage_labels", {"message_id": ref, "add_flags": add})
+
+    def label(self, ref: str, add: list[str]) -> None:
+        self._call("manage_labels", {"message_id": ref, "add_labels": add})
+
+    def delete(self, ref: str) -> None:
+        self._call("delete_message", {"message_id": ref})
+
+    def changes(self, since: int) -> tuple[list[str], int]:
+        ids: list[str] = []
+        while True:
+            feed = self._call("get_changes", {"since": since})
+            ids += [c["message_id"] for c in feed["changes"]]
+            since = int(feed["next_since"])
+            if not feed["has_more"]:
+                return ids, since
+
+    def error_code(self, exc: BaseException) -> str:
+        return exc.code if isinstance(exc, McpToolError) else super().error_code(exc)
+
+
+DRIVERS.append(McpDriver)
