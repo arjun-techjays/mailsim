@@ -13,6 +13,7 @@ import { ComposeInject } from './ComposeInject';
 import { ReadingPane } from './ReadingPane';
 import type { ParsedSnapshot } from './snapshot';
 import { isUnread, mailboxTitle, useRunMailboxes, type BrowserMailbox } from './useRunMailboxes';
+import { subjectOf } from './text';
 import { VirtualTime } from './VirtualTime';
 import './browser.css';
 
@@ -155,7 +156,7 @@ function MessageList({
                     aria-current={m.id === selected ? 'true' : undefined}
                     onClick={() => onSelect(m.id)}
                   >
-                    {m.subject || '(no subject)'}
+                    {subjectOf(m)}
                   </button>
                 </th>
                 <td className="mb-date">

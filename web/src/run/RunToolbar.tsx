@@ -8,7 +8,9 @@ import type { ClockResult, RunOut } from '../api/types';
 import { useApi } from '../auth/session';
 import { ErrorDisplay } from '../components/ErrorDisplay';
 import { parseSnapshot } from '../mailbox/snapshot';
+import { subjectOf } from '../mailbox/text';
 import { formatVirtual } from '../mailbox/time';
+import { deliveredIndex, type Delivered } from './toolbarDiff';
 import { runKeys, runLinks } from './keys';
 import '../mailbox/browser.css';
 
@@ -18,12 +20,6 @@ const PRESETS: { seconds: number; label: string; long: string }[] = [
   { seconds: 3600, label: '+1 hour', long: '1 hour' },
   { seconds: 86400, label: '+1 day', long: '1 day' },
 ];
-
-interface Delivered {
-  id: string;
-  subject: string;
-  to: string;
-}
 
 interface Outcome {
   label: string;
@@ -39,9 +35,7 @@ function Result({ runId, o }: { runId: string; o: Outcome }) {
       <p>
         <strong>{o.label}.</strong> Virtual time {o.before ? `${formatVirtual(o.before)} → ` : 'is now '}
         <strong>{formatVirtual(o.result.virtual_time)}</strong>.{' '}
-        {o.result.fired.length > 0
-          ? `${o.result.fired.length} scheduled event${o.result.fired.length === 1 ? '' : 's'} fired (${o.result.fired.join(', ')}).`
-          : 'No scheduled events were due.'}{' '}
+        {o.result.fired.length > 0 ? `Scheduled events fired: ${o.result.fired.join(', ')}.` : 'No scheduled events were due.'}{' '}
         {replies} persona repl{replies === 1 ? 'y' : 'ies'} delivered.
       </p>
       {o.delivered && o.delivered.length > 0 && (
@@ -50,7 +44,7 @@ function Result({ runId, o }: { runId: string; o: Outcome }) {
           <ul>
             {o.delivered.map((d) => (
               <li key={d.id}>
-                <Link to={runLinks.message(runId, d.id)}>{d.subject || '(no subject)'}</Link> → {d.to}
+                <Link to={runLinks.message(runId, d.id)}>{subjectOf(d)}</Link> → {d.to}
               </li>
             ))}
           </ul>
@@ -69,19 +63,22 @@ export function RunToolbar({ run }: { run: RunOut }) {
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const running = run.status === 'RUNNING';
 
-  const messageIds = async (): Promise<Map<string, Delivered>> => {
-    const raw = await qc.fetchQuery({ queryKey: runKeys.state(run.id), queryFn: () => api.state(run.id) });
-    const snap = parseSnapshot(raw);
-    const email = new Map(snap.mailboxes.map((m) => [m.id, m.email]));
-    return new Map(snap.messages.map((m) => [m.id, { id: m.id, subject: m.subject, to: email.get(m.mailbox_id) ?? m.mailbox_id }]));
+  /** Messages currently in the run (null when the state cannot be read: the diff is skipped). */
+  const messageIds = async (): Promise<Map<string, Delivered> | null> => {
+    try {
+      const raw = await qc.fetchQuery({ queryKey: runKeys.state(run.id), queryFn: () => api.state(run.id) });
+      return deliveredIndex(parseSnapshot(raw));
+    } catch {
+      return null;
+    }
   };
 
   const mutation = useMutation({
     mutationFn: async (op: { kind: 'advance'; seconds: number; label: string } | { kind: 'tick' }): Promise<Outcome> => {
-      const before = await messageIds().catch(() => null);
+      const before = await messageIds();
       const result = op.kind === 'tick' ? await api.tick(run.id) : await api.advance(run.id, op.seconds);
       await qc.invalidateQueries({ queryKey: runKeys.all(run.id) });
-      const after = before ? await messageIds().catch(() => null) : null;
+      const after = before ? await messageIds() : null;
       const delivered = before && after ? [...after.values()].filter((m) => !before.has(m.id)) : null;
       return {
         label: op.kind === 'tick' ? 'Scheduler tick' : `Advanced the clock by ${op.label}`,

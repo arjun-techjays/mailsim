@@ -26,14 +26,15 @@ export function personaOptions(list: unknown): PersonaOption[] {
     .filter((p) => p.id);
 }
 
-export function useScenarioContext(scenarioKey: string, latestVersion: number | null): ScenarioContext {
+/** `latestVersion` 0 = the scenario has no published version. */
+export function useScenarioContext(scenarioKey: string, latestVersion: number): ScenarioContext {
   const api = useApi();
   const controller = hasRole(useRole(), ['controller']);
 
   const doc = useQuery({
     queryKey: ['scenario-doc', scenarioKey, latestVersion],
-    queryFn: () => api.scenarioVersionDocument(scenarioKey, latestVersion as number),
-    enabled: controller && latestVersion != null,
+    queryFn: () => api.scenarioVersionDocument(scenarioKey, latestVersion),
+    enabled: controller && latestVersion > 0,
     retry: false,
   });
   const runs = useQuery({

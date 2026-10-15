@@ -55,7 +55,6 @@ export function ActivityPanel({
   const announce = useCallback(() => {
     announceTimer.current = null;
     const list = pending.current;
-    if (list.length === 0) return;
     pending.current = [];
     lastAnnounce.current = Date.now();
     const latest = list[list.length - 1] as ActivityItem;
@@ -163,7 +162,7 @@ export function ActivityPanel({
       {loading ? (
         <Loading label="Loading activity…" />
       ) : shown.length === 0 ? (
-        <Empty>{items.length === 0 ? 'No activity yet. Connect your agent and start the run; its actions appear here.' : 'No activity for this actor.'}</Empty>
+        <Empty>No activity yet. Connect your agent and start the run; its actions appear here.</Empty>
       ) : (
         <table data-testid="activity-table" className="act-table">
           <caption>
@@ -195,7 +194,7 @@ export function ActivityPanel({
                 </td>
                 <td className="act-summary">
                   <span>{summarizeInput(a.input) || '—'}</span>
-                  {Object.keys(a.result ?? {}).length > 0 && <JsonBlock value={a.result} label="Result" />}
+                  {Object.keys(a.result).length > 0 && <JsonBlock value={a.result} label="Result" />}
                 </td>
               </tr>
             ))}

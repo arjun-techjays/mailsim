@@ -393,7 +393,7 @@ export function createAkeyHandlers(db: MockDb, h: AkeyHelpers): HttpHandler[] {
           actor: a.actor,
           operation: a.operation,
           outcome: a.outcome,
-          interface: a.interface ?? (String(a.id) in INTERFACES ? (INTERFACES[a.id ?? 0] ?? null) : 'rest'),
+          interface: a.interface !== undefined ? a.interface : (String(a.id) in INTERFACES ? (INTERFACES[a.id ?? 0] ?? null) : 'rest'),
           virtual_time: a.virtual_time ?? null,
           input: a.input,
           result: a.result,

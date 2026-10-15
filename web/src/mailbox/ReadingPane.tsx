@@ -3,12 +3,9 @@ import { Link } from 'react-router-dom';
 import type { CanonicalMessage } from '../api/types';
 import { address, addresses, bytes } from '../components/format';
 import { SafeEmailBody } from '../components/SafeEmailBody';
+import { snippet, subjectOf } from './text';
 import { VirtualTime } from './VirtualTime';
 
-function snippet(m: CanonicalMessage): string {
-  const t = (m.body_text ?? '').replace(/\s+/g, ' ').trim();
-  return t.length > 120 ? `${t.slice(0, 117)}…` : t;
-}
 
 function Headers({ m, rawMimeHref }: { m: CanonicalMessage; rawMimeHref?: (ref: string) => string }) {
   return (
@@ -100,7 +97,7 @@ function ThreadEntry({ t, onOpen }: { t: CanonicalMessage; onOpen: (id: string) 
             <span className="visually-hidden"> message from {address(t.from)}</span>
           </button>
           <button type="button" className="link" onClick={() => onOpen(t.id)}>
-            Open {t.subject || '(no subject)'}
+            Open {subjectOf(t)}
           </button>
         </span>
       </div>
@@ -133,7 +130,7 @@ export function ReadingPane({
   return (
     <article aria-labelledby="msg-h" className="message mb-reading" data-testid="message-view">
       <h3 id="msg-h" tabIndex={-1} ref={heading}>
-        {m.subject || '(no subject)'}
+        {subjectOf(m)}
       </h3>
       <dl className="kv">
         <dt>From</dt>

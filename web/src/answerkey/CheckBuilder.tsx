@@ -77,11 +77,10 @@ function CountField({ p, label, help, errors }: { p: NodeProps; label: string; h
   const set = (next: Record<string, unknown> | undefined) => p.onChange(next);
   const n = (s: string) => (s.trim() === '' ? 0 : Number(s));
   const changeMode = (m: string) => {
+    const seed = Number(v.eq ?? v.min ?? v.max ?? 1);
     if (m === '') set(undefined);
-    else if (m === 'eq') set({ eq: Number(v.eq ?? v.min ?? 1) });
-    else if (m === 'min') set({ min: Number(v.min ?? v.eq ?? 1) });
-    else if (m === 'max') set({ max: Number(v.max ?? v.eq ?? 1) });
-    else set({ min: Number(v.min ?? v.eq ?? 1), max: Number(v.max ?? v.min ?? v.eq ?? 1) });
+    else if (m === 'range') set({ min: seed, max: seed });
+    else set({ [m]: seed });
   };
   const errs = p.errors;
   const numberInput = (key: 'eq' | 'min' | 'max', text: string) => (
@@ -125,14 +124,14 @@ function CountField({ p, label, help, errors }: { p: NodeProps; label: string; h
 }
 
 function OutcomeField({ control, value, onChange }: { control: ControlProps; value: string; onChange: (v: string | undefined) => void }) {
-  const mode = value === '' || value === 'ok' ? 'ok' : value === 'any' ? 'any' : 'code';
+  const [mode, setMode] = useState(value === '' || value === 'ok' ? 'ok' : value === 'any' ? 'any' : 'code');
+  const pick = (m: string) => {
+    setMode(m);
+    onChange(m === 'ok' ? undefined : m === 'any' ? 'any' : 'PERMISSION_DENIED');
+  };
   return (
     <div className="ak-row">
-      <select
-        {...control}
-        value={mode}
-        onChange={(e) => onChange(e.target.value === 'ok' ? undefined : e.target.value === 'any' ? 'any' : 'PERMISSION_DENIED')}
-      >
+      <select {...control} value={mode} onChange={(e) => pick(e.target.value)}>
         <option value="ok">Succeeded (ok)</option>
         <option value="any">Any outcome</option>
         <option value="code">Failed with error code…</option>
@@ -143,7 +142,7 @@ function OutcomeField({ control, value, onChange }: { control: ControlProps; val
           aria-label="Error code"
           className="mono"
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => onChange(e.target.value || undefined)}
         />
       )}
     </div>
@@ -291,7 +290,7 @@ function Node(p: NodeProps) {
         control={c}
         value={value}
         onChange={setStr}
-        empty={p.required ? 'Choose an operation' : 'Not set'}
+        empty="Choose an operation"
         options={meta.agent_operations.map((o) => ({ value: o, label: o }))}
       />
     );

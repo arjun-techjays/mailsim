@@ -10,6 +10,7 @@ import { validateInject, type Errors } from '../run/injectValidation';
 import { runKeys } from '../run/keys';
 import type { BrowserMailbox } from './useRunMailboxes';
 import { mailboxTitle } from './useRunMailboxes';
+import { subjectOf } from './text';
 
 const EXTERNAL = '__external__';
 
@@ -134,8 +135,7 @@ export function ComposeInject({
         subject,
         text: text || null,
         html: html || null,
-        in_reply_to: parent?.message_id_header ?? null,
-        references: parent ? [...(parent.references ?? []), parent.message_id_header] : null,
+        ...(parent ? { in_reply_to: parent.message_id_header, references: [...(parent.references as string[]), parent.message_id_header] } : {}),
       },
       delivery: { mode: 'immediate' },
     });
@@ -203,7 +203,7 @@ export function ComposeInject({
             <option value="">Not a reply (starts a new thread)</option>
             {replyCandidates.map((m) => (
               <option key={m.id} value={m.id}>
-                {m.subject || '(no subject)'} — {m.from.email}
+                {subjectOf(m)} — {m.from.email}
               </option>
             ))}
           </select>

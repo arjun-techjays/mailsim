@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type { AnswerKeyOut, AuthoringMeta } from '../api/types';
+import { isApiError } from '../api/client';
 import { hasRole, useApi, useRole } from '../auth/session';
 import { ErrorDisplay } from '../components/ErrorDisplay';
 import { RequireRole } from '../components/Gates';
@@ -26,31 +27,9 @@ import {
 } from './model';
 import { useLiveValidation } from './useLiveValidation';
 import { useScenarioContext } from './useScenarioContext';
+import { describePath, focusPath } from './paths';
 import { byPath, clientIssues, fromServer, leakedFields, mergeIssues, type Issue } from './validation';
 import './answerkey.css';
-
-/** "assertions.1.check.where.folder" -> "Assertion 2 “id”: check › where › folder". */
-function describePath(path: string, assertions: AssertionDraft[]): string {
-  if (!path) return 'Whole answer key';
-  const m = /^assertions\.(\d+)(?:\.(.*))?$/.exec(path);
-  if (!m) return path.replace(/\./g, ' › ');
-  const a = assertions[Number(m[1])];
-  const head = `Assertion ${Number(m[1]) + 1}${a?.id ? ` “${a.id}”` : ''}`;
-  return m[2] ? `${head}: ${m[2].replace(/\./g, ' › ')}` : head;
-}
-
-/** Focuses the control for `path`, or its closest rendered ancestor. */
-function focusPath(path: string): void {
-  const parts = path ? path.split('.') : [];
-  for (let n = parts.length; n >= 0; n -= 1) {
-    const id = n === 0 ? 'ak-version' : fieldId(parts.slice(0, n).join('.'));
-    const el = document.getElementById(id) ?? (n === 2 ? document.getElementById(`${id}-h`) : null);
-    if (el) {
-      el.focus();
-      return;
-    }
-  }
-}
 
 function IssueList({ issues, assertions, label }: { issues: Issue[]; assertions: AssertionDraft[]; label: string }) {
   return (
@@ -58,7 +37,7 @@ function IssueList({ issues, assertions, label }: { issues: Issue[]; assertions:
       {issues.map((i, n) => (
         <li key={`${i.path}-${n}`}>
           <a
-            href={`#${fieldId(i.path || 'version')}`}
+            href={`#${fieldId(i.path)}`}
             onClick={(e) => {
               e.preventDefault();
               focusPath(i.path);
@@ -116,11 +95,11 @@ function AnswerKeyEditor({ scenarioKey, meta, versions, taken, base, storageKey,
   const [yamlIssue, setYamlIssue] = useState<Issue | null>(null);
   const [converting, setConverting] = useState(false);
   const [conversionError, setConversionError] = useState<unknown>(null);
-  const [newType, setNewType] = useState(meta.assertion_types[0]?.type ?? 'state');
+  const [newType, setNewType] = useState('state');
   const [blocked, setBlocked] = useState(false);
   const focusAfter = useRef<string | null>(null);
   const summary = useRef<HTMLHeadingElement>(null);
-  const scenarioCtx = useScenarioContext(scenarioKey, versions.length > 0 ? Math.max(...versions) : null);
+  const scenarioCtx = useScenarioContext(scenarioKey, versions.reduce((a, b) => Math.max(a, b), 0));
   const ctx: Pickers = { meta, personas: scenarioCtx.personas, events: scenarioCtx.events };
 
   useEffect(() => saveDraft(storageKey, draft), [storageKey, draft]);
@@ -228,7 +207,10 @@ function AnswerKeyEditor({ scenarioKey, meta, versions, taken, base, storageKey,
   const knownProblems = problems.length + leaks.length + (yamlIssue ? 1 : 0);
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (knownProblems > 0) {
+    // While a re-check is in flight the server result may be stale: only block on fresh facts
+    // (the publish endpoint validates again anyway).
+    const blocking = live.pending ? knownProblems - problems.length - leaks.length + client.length : knownProblems;
+    if (blocking > 0) {
       setBlocked(true);
       summary.current?.focus();
       return;
@@ -503,7 +485,15 @@ function EditorLoader({ scenarioKey, from }: { scenarioKey: string; from: number
   const api = useApi();
   const meta = useQuery({ queryKey: ['authoring-meta'], queryFn: () => api.authoringMeta(), staleTime: Infinity });
   const scenario = useQuery({ queryKey: ['scenario', scenarioKey], queryFn: () => api.getScenario(scenarioKey) });
-  const keys = useQuery({ queryKey: ['answer-keys', scenarioKey], queryFn: () => api.listAnswerKeys(scenarioKey) });
+  const keys = useQuery({
+    queryKey: ['answer-keys', scenarioKey],
+    // A scenario without any key may answer 404; the scenario query reports a missing scenario.
+    queryFn: () =>
+      api.listAnswerKeys(scenarioKey).catch((e: unknown) => {
+        if (isApiError(e) && e.status === 404) return [];
+        throw e;
+      }),
+  });
   const source = useQuery({
     queryKey: ['answer-key-document', scenarioKey, from],
     queryFn: () => api.answerKeyDocument(scenarioKey, from as number),
