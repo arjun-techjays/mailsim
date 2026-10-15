@@ -8,7 +8,6 @@ import json
 import pytest
 import yaml
 
-from mailsim.api.routers import control
 from mailsim.store import models as m
 from tests.api.conftest import KEY, open_agent, scenario_payload
 from tests.helpers import PDF, attachment_part, multipart, text_part
@@ -94,7 +93,7 @@ def test_publish_rejects_bad_requests(api, change, fragment):
 
 
 def test_publish_rejects_oversized_fixture_and_missing_fixture(api, monkeypatch):
-    monkeypatch.setattr(control.validator, "MAX_FIXTURE_BYTES", 3)
+    monkeypatch.setattr("mailsim.scenario.validator.MAX_FIXTURE_BYTES", 3)
     body = err(api.call("POST", "/v1/scenarios", json=scenario_payload()), 400, "INVALID_REQUEST")
     assert "too large" in body["message"]
     monkeypatch.undo()

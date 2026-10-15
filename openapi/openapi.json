@@ -1294,7 +1294,7 @@
                 "type": "null"
               }
             ],
-            "description": "ISO 8601; default: scenario clock start",
+            "description": "ISO 8601; default: the current UTC time",
             "title": "Date"
           },
           "fixture_path": {
@@ -1306,7 +1306,7 @@
                 "type": "null"
               }
             ],
-            "description": "default: fixtures/<slug>.eml",
+            "description": "default: fixtures/<subject slug>-<id>.eml",
             "title": "Fixture Path"
           },
           "from": {
@@ -1450,6 +1450,7 @@
       },
       "ConnectionTestResult": {
         "additionalProperties": false,
+        "description": "Always HTTP 200. A key that is not a live agent key of the run gives ok=false with\nerror_code UNAUTHENTICATED (details.reason invalid_key) or PERMISSION_DENIED (not_agent_key,\nother_run). Listener not running: LISTENER_DOWN. The key is never echoed.",
         "properties": {
           "details": {
             "additionalProperties": true,
@@ -2246,7 +2247,7 @@
                 "type": "null"
               }
             ],
-            "description": "absolute URL for HTTP interfaces",
+            "description": "service base URL for HTTP interfaces: <origin>/v1, <origin>/gmail/v1, <origin>/graph/v1.0, <origin>/mcp",
             "title": "Base Url"
           },
           "command": {
@@ -2412,6 +2413,11 @@
             "title": "Key Id",
             "type": "string"
           },
+          "prefix": {
+            "description": "the <prefix> of msk_<prefix>_... (not secret)",
+            "title": "Prefix",
+            "type": "string"
+          },
           "revoked": {
             "default": false,
             "title": "Revoked",
@@ -2420,6 +2426,7 @@
         },
         "required": [
           "key_id",
+          "prefix",
           "created_at"
         ],
         "title": "KeyInfo",
@@ -4970,7 +4977,7 @@
     },
     "/v1/runs/{run_id}/connection-tests": {
       "post": {
-        "description": "Make a real call through the chosen interface with the given agent key, server-side.",
+        "description": "Make a real call through the chosen interface with the given agent key, server-side.\n\nAlways 200 with `ok` and a summary (400 only for a malformed request, 404 for a run outside\nthe caller's project). A key that is not a live agent key of this run is not tried at all:\nok=false with `details.reason` invalid_key (error_code UNAUTHENTICATED: unknown, revoked,\nexpired), not_agent_key or other_run (PERMISSION_DENIED; which run is never said). A probe\nthat is made is recorded in the run's activity like any agent call of that interface. The request body\n(and so the key) is never logged, and the key never appears in the result.\n\n`error_code` when `ok` is false:\n- REST, MCP (HTTP): the /v1 envelope code (UNAUTHENTICATED, RUN_NOT_ACTIVE,\n  PERMISSION_DENIED, ...)\n- Gmail: the neutral code in `error.details[0].reason` (UNAUTHENTICATED, RUN_NOT_ACTIVE,\n  ...), else `error.status`\n- Graph: Graph's own code (InvalidAuthenticationToken; ErrorPreconditionFailed for a run\n  that is not running; ErrorAccessDenied ...)\n- IMAP: AUTHENTICATIONFAILED; SMTP: AUTHENTICATION_FAILED (credentials refused), or the\n  engine's code when it refused a valid key (RUN_NOT_ACTIVE, PERMISSION_DENIED)\n- IMAP/SMTP listener not running: LISTENER_DOWN\n- gmail / graph / mcp_http not mounted: null (summary \"... is not served by this server\")\n- unexpected failure: INTERNAL",
         "operationId": "connection_test_v1_runs__run_id__connection_tests_post",
         "parameters": [
           {
@@ -5934,7 +5941,7 @@
     },
     "/v1/scenario-drafts/compose-eml": {
       "post": {
-        "description": "Build an .eml fixture from a composed message (threading headers, attachments).",
+        "description": "Build an .eml fixture from a composed message (threading headers, attachments).\n`date` defaults to the current UTC time, `message_id` to `<uuid@domain of from>`, the path\nto `fixtures/<subject slug>-<id prefix>.eml`. CR/LF in any header field: 400.",
         "operationId": "compose_eml_v1_scenario_drafts_compose_eml_post",
         "requestBody": {
           "content": {
@@ -6028,7 +6035,7 @@
     },
     "/v1/scenario-drafts/validate": {
       "post": {
-        "description": "Validate an unsaved scenario (schema, references, fixtures). Stores nothing.",
+        "description": "Validate an unsaved scenario (schema, references, fixtures). Stores nothing.\n\nIssues carry dotted paths (`scenario.personas.1.email`; `<source>` for text that does not\nparse). Malformed requests (both or neither of source/document, bad fixture base64 or\npaths) answer 400 INVALID_REQUEST.",
         "operationId": "validate_draft_v1_scenario_drafts_validate_post",
         "requestBody": {
           "content": {
@@ -6408,7 +6415,7 @@
         ]
       },
       "post": {
-        "description": "Publish a hidden answer-key version. The response is metadata only.",
+        "description": "Publish a hidden answer-key version (controller or evaluator). The response is\nmetadata only.",
         "operationId": "create_answer_key_v1_scenarios__scenario_key__answer_keys_post",
         "parameters": [
           {
@@ -6466,7 +6473,7 @@
     },
     "/v1/scenarios/{scenario_key}/answer-keys/validate": {
       "post": {
-        "description": "Schema + leak guard for an unsaved answer key. Stores nothing.",
+        "description": "Schema + leak guard for an unsaved answer key. Stores nothing.\n\nErrors: dotted schema paths (`answer_key.assertions.0.check`), `answer_key.scenario` for a\nkey of another scenario, `answer_key.scenario_versions` for unknown versions, and\n`leak:<scenario version>` when grading prose appears in content the agent can read (the\nleaked text is cut to 60 characters). 404 when the scenario does not exist.",
         "operationId": "validate_answer_key_v1_scenarios__scenario_key__answer_keys_validate_post",
         "parameters": [
           {
@@ -6855,7 +6862,7 @@
     },
     "/v1/tools/yaml-to-json": {
       "post": {
-        "description": "Parse YAML/JSON text (safe loader, same limits as publishing).",
+        "description": "Parse YAML/JSON text (safe loader, same limits as publishing). Problems are reported in\n`error` (path \"line N\", 1-based, when the parser knows the line, else \"<source>\"; the\nmessage has the details), never as HTTP errors.",
         "operationId": "yaml_to_json_v1_tools_yaml_to_json_post",
         "requestBody": {
           "content": {

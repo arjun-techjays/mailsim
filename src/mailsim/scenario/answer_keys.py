@@ -87,24 +87,72 @@ def _store(session: Session, scenario: m.Scenario, doc: AnswerKeyDoc, source: st
     return row
 
 
-def _check_leaks(
+def _version_leaks(
     session: Session, scenario: m.Scenario, body: AnswerKeyBody, blobs: BlobStore
-) -> None:
+) -> list[tuple[int, list[str]]]:
+    """(scenario version, leaked secrets) for every compatible version whose agent-visible
+    content (events, scripted replies, fixtures) contains answer-key prose."""
     secrets = secret_strings(body)
     if not secrets:
-        return
+        return []
     stmt = select(m.ScenarioVersion).where(m.ScenarioVersion.scenario_id == scenario.id)
     if body.scenario_versions is not None:
         stmt = stmt.where(m.ScenarioVersion.version.in_(body.scenario_versions))
-    for sv in session.execute(stmt).scalars():
+    out: list[tuple[int, list[str]]] = []
+    for sv in session.execute(stmt.order_by(m.ScenarioVersion.version)).scalars():
         scen = ScenarioDoc.model_validate(sv.spec).scenario
         raws = [blobs.get(ref) for ref in sv.fixtures.values() if blobs.exists(ref)]
         leaks = find_leaks(secrets, agent_visible_texts(scen, raws))
         if leaks:
-            raise InvalidRequest(
-                "answer-key text appears in agent-visible scenario content",
-                details={"scenario_version": sv.version, "leaks": [x[:60] for x in leaks]},
-            )
+            out.append((sv.version, leaks))
+    return out
+
+
+def _check_leaks(
+    session: Session, scenario: m.Scenario, body: AnswerKeyBody, blobs: BlobStore
+) -> None:
+    found = _version_leaks(session, scenario, body, blobs)
+    if found:
+        version, leaks = found[0]
+        raise InvalidRequest(
+            "answer-key text appears in agent-visible scenario content",
+            details={"scenario_version": version, "leaks": [x[:60] for x in leaks]},
+        )
+
+
+def _unknown_versions(session: Session, scenario: m.Scenario, body: AnswerKeyBody) -> list[int]:
+    if not body.scenario_versions:
+        return []
+    known = set(
+        session.scalars(
+            select(m.ScenarioVersion.version).where(m.ScenarioVersion.scenario_id == scenario.id)
+        )
+    )
+    return sorted(set(body.scenario_versions) - known)
+
+
+def check_answer_key(
+    session: Session, scope: Scope, scenario_key: str, body: AnswerKeyBody, blobs: BlobStore
+) -> tuple[list[int], list[tuple[int, list[str]]]]:
+    """Dry run of the publish checks: (unknown scenario versions, leaks per version).
+    NOT_FOUND when the scenario does not exist in the scope."""
+    scenario = _scenario(session, scope, scenario_key)
+    return _unknown_versions(session, scenario, body), _version_leaks(
+        session, scenario, body, blobs
+    )
+
+
+def get_answer_key(session: Session, scope: Scope, scenario_key: str, version: int) -> m.AnswerKey:
+    """One answer-key version of a scenario in the scope (evaluator-only content) or 404."""
+    scenario = _scenario(session, scope, scenario_key)
+    row = session.execute(
+        select(m.AnswerKey).where(
+            m.AnswerKey.scenario_id == scenario.id, m.AnswerKey.version == version
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise NotFound(f"answer key {scenario_key} version {version} not found")
+    return row
 
 
 def create_answer_key_version(
@@ -112,17 +160,9 @@ def create_answer_key_version(
 ) -> m.AnswerKey:
     body = doc.answer_key
     scenario = _scenario(session, scope, body.scenario, lock=True)
-    if body.scenario_versions:
-        known = set(
-            session.scalars(
-                select(m.ScenarioVersion.version).where(
-                    m.ScenarioVersion.scenario_id == scenario.id
-                )
-            )
-        )
-        missing = sorted(set(body.scenario_versions) - known)
-        if missing:
-            raise InvalidRequest(f"unknown scenario versions {missing}")
+    missing = _unknown_versions(session, scenario, body)
+    if missing:
+        raise InvalidRequest(f"unknown scenario versions {missing}")
     _check_leaks(session, scenario, body, blobs)
     return _store(session, scenario, doc, "file")
 

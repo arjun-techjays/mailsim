@@ -119,12 +119,14 @@ class ComposeMessage(_M):
     subject: str = Field(default="", max_length=998)
     text: str | None = None
     html: str | None = None
-    date: str | None = Field(default=None, description="ISO 8601; default: scenario clock start")
+    date: str | None = Field(default=None, description="ISO 8601; default: the current UTC time")
     message_id: str | None = Field(default=None, description="default: generated <...@domain>")
     in_reply_to: str | None = Field(default=None, description="Message-ID of an earlier message")
     references: list[str] = Field(default_factory=list)
     attachments: list[ComposeAttachment] = Field(default_factory=list, max_length=20)
-    fixture_path: str | None = Field(default=None, description="default: fixtures/<slug>.eml")
+    fixture_path: str | None = Field(
+        default=None, description="default: fixtures/<subject slug>-<id>.eml"
+    )
 
 
 class ComposedFixture(_M):
@@ -190,6 +192,7 @@ class AnswerKeyDocument(_M):
 # ---- connecting an agent ------------------------------------------------------------------
 class KeyInfo(_M):
     key_id: str
+    prefix: str = Field(description="the <prefix> of msk_<prefix>_... (not secret)")
     created_at: str
     expires_at: str | None = None
     revoked: bool = False
@@ -198,7 +201,11 @@ class KeyInfo(_M):
 class InterfaceEndpoint(_M):
     interface: Interface
     available: bool = Field(description="served by this server / listener running")
-    base_url: str | None = Field(default=None, description="absolute URL for HTTP interfaces")
+    base_url: str | None = Field(
+        default=None,
+        description="service base URL for HTTP interfaces: <origin>/v1, <origin>/gmail/v1, "
+        "<origin>/graph/v1.0, <origin>/mcp",
+    )
     host: str | None = None
     port: int | None = None
     tls: Literal["none", "starttls"] | None = None
@@ -225,6 +232,10 @@ class ConnectionTestRequest(_M):
 
 
 class ConnectionTestResult(_M):
+    """Always HTTP 200. A key that is not a live agent key of the run gives ok=false with
+    error_code UNAUTHENTICATED (details.reason invalid_key) or PERMISSION_DENIED (not_agent_key,
+    other_run). Listener not running: LISTENER_DOWN. The key is never echoed."""
+
     interface: Interface
     ok: bool
     summary: str = Field(description="human-readable outcome")
