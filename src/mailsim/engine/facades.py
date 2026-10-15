@@ -77,6 +77,18 @@ class AgentMailbox:
         return self._e.reply(*self._a(), message_id, text=text, reply_all=reply_all, to=to, cc=cc,
                              bcc=bcc, subject=subject, html=html, actor=AGENT)  # fmt: skip
 
+    def get_raw(self, message_id: str) -> bytes | None:
+        """Stored RFC 5322 bytes of one of this mailbox's messages (a read; None if not kept)."""
+        return self._e.get_raw(*self._a(), message_id, actor=AGENT)
+
+    def find_by_message_id(self, header: str) -> list[CanonicalMessage]:
+        """This mailbox's non-draft messages with that Message-ID header (a read)."""
+        return self._e.find_by_message_id(*self._a(), header, actor=AGENT)
+
+    def mark_seen(self, message_id: str) -> bool:
+        """SEEN as a side effect of reading (recorded as a `read`, never budgeted)."""
+        return self._e.mark_seen(*self._a(), message_id, actor=AGENT)
+
     def mailbox_info(self) -> dict[str, Any]:
         """{mailbox_id, email, run_id, virtual_time} of this agent's own mailbox (a read)."""
         return self._e.mailbox_info(*self._a(), actor=AGENT)

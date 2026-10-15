@@ -65,3 +65,34 @@ def test_mailbox_info(finance):
     info = agent.mailbox_info()
     assert info["mailbox_id"] == agent.mailbox_id and info["run_id"] == run
     assert info["email"].endswith("@example.test") and info["virtual_time"]
+
+
+def test_w22_reads_get_raw_find_by_message_id_and_mark_seen(finance):
+    env, run, agent, ev = finance
+    first = agent.list_messages(folder="inbox").items[0]
+    raw = agent.get_raw(first.id)
+    assert raw is not None and first.message_id_header.encode() in raw
+    found = agent.find_by_message_id(first.message_id_header)
+    assert [m.id for m in found] == [first.id]
+    assert agent.find_by_message_id("<nope@example.test>") == []
+    before = Controller(env.engine, env.scope).run_info(run)["agent_actions"]
+    assert "SEEN" not in first.flags
+    assert agent.mark_seen(first.id) is True
+    assert agent.mark_seen(first.id) is False  # already seen: no event
+    assert "SEEN" in agent.get_message(first.id).flags
+    assert Controller(env.engine, env.scope).run_info(run)["agent_actions"] == before  # reads only
+    seen = [e for e in ev.events(run) if e["type"] == "message.flags_changed"]
+    assert len(seen) == 1 and seen[0]["operation"] == "read"
+    assert Controller(env.engine, env.scope).replay_run(run).matches
+
+
+def test_get_raw_without_a_stored_blob(finance, monkeypatch):
+    env, run, agent, ev = finance
+    first = agent.list_messages(folder="inbox").items[0]
+    from sqlalchemy import update
+
+    from mailsim.store import models as m
+
+    with env.session_factory.begin() as s:
+        s.execute(update(m.Message).where(m.Message.id == first.id).values(raw_blob_ref=None))
+    assert agent.get_raw(first.id) is None
