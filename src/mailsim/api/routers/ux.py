@@ -479,13 +479,25 @@ def _probe(interface: str, mailbox_id: str,
     if interface == "graph":
         return ("GET", "/graph/v1.0/me/mailFolders", "$top=1", auth, b"",
                 lambda b: ("mail folders readable", {"folders_returned": _count(b, "value")}))  # fmt: skip
-    rpc = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}).encode()
+    # a real agent tool call (not just tools/list), so the probe reaches the engine like the
+    # other interfaces: refused for a run that is not running, and recorded in the activity
+    rpc = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                      "params": {"name": "list_folders", "arguments": {}}}).encode()  # fmt: skip
     headers = {**auth, "content-type": "application/json",
                "accept": "application/json, text/event-stream",
                "mcp-protocol-version": MCP_PROTOCOL_VERSION}  # fmt: skip
     return ("POST", "/mcp", "", headers, rpc,
-            lambda b: (f"{_count(_field(b, 'result'), 'tools')} tools listed",
-                       {"tools": _count(_field(b, "result"), "tools")}))  # fmt: skip
+            lambda b: (f"{_count(b, 'items')} folders visible via the list_folders tool",
+                       {"folders": _count(b, "items")}))  # fmt: skip
+
+
+def _mcp_payload(body: Any) -> Any:
+    """A JSON-RPC response as the other probes see a body: the JSON-RPC error, else the tool's
+    structured content (whose ``error`` is the simulator's envelope for a tool error)."""
+    if not isinstance(body, dict) or "error" in body:
+        return body
+    result = body.get("result")
+    return result.get("structuredContent") if isinstance(result, dict) else None
 
 
 async def _http_test(request: Request, interface: str, mailbox_id: str,
@@ -509,6 +521,8 @@ async def _http_test(request: Request, interface: str, mailbox_id: str,
         body = json.loads(res.body) if res.body else None
     except ValueError:
         body = None
+    if interface == "mcp_http":
+        body = _mcp_payload(body)
     code, message = _error_fields(body)
     ok = 200 <= res.status < 300 and code is None and isinstance(body, dict | list)
     details: dict[str, Any] = {}

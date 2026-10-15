@@ -110,7 +110,7 @@ export function createConnectHandlers(db: MockDb) {
     rest: (_a, m) => ({ summary: `GET /v1/mailboxes/${m}/folders answered 200 (5 folders).`, status_code: 200, details: { folders: 5 } }),
     gmail: (a) => ({ summary: `GET /gmail/v1/users/me/profile answered 200 for ${a}.`, status_code: 200, details: { emailAddress: a, messagesTotal: 3 } }),
     graph: (a) => ({ summary: `GET /graph/v1.0/me answered 200 for ${a}.`, status_code: 200, details: { mail: a } }),
-    mcp_http: () => ({ summary: 'initialize + tools/list over streamable HTTP: 10 agent tools.', status_code: 200, details: { tools: 10 } }),
+    mcp_http: () => ({ summary: 'MCP (HTTP): agent key accepted, 5 folders visible via the list_folders tool (HTTP 200)', status_code: 200, details: { folders: 5 } }),
     mcp_stdio: () => ({ summary: 'Started mcp-stdio with MAILSIM_API_KEY; tools/list returned 10 agent tools.', status_code: null, details: { tools: 10 } }),
     imap: () => ({ summary: 'LOGIN and SELECT INBOX succeeded (3 messages).', status_code: null, details: { exists: 3 } }),
     smtp: () => ({ summary: 'EHLO and AUTH PLAIN succeeded (235 2.7.0). No mail was sent.', status_code: 235, details: {} }),

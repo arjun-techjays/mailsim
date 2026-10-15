@@ -122,9 +122,11 @@ def test_http_adapter_connection_tests(api, run):
     graph = run.test("graph")
     assert graph["ok"] and graph["details"]["folders_returned"] >= 1
     mcp = run.test("mcp_http")
-    assert mcp["ok"] and mcp["details"]["tools"] > 5 and mcp["summary"].startswith("MCP (HTTP)")
+    assert mcp["ok"] and mcp["details"] == {"folders": 5}
+    assert mcp["summary"] == ("MCP (HTTP): agent key accepted, 5 folders visible via the "
+                              "list_folders tool (HTTP 200)")  # fmt: skip
     seen = {i for _, _, i in run.interfaces()}
-    assert {"gmail", "graph"} <= seen
+    assert {"gmail", "graph", "mcp_http"} <= seen  # every probe is in the run's activity
 
 
 def test_adapters_not_served(run):
@@ -147,7 +149,7 @@ def test_connection_test_reports_engine_refusals(api):
     graph = ready.test("graph")
     assert (graph["ok"], graph["error_code"]) == (False, "ErrorPreconditionFailed")
     mcp = ready.test("mcp_http")
-    assert mcp["ok"] is True  # listing tools needs no running run
+    assert (mcp["ok"], mcp["error_code"]) == (False, "RUN_NOT_ACTIVE")  # a real tool call
 
 
 def test_connection_test_key_checks(api, other_api, run):
@@ -462,3 +464,19 @@ def test_mcp_paths_are_matched_exactly():
 
     assert [interface_for_path(p) for p in ("/mcp", "/mcp/x", "/mcpx", "/mcp-tools")] == [
         "mcp_http", "mcp_http", "api", "api"]  # fmt: skip
+
+
+def test_mcp_probe_payload_unwrapping():
+    from mailsim.api.routers.ux import _mcp_payload
+
+    rpc_error = {"jsonrpc": "2.0", "id": 1, "error": {"code": -32601, "message": "nope"}}
+    assert _mcp_payload(rpc_error) is rpc_error
+    assert _mcp_payload(None) is None and _mcp_payload([1]) == [1]
+    assert _mcp_payload({"jsonrpc": "2.0", "id": 1, "result": "odd"}) is None
+    tool_error = {"error": {"code": "RUN_NOT_ACTIVE", "message": "m", "details": {}}}
+    wrapped = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {"isError": True, "structuredContent": tool_error},
+    }
+    assert _mcp_payload(wrapped) == tool_error
