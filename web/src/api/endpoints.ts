@@ -19,6 +19,21 @@ import type {
   RunOut,
   ScenarioOut,
 } from './types';
+// ---- builder (UX-F1)
+import type {
+  AuthoringMeta,
+  ComposedFixture,
+  ComposeMessage,
+  DraftValidation,
+  EmlSummary,
+  ParsedDocument,
+  RenderedYaml,
+  ScenarioCreate,
+  ScenarioDraft,
+  ScenarioVersionDocument,
+  ScenarioVersionOut,
+} from './types';
+// ---- end builder (UX-F1)
 
 const seg = encodeURIComponent;
 
@@ -86,6 +101,21 @@ export function createApi(cfg: ApiConfig) {
     listEvaluations: (id: string) => get<EvaluationReport[]>(`${run(id)}/evaluations`),
     evaluate: (id: string, body: EvaluationRequest) =>
       post<EvaluationReport>(`${run(id)}/evaluations`, body, true),
+
+    // ---- builder (UX-F1): scenario authoring (namespaced to avoid merge collisions)
+    builder: {
+      meta: () => get<AuthoringMeta>('/v1/meta/authoring'),
+      validate: (body: ScenarioDraft, signal?: AbortSignal) =>
+        apiRequest<DraftValidation>(cfg, 'POST', '/v1/scenario-drafts/validate', { body, signal }),
+      composeEml: (body: ComposeMessage) => post<ComposedFixture>('/v1/scenario-drafts/compose-eml', body),
+      inspectEml: (contentB64: string) => post<EmlSummary>('/v1/scenario-drafts/inspect-eml', { content_b64: contentB64 }),
+      yamlToJson: (source: string) => post<ParsedDocument>('/v1/tools/yaml-to-json', { source }),
+      jsonToYaml: (document: Record<string, unknown>) => post<RenderedYaml>('/v1/tools/json-to-yaml', { document }),
+      versionDocument: (key: string, version: number) =>
+        get<ScenarioVersionDocument>(`/v1/scenarios/${seg(key)}/versions/${version}/document`),
+      publish: (body: ScenarioCreate) => post<ScenarioVersionOut>('/v1/scenarios', body, true),
+    },
+    // ---- end builder (UX-F1)
   };
 }
 

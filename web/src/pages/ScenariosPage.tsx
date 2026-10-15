@@ -3,6 +3,7 @@ import { useState, type FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useApi } from '../auth/session';
 import { ErrorDisplay } from '../components/ErrorDisplay';
+import { ShowFor } from '../components/Gates'; // builder (UX-F1)
 import { Empty, Loading } from '../components/Status';
 import { usePageTitle } from '../hooks/usePageTitle';
 
@@ -32,6 +33,15 @@ export function ScenariosPage() {
   return (
     <>
       <h1>Scenarios</h1>
+      {/* ---- builder (UX-F1) */}
+      <ShowFor roles={['controller']}>
+        <p>
+          <Link className="button" to="/scenarios/new">
+            New scenario
+          </Link>
+        </p>
+      </ShowFor>
+      {/* ---- end builder (UX-F1) */}
       <form className="form inline" onSubmit={onSubmit} role="search" aria-label="Filter scenarios">
         <div className="field">
           <label htmlFor="f-tag">Tag</label>

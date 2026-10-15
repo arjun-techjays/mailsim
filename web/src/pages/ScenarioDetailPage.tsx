@@ -5,6 +5,7 @@ import { ShowFor } from '../components/Gates';
 import { ErrorDisplay } from '../components/ErrorDisplay';
 import { Empty, Loading } from '../components/Status';
 import { usePageTitle } from '../hooks/usePageTitle';
+import { PublishedNotice } from '../builder/PublishedNotice'; // builder (UX-F1)
 
 function AnswerKeys({ scenarioKey }: { scenarioKey: string }) {
   const api = useApi();
@@ -63,6 +64,7 @@ export function ScenarioDetailPage() {
       <h1>
         Scenario <code>{key}</code>
       </h1>
+      <PublishedNotice scenarioKey={key} /> {/* builder (UX-F1) */}
       {q.isPending ? (
         <Loading />
       ) : q.isError ? (
@@ -75,6 +77,24 @@ export function ScenarioDetailPage() {
                 Start a run
               </Link>
             </ShowFor>
+            {/* ---- builder (UX-F1) */}
+            {q.data.latest_version && (
+              <ShowFor roles={['controller']}>
+                <Link
+                  className="button"
+                  to={`/scenarios/${encodeURIComponent(key)}/edit?from=${q.data.latest_version.version}`}
+                >
+                  Edit (new version)
+                </Link>
+                <Link
+                  className="button"
+                  to={`/scenarios/${encodeURIComponent(key)}/clone?from=${q.data.latest_version.version}`}
+                >
+                  Clone
+                </Link>
+              </ShowFor>
+            )}
+            {/* ---- end builder (UX-F1) */}
             <ShowFor roles={['evaluator']}>
               <Link className="button" to={`/scenarios/${encodeURIComponent(key)}/compare`}>
                 Compare builds
