@@ -823,10 +823,11 @@ class SimEngine:
             run = get_run(s, scope, run_id)
             rows = s.execute(
                 select(m.EventRow).where(m.EventRow.run_id == run.id, m.EventRow.epoch == run.epoch,
-                                         m.EventRow.type == "persona.generated")
+                                         m.EventRow.type.in_(("persona.generated",
+                                                              "persona.generation_failed")))
                 .order_by(m.EventRow.sequence)
             ).scalars()  # fmt: skip
-            return [{"sequence": r.sequence, **r.payload} for r in rows]
+            return [{"sequence": r.sequence, "type": r.type, **r.payload} for r in rows]
 
     def run_info(self, scope: Scope, run_id: str) -> dict[str, Any]:
         with self._sf() as s:
@@ -1034,6 +1035,32 @@ class SimEngine:
         return self._command(scope, run_id, SIMULATOR, "persona.reply",
                              {"persona_id": persona_id, "to": to, "mode": generation.get("mode"),
                               "subject_chars": len(subject), "body_chars": len(text)}, fn)  # fmt: skip
+
+    def persona_failed(
+        self,
+        scope: Scope,
+        run_id: str,
+        persona_id: str,
+        *,
+        in_reply_to_message_id: str,
+        reason: str,
+        generation: dict[str, Any] | None = None,
+    ) -> None:
+        """Record that a persona could not answer a message (e.g. model refusal), so the
+        runtime never retries it. Delivers nothing; the record is replayed like any event."""
+
+        def fn(c: Ctx) -> None:
+            if c.session.get(m.Persona, (persona_id, c.run.id)) is None:
+                raise NotFound(f"persona {persona_id} not found")
+            if c.session.get(m.Message, (in_reply_to_message_id, c.run.id)) is None:
+                raise NotFound(f"message {in_reply_to_message_id} not found")
+            c.emit("persona.generation_failed",
+                   {"persona_id": persona_id, "message_id": in_reply_to_message_id,
+                    "reason": reason[:200], "generation": generation or {}},
+                   operation="persona.failed")  # fmt: skip
+
+        self._command(scope, run_id, SIMULATOR, "persona.failed",
+                      {"persona_id": persona_id, "message_id": in_reply_to_message_id}, fn)  # fmt: skip
 
     # ------------------------------------------------------------- mailbox: mutations
 
