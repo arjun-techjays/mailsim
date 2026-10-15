@@ -40,6 +40,7 @@ from mailsim.domain.models import (
 )
 from mailsim.domain.states import TERMINAL, RunStatus, check_transition
 from mailsim.engine import projectors as _projectors  # noqa: F401  (registers projectors)
+from mailsim.engine.context import current_interface
 from mailsim.engine.delivery import DeliveryPolicy, ExternalMode
 from mailsim.engine.log import Event, append, id_generator, lock_run, save_ids
 from mailsim.engine.pagination import Page, check_page_size, decode_cursor, encode_cursor
@@ -201,6 +202,7 @@ class SimEngine:
                 s.add(
                     m.ActionRow(
                         run_id=run.id,
+                        interface=current_interface.get(),
                         actor=actor,
                         operation=operation,
                         input=input_,
@@ -257,6 +259,7 @@ class SimEngine:
             s.add(
                 m.ActionRow(
                     run_id=run.id,
+                    interface=current_interface.get(),
                     actor=actor,
                     operation=operation,
                     input=input_,
@@ -511,6 +514,7 @@ class SimEngine:
             s.add(
                 m.ActionRow(
                     run_id=run.id,
+                    interface=current_interface.get(),
                     actor=CONTROLLER,
                     operation="create_run",
                     input={"scenario_version_id": sv.id},
@@ -746,6 +750,7 @@ class SimEngine:
             s.add(
                 m.ActionRow(
                     run_id=orig.id,
+                    interface=current_interface.get(),
                     actor=CONTROLLER,
                     operation="replay",
                     input={},
@@ -801,19 +806,36 @@ class SimEngine:
                 for r in rows
             ]  # fmt: skip
 
+    @staticmethod
+    def _action_dict(r: m.ActionRow) -> dict[str, Any]:
+        return {"id": r.id, "actor": r.actor, "operation": r.operation, "input": r.input,
+                "result": r.result, "outcome": r.outcome,
+                "virtual_time": iso(r.virtual_time) if r.virtual_time else None,
+                "seq_start": r.seq_start, "seq_end": r.seq_end,
+                "interface": r.interface}  # fmt: skip
+
     def actions(self, scope: Scope, run_id: str) -> list[dict[str, Any]]:
         with self._sf() as s:
             get_run(s, scope, run_id)
             rows = s.execute(
                 select(m.ActionRow).where(m.ActionRow.run_id == run_id).order_by(m.ActionRow.id)
             ).scalars()
-            return [
-                {"id": r.id, "actor": r.actor, "operation": r.operation, "input": r.input,
-                 "result": r.result, "outcome": r.outcome,
-                 "virtual_time": iso(r.virtual_time) if r.virtual_time else None,
-                 "seq_start": r.seq_start, "seq_end": r.seq_end}
-                for r in rows
-            ]  # fmt: skip
+            return [self._action_dict(r) for r in rows]
+
+    def actions_page(
+        self, scope: Scope, run_id: str, *, after_id: int = 0, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        """Recorded actions with id > `after_id`, oldest first, at most `limit` (polling)."""
+        check_page_size(limit)
+        with self._sf() as s:
+            get_run(s, scope, run_id)
+            rows = s.execute(
+                select(m.ActionRow)
+                .where(m.ActionRow.run_id == run_id, m.ActionRow.id > after_id)
+                .order_by(m.ActionRow.id)
+                .limit(limit)
+            ).scalars()
+            return [self._action_dict(r) for r in rows]
 
     def agent_mailbox_owner(self, scope: Scope, run_id: str) -> str:
         """Persona id whose mailbox the agent operates (never impersonated by personas)."""
