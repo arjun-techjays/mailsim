@@ -52,7 +52,6 @@ export function ActivityPanel({
   const [failures, setFailures] = useState(0);
   const [denied, setDenied] = useState(false);
   const [total, setTotal] = useState(0);
-  const seenIds = useRef(new Set<number>());
   const polls = useRef(0);
   const [round, setRound] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -104,10 +103,9 @@ export function ActivityPanel({
         void qc.fetchQuery({ queryKey: runKeys.all(run.id), queryFn: () => api.getRun(run.id), staleTime: 0 }).catch(() => undefined);
       }
       if (fresh.length > 0) {
-        const uniq = fresh.filter((i) => !seenIds.current.has(i.id));
-        uniq.forEach((i) => seenIds.current.add(i.id));
-        setItems((prev) => [...prev, ...uniq].slice(-MAX_ITEMS));
-        setTotal((t) => t + uniq.length);
+        // `fresh` is already deduped: only ids above the cursor, once each (no unbounded id set).
+        setItems((prev) => [...prev, ...fresh].slice(-MAX_ITEMS));
+        setTotal((t) => t + fresh.length);
         if (!initial.current) {
           pending.current.push(...fresh);
           const wait = lastAnnounce.current + announceMs - Date.now();

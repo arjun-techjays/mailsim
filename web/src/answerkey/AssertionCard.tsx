@@ -1,6 +1,6 @@
 import { CheckBuilder, type Pickers } from './CheckBuilder';
 import { Field } from './fields';
-import { CHECK_DEFAULT_NOTES } from './help';
+import { CHECK_DEFAULT_NOTES, CHECK_EMPTY_NOTES } from './help';
 import { DEFAULT_SEVERITY, defaultCheck, fieldId, TYPE_HELP, type AssertionDraft } from './model';
 import type { JsonSchema } from './schema';
 
@@ -148,7 +148,7 @@ export function AssertionCard({
               value={a.check}
               onChange={(check) => set({ check })}
               path={['assertions', index, 'check']}
-              ctx={{ ...ctx, notes: CHECK_DEFAULT_NOTES[a.type] }}
+              ctx={{ ...ctx, notes: CHECK_DEFAULT_NOTES[a.type], emptyNotes: CHECK_EMPTY_NOTES[a.type] }}
               errors={errors}
             />
           ) : (

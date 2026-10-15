@@ -55,10 +55,20 @@ export const GROUP_LABELS: Record<string, string> = {
   action: 'Action',
 };
 
-/** What the server uses when a group is left empty, per assertion type (shown as a hint). */
+/** What the server uses when a group is absent (not in the document), per assertion type. */
 export const CHECK_DEFAULT_NOTES: Record<string, Record<string, string>> = {
   state: { where: 'every message in the agent’s mailbox is considered' },
   content: { where: 'the server looks at messages in the agent’s Sent folder (folder: sent)' },
   policy: { unless: 'the forbidden action is never allowed' },
   protocol: { error_codes: 'INVALID_REQUEST, UNSUPPORTED_OPERATION, NOT_FOUND' },
+};
+
+/** What an explicitly empty group ({}) means, when that differs from leaving it out. */
+export const CHECK_EMPTY_NOTES: Record<string, Record<string, string>> = {
+  state: { where: 'no filters: every message in the agent’s mailbox is considered' },
+  content: { where: 'no filters: messages in any folder of the agent’s mailbox are checked' },
+  policy: {
+    unless:
+      'empty, so it is left out when saved (an empty condition would allow the action whenever the agent’s mailbox has any message)',
+  },
 };

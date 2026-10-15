@@ -2,6 +2,7 @@
 // read the published scenario document; an evaluator-only session cannot, so it falls back to
 // the personas recorded in the newest run's state. Without either, fields stay free text.
 import { useQuery } from '@tanstack/react-query';
+import { useCallback, useState } from 'react';
 import { hasRole, useApi, useRole } from '../auth/session';
 import type { PersonaOption } from './CheckBuilder';
 
@@ -10,6 +11,8 @@ export interface ScenarioContext {
   events: string[];
   /** Labels seen on messages of the newest run (suggestions for `label`). */
   labels: string[];
+  /** Fetch label suggestions (lazy for controllers). */
+  requestLabels: () => void;
   source: 'scenario' | 'run' | 'none';
   loading: boolean;
 }
@@ -38,6 +41,8 @@ export function labelsOf(messages: unknown): string[] {
 export function useScenarioContext(scenarioKey: string, latestVersion: number): ScenarioContext {
   const api = useApi();
   const controller = hasRole(useRole(), ['controller']);
+  const [labelsWanted, setLabelsWanted] = useState(false);
+  const requestLabels = useCallback(() => setLabelsWanted(true), []);
 
   const doc = useQuery({
     queryKey: ['scenario-doc', scenarioKey, latestVersion],
@@ -47,14 +52,15 @@ export function useScenarioContext(scenarioKey: string, latestVersion: number): 
   });
   const runs = useQuery({
     queryKey: ['runs', 'for-scenario', scenarioKey],
-    queryFn: () => api.listRuns(null, { scenario_key: scenarioKey }),
+    queryFn: () => api.listRuns(null, { scenario_key: scenarioKey, page_size: 1 }),
     retry: false,
   });
   const runId = runs.data?.items[0]?.id;
   const state = useQuery({
     queryKey: ['run', runId, 'state'],
     queryFn: () => api.state(runId as string),
-    enabled: !!runId,
+    // evaluators need it for personas; controllers only once the label picker is used
+    enabled: !!runId && (!controller || labelsWanted),
     retry: false,
   });
 
@@ -66,6 +72,7 @@ export function useScenarioContext(scenarioKey: string, latestVersion: number): 
       personas,
       events: rows(body.events).map((e) => s(e.id)).filter(Boolean),
       labels,
+      requestLabels,
       source: personas.length > 0 ? 'scenario' : 'none',
       loading: doc.isLoading,
     };
@@ -75,6 +82,7 @@ export function useScenarioContext(scenarioKey: string, latestVersion: number): 
     personas,
     events: [],
     labels,
+    requestLabels,
     source: personas.length > 0 ? 'run' : 'none',
     loading: runs.isLoading || state.isLoading,
   };

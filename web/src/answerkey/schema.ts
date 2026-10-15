@@ -72,3 +72,27 @@ export function labelFor(key: string, s: JsonSchema): string {
   const lower = raw.toLowerCase();
   return lower.charAt(0).toUpperCase() + lower.slice(1);
 }
+
+/**
+ * Drops optional groups (anyOf [object, null]) whose value is an empty object, recursively.
+ * An empty optional group is never what the author meant: e.g. a policy `unless: {}` is a
+ * state check with no filters, which would allow the forbidden action almost always.
+ */
+export function pruneEmptyOptional(value: unknown, schema: JsonSchema, root: JsonSchema = schema): unknown {
+  if (!isObj(value)) return value;
+  const s = resolve(schema, root);
+  const props = isObj(s.properties) ? s.properties : {};
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value)) {
+    const prop = props[k];
+    if (!isObj(prop)) {
+      out[k] = v;
+      continue;
+    }
+    const { schema: inner, optional } = unwrap(prop, root);
+    const pruned = kindOf(inner) === 'object' ? pruneEmptyOptional(v, inner, root) : v;
+    if (optional && isObj(pruned) && Object.keys(pruned).length === 0) continue;
+    out[k] = pruned;
+  }
+  return out;
+}

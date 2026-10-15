@@ -105,7 +105,13 @@ function AnswerKeyEditor({ scenarioKey, meta, versions, taken, base, storageKey,
   const focusAfter = useRef<string | null>(null);
   const summary = useRef<HTMLHeadingElement>(null);
   const scenarioCtx = useScenarioContext(scenarioKey, versions.reduce((a, b) => Math.max(a, b), 0));
-  const ctx: Pickers = { meta, personas: scenarioCtx.personas, events: scenarioCtx.events, labels: scenarioCtx.labels };
+  const ctx: Pickers = {
+    meta,
+    personas: scenarioCtx.personas,
+    events: scenarioCtx.events,
+    labels: scenarioCtx.labels,
+    onLabelsWanted: scenarioCtx.requestLabels,
+  };
 
   useEffect(() => {
     if (dirty) saveDraft(storageKey, draft);
@@ -116,7 +122,7 @@ function AnswerKeyEditor({ scenarioKey, meta, versions, taken, base, storageKey,
     focusAfter.current = null;
   });
 
-  const doc = useMemo(() => toDocument(draft), [draft]);
+  const doc = useMemo(() => toDocument(draft, meta), [draft, meta]);
   const live = useLiveValidation(scenarioKey, mode === 'yaml' ? { source: yaml } : { document: doc });
   const server = live.result ? fromServer(live.result.errors) : [];
   const warnings = live.result ? fromServer(live.result.warnings) : [];
