@@ -4,10 +4,25 @@ Deterministic, provider-neutral email simulation engine for testing AI agents.
 Implements **Phase 1 (core simulation engine)** of
 [`email-agent-testing-simulator-spec.md`](email-agent-testing-simulator-spec.md).
 
-> Status: Phase 1 engine + Wave 1 of Phases 2-5: REST API `/v1`, hidden answer keys and the
-> post-run evaluator, LLM gateway (stub / Claude / Ollama) with persona runtime and judge, and
-> the operator dashboard (`web/`). Not yet built: Gmail/Graph adapters, IMAP/SMTP listeners,
-> MCP server, CI/benchmark command, hosted controls (Waves 2-3).
+> Status: Phase 1 engine + Waves 1-2 of Phases 2-5: REST API `/v1`, hidden answer keys and the
+> post-run evaluator, LLM gateway (stub / Claude / Ollama / Claude Code CLI) with persona runtime
+> and judge, the operator dashboard (`web/`), and the agent interfaces: Gmail API v1 and Microsoft
+> Graph v1.0 compatibility profiles, IMAP4rev1 + SMTP submission listeners and an MCP server.
+> Not yet built: CI/benchmark command, hosted controls (Wave 3).
+
+## Agent interfaces (all require the run's agent key)
+
+| Interface | Start | Endpoint | Profile |
+|---|---|---|---|
+| REST `/v1` | `serve` | `http://127.0.0.1:8000/v1/mailboxes/{mailbox_id}/...` | `openapi/openapi.json` |
+| Gmail API v1 | `serve` | `http://127.0.0.1:8000/gmail/v1/users/me/...` | [`docs/compat/gmail.md`](docs/compat/gmail.md) |
+| Microsoft Graph v1.0 | `serve` | `http://127.0.0.1:8000/graph/v1.0/me/...` | [`docs/compat/graph.md`](docs/compat/graph.md) |
+| MCP (streamable HTTP) | `serve` | `http://127.0.0.1:8000/mcp` | [`docs/compat/mcp.md`](docs/compat/mcp.md) |
+| MCP (stdio) | `MAILSIM_API_KEY=... serve mcp-stdio` | stdin/stdout | [`docs/compat/mcp.md`](docs/compat/mcp.md) |
+| IMAP4rev1 / SMTP | `serve protocols` | `127.0.0.1:1143` / `127.0.0.1:1587` (user = mailbox address, password = agent key) | [`docs/compat/imap-smtp.md`](docs/compat/imap-smtp.md) |
+
+`serve` is `uv run python -m mailsim.serve serve`. The agent key comes from the run-creation
+response (shown once) or `POST /v1/runs/{run_id}/agent-credentials` (controller key).
 
 ## Run the API and dashboard locally
 

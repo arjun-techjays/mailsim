@@ -37,6 +37,15 @@ and SMTP `421 4.7.0`, and the connection closes.
 
 ## Running
 
+```bash
+python -m mailsim.serve protocols                      # IMAP 127.0.0.1:1143, SMTP 127.0.0.1:1587
+python -m mailsim.serve protocols --tls-self-signed    # STARTTLS with an ephemeral certificate
+python -m mailsim.serve protocols --tls-cert c.pem --tls-key k.pem --host 0.0.0.0
+```
+
+Uses `MAILSIM_DATABASE_URL` / `MAILSIM_BLOB_DIR` like `serve`. A non-loopback `--host` is refused
+without TLS unless `--allow-insecure-remote` is given. Local no-auth mode never applies.
+
 The listeners take an engine object (this package may not import `mailsim.engine.core`), so the
 composition root starts them:
 

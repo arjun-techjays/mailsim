@@ -146,8 +146,9 @@ it runs on the same host and port as `/v1` (`python -m mailsim.serve serve`, def
 
 ### stdio
 
-The `mcp-stdio` subcommand of `python -m mailsim.serve` is added by the integrator PR that
-wires this package into the composition root. It calls `mailsim.mcp.stdio.run_stdio`.
+The `mcp-stdio` subcommand of `python -m mailsim.serve` calls `mailsim.mcp.stdio.run_stdio`. The
+key comes from `MAILSIM_API_KEY` only (never argv); stdout is the protocol channel and logs go to
+stderr; local no-auth mode never applies; a missing or invalid key exits with status 2.
 
 ```
 MAILSIM_API_KEY=msk_... python -m mailsim.serve mcp-stdio
