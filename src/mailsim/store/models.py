@@ -15,6 +15,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
+    Double,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -259,6 +260,10 @@ class LlmCall(Base):
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # ok | failed: billed-but-failed calls (refusal, empty/malformed output) still count
     status: Mapped[str] = mapped_column(String, nullable=False, default="ok", server_default="ok")
+    usage_estimated: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    cost_usd: Mapped[float | None] = mapped_column(Double)
     created_at: Mapped[datetime] = _created()
 
 

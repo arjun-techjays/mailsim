@@ -26,6 +26,9 @@ class Principal:
     run_id: str | None = None
     mailbox_id: str | None = None
     key_id: str | None = None
+    # Local no-auth mode only (loopback-bound dev server): the key-less operator acts as
+    # controller AND evaluator for one project. Never valid for agent interfaces.
+    local_operator: bool = False
 
     def __post_init__(self) -> None:
         # Roles usually arrive as strings (DB columns, tokens): coerce, and reject unknowns.

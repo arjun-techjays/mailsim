@@ -395,6 +395,10 @@ def create_agent_credential(
 @router.get("/me", response_model=s.MeOut, tags=["meta"])
 def me(principal: Authenticated) -> s.MeOut:
     """Identity of the calling credential (any role)."""
+    if principal.local_operator:
+        return s.MeOut(role="operator", tenant_id=principal.tenant_id,
+                       project_id=principal.project_id, run_id=None, mailbox_id=None,
+                       key_id=None, local_no_auth=True)  # fmt: skip
     return s.MeOut(role=principal.role.value, tenant_id=principal.tenant_id,
                    project_id=principal.project_id, run_id=principal.run_id,
                    mailbox_id=principal.mailbox_id, key_id=principal.key_id)  # fmt: skip

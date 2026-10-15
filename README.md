@@ -17,7 +17,8 @@ export MAILSIM_DATABASE_URL=postgresql+psycopg://mailsim:mailsim@localhost:54329
 export MAILSIM_BLOB_DIR=var/blobs
 uv run python -m mailsim.serve bootstrap --migrate --output var/keys.json   # controller + evaluator keys (0600)
 uv run python -m mailsim.serve serve --port 8000                            # REST API on :8000
-# optional LLM: MAILSIM_LLM_PROVIDER=anthropic (+ANTHROPIC_API_KEY) or openai_compatible (+MAILSIM_LLM_BASE_URL)
+# optional LLM: MAILSIM_LLM_PROVIDER=anthropic (+ANTHROPIC_API_KEY), openai_compatible (+MAILSIM_LLM_BASE_URL)
+#               or claude_cli (your local Claude Code login, see below)
 cd web && npm ci && MAILSIM_API_URL=http://127.0.0.1:8000 npm run dev       # dashboard on :5173 (proxies /v1)
 ```
 
@@ -28,6 +29,87 @@ step), then evaluate after the run (`POST /v1/runs/{id}/evaluations`, evaluator 
 builds (`GET /v1/scenarios/{key}/accuracy`). The OpenAPI document is `openapi/openapi.json`.
 LLM provider outages surface as `UPSTREAM_UNAVAILABLE` (HTTP 503, `details.retryable`).
 Expired idempotency records are swept on each claim; `python -m mailsim.serve sweep` purges all.
+
+## Local development: Claude Code CLI provider and no-auth dashboard
+
+Both are **local-only conveniences, off by default**.
+
+**`claude_cli` LLM provider.** This provider generates persona replies and judge verdicts through
+your installed Claude Code CLI and its login (`claude` then `/login`). It does not use
+`ANTHROPIC_API_KEY`.
+
+```bash
+export MAILSIM_LLM_PROVIDER=claude_cli
+export MAILSIM_LLM_MODEL=sonnet          # optional; empty = the CLI's default model
+export MAILSIM_CLAUDE_CLI=claude         # optional; executable name or path
+export MAILSIM_LLM_TIMEOUT_SECONDS=120   # optional per-call timeout (default 60)
+```
+
+How it runs the CLI:
+
+* **Command.** Each call runs
+  `claude -p --output-format json --tools "" --no-session-persistence --strict-mcp-config`.
+  * The prompt goes on stdin. The system prompt goes in a file passed with
+    `--system-prompt-file`.
+  * There is no shell, and the model name is validated.
+  * It runs in an empty temporary directory and its own process group. On timeout, the whole
+    group is killed.
+  * `--bare` is deliberately not used, because it disables the login.
+* **Environment.** The child gets an allowlisted environment: `PATH`, `HOME`, locale, temp and
+  Claude config directories.
+  * No `ANTHROPIC_*` variables, database URL or other secrets are passed.
+  * `CLAUDE_CODE_MAX_OUTPUT_TOKENS` is set from the request's (budget-capped) `max_tokens`.
+  * `MAILSIM_LLM_EFFORT` does not apply.
+* **Usage and cost.** Usage and cost come from the CLI's JSON (`usage`, `total_cost_usd`) and are
+  recorded in `llm_calls`, for failed calls too. When the CLI reports no usage, tokens are
+  estimated and the row is marked `usage_estimated`.
+* **Replay.** Replay reuses recorded outputs and never calls the CLI.
+* **Failures.** These map to `UPSTREAM_UNAVAILABLE` (HTTP 503):
+  * CLI missing;
+  * not logged in;
+  * non-zero exit;
+  * timeout (retryable);
+  * overload (retryable).
+* **Limitation.** User-level Claude Code settings and memory may still apply.
+* **Live test.** Opt in with `MAILSIM_LIVE_CLAUDE_CLI=1 uv run pytest -m live_llm tests/llm/test_claude_cli.py`.
+
+**Local no-auth dashboard.** In this mode the dashboard needs no API key. It acts as a combined
+**controller + evaluator** operator for the local project. The project is resolved in this order:
+
+1. `MAILSIM_LOCAL_PROJECT_ID`;
+2. the only project in the database;
+3. a `local` project, bootstrapped when the database is empty (no keys are printed).
+
+```bash
+uv run python -m mailsim.serve serve --host 127.0.0.1 --port 8000 --local-no-auth   # or MAILSIM_LOCAL_NO_AUTH=1
+#   -> prints: Open the dashboard: http://127.0.0.1:5173/#local_token=<random token>
+cd web && MAILSIM_API_URL=http://127.0.0.1:8000 npm run dev                      # then open that link
+```
+
+The server mints a random launch token at every start and prints it only to the terminal. It
+goes in the URL fragment, which is never sent to a server. The dashboard reads it once, removes
+it from the address bar and keeps it in the tab's session. Without the link, the Connect page
+explains where to find it. Set `MAILSIM_DASHBOARD_URL` if the dashboard runs elsewhere.
+
+The token is what separates your browser from other local processes, such as the agent under
+test. An agent that drops its key gets 401, not operator access, so hidden answer keys stay out
+of its reach. Web pages you visit can't use the token either: cross-site requests can't send it,
+and DNS rebinding doesn't give a page the token.
+
+Limit: the token does not protect against other processes running as **your OS user** that
+can read the server's terminal or memory, or your browser history (which may keep the launch
+URL). Run untrusted agents as a different user or against a key-mode server.
+
+The mode's other safeguards:
+
+* **Loopback only.** The server refuses to start the mode unless bound to `127.0.0.1`, `::1` or
+  `localhost`. While the mode is on, every request from a non-loopback peer or with a
+  non-loopback `Host` header gets 403, whatever launched the app.
+* **Loud warning.** The server prints a warning at startup.
+* **Agent interfaces still require agent keys.** This covers the REST mailbox routes and the
+  Gmail, Graph, IMAP/SMTP and MCP adapters.
+* **Keys are always verified.** Any request that carries an `Authorization` header is checked as
+  a key, so invalid or wrong-scheme keys get 401.
 
 ## Quick start
 

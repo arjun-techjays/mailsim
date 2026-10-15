@@ -299,9 +299,12 @@ class RunPage(PageOut):
 class MeOut(_M):
     """The calling credential's identity (`GET /v1/me`)."""
 
-    role: Literal["controller", "evaluator", "agent"]
+    role: Literal["controller", "evaluator", "agent", "operator"]
     tenant_id: str
     project_id: str
     run_id: str | None
     mailbox_id: str | None
     key_id: str | None
+    local_no_auth: bool = Field(
+        default=False, description="true for the key-less local operator (loopback dev mode)"
+    )

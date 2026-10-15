@@ -1496,6 +1496,12 @@
             ],
             "title": "Key Id"
           },
+          "local_no_auth": {
+            "default": false,
+            "description": "true for the key-less local operator (loopback dev mode)",
+            "title": "Local No Auth",
+            "type": "boolean"
+          },
           "mailbox_id": {
             "anyOf": [
               {
@@ -1515,7 +1521,8 @@
             "enum": [
               "controller",
               "evaluator",
-              "agent"
+              "agent",
+              "operator"
             ],
             "title": "Role",
             "type": "string"

@@ -44,6 +44,8 @@ export interface MockDb {
   answerKeys: Record<string, AnswerKeyOut[]>; // by scenario key
   runs: Record<string, MockRun>;
   counters: { run: number; msg: number; event: number; eval: number; request: number; revocable: number };
+  /** Behave like `serve --local-no-auth`: key-less requests act as the operator of prj_main. */
+  localNoAuth?: boolean;
 }
 
 export const MOCK_KEYS = {
@@ -55,6 +57,8 @@ export const MOCK_KEYS = {
   revocable: 'mk_controller_revocable',
 } as const;
 
+/** Launch token of the mock local no-auth server (`/#local_token=...`). */
+export const MOCK_LOCAL_TOKEN = 'mock-local-token-0123456789';
 export const DEMO_RUN_ID = 'run_demo';
 export const BROKEN_RUN_ID = 'run_boom';
 export const EMPTY_RUN_ID = 'run_empty';

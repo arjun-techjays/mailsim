@@ -37,8 +37,12 @@ export function isApiError(e: unknown): e is ApiError {
 export interface ApiConfig {
   baseUrl: string;
   apiKey: string;
+  /** Local no-auth mode launch token (sent only when there is no API key). */
+  localToken?: string;
   timeoutMs?: number;
 }
+
+export const LOCAL_TOKEN_HEADER = 'X-Mailsim-Local-Token';
 
 export type QueryValue = string | number | boolean | null | undefined | readonly string[];
 
@@ -130,6 +134,7 @@ async function send(
 
   const headers: Record<string, string> = { Accept: accept };
   if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
+  else if (cfg.localToken) headers[LOCAL_TOKEN_HEADER] = cfg.localToken;
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
   if (opts.idempotent) headers['Idempotency-Key'] = newIdempotencyKey();
 

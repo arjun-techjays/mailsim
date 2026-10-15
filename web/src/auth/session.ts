@@ -10,6 +10,10 @@ export interface SessionValue {
   disconnect: () => void;
   /** True once the API answered 401 for the current key (revoked/expired mid-session). */
   rejected: boolean;
+  /** True while the dashboard checks whether the API runs in local no-auth mode. */
+  probing: boolean;
+  /** The API runs in local no-auth mode but this tab has no (valid) launch link. */
+  localNoAuthLink: boolean;
 }
 
 export const SessionContext = createContext<SessionValue | null>(null);
@@ -29,4 +33,14 @@ export function useApi(): Api {
 
 export function useRole(): Role | null {
   return useSession().session?.role ?? null;
+}
+
+/**
+ * Whether `role` may use a view meant for `roles`. The local no-auth `operator` acts as a
+ * controller AND an evaluator, never as an agent.
+ */
+export function hasRole(role: Role | null | undefined, roles: readonly Role[]): boolean {
+  if (!role) return false;
+  if (roles.includes(role)) return true;
+  return role === 'operator' && roles.some((r) => r === 'controller' || r === 'evaluator');
 }

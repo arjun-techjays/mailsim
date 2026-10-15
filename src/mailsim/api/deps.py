@@ -14,10 +14,12 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from mailsim.api.auth import InvalidCredential, verify_key
+from mailsim.api.local_mode import MODE_HEADER, TOKEN_HEADER, LocalAccess
 from mailsim.auth.principal import Principal, Role
 from mailsim.domain.errors import PermissionDenied, UnsupportedOperation
 
 bearer = HTTPBearer(auto_error=False, description="Sandbox-issued API key (role-scoped)")
+OPERATOR_ROLES = frozenset({Role.CONTROLLER, Role.EVALUATOR})
 
 
 def _unauthenticated(message: str) -> HTTPException:
@@ -34,7 +36,16 @@ def get_principal(
     Missing, malformed, unknown, expired and revoked keys all answer 401 with the same
     message, so the response never reveals whether a key exists.
     """
-    if credentials is None or credentials.scheme.lower() != "bearer":
+    local: LocalAccess | None = getattr(request.app.state, "local_access", None)
+    if local is not None and "authorization" not in request.headers:
+        # local no-auth mode (opt-in, loopback only): no key, but the launch token is required
+        if local.admits(request.headers.get(TOKEN_HEADER)):
+            request.state.principal = local.operator
+            return local.operator
+        exc = _unauthenticated("missing or invalid API key")
+        exc.headers = {**(exc.headers or {}), MODE_HEADER: "1"}
+        raise exc
+    if credentials is None:  # absent, empty, or not the Bearer scheme
         raise _unauthenticated("missing or invalid API key")
     session_factory = getattr(request.app.state, "session_factory", None)
     if session_factory is None:
@@ -52,6 +63,8 @@ def require_role(*roles: Role) -> Callable[[Principal], Principal]:
     allowed = frozenset(roles)
 
     def dependency(principal: Annotated[Principal, Depends(get_principal)]) -> Principal:
+        if principal.local_operator and allowed & OPERATOR_ROLES:
+            return principal
         if principal.role not in allowed:
             raise PermissionDenied("this credential's role may not call this operation")
         return principal
@@ -63,7 +76,10 @@ def require_role(*roles: Role) -> Callable[[Principal], Principal]:
 def agent_for_mailbox(
     mailbox_id: str, principal: Annotated[Principal, Depends(get_principal)]
 ) -> Principal:
-    """Agent credentials only, and only for the mailbox (and run) they were issued for."""
+    """Agent credentials only, and only for the mailbox (and run) they were issued for.
+    The local no-auth operator is never an agent: agent interfaces always demand a key."""
+    if principal.local_operator:
+        raise _unauthenticated("agent interfaces require an agent API key")
     if principal.role != Role.AGENT or principal.mailbox_id != mailbox_id:
         raise PermissionDenied("agent credentials are bound to one mailbox")
     return principal

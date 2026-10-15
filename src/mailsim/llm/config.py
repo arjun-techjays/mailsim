@@ -2,9 +2,13 @@
 
 Environment variables (all optional; the default provider is the offline `stub`):
 
-- ``MAILSIM_LLM_PROVIDER``: ``stub`` | ``anthropic`` | ``openai_compatible`` (default ``stub``).
+- ``MAILSIM_LLM_PROVIDER``: ``stub`` | ``anthropic`` | ``openai_compatible`` | ``claude_cli``
+  (default ``stub``). ``claude_cli`` runs the local Claude Code CLI headlessly with your
+  Claude Code login (no API key); local development only.
+- ``MAILSIM_CLAUDE_CLI``: path/name of the Claude Code executable (default ``claude``).
 - ``MAILSIM_LLM_MODEL``: model id. Defaults: anthropic -> ``claude-sonnet-5-5`` (set
-  ``claude-opus-5-5`` for Opus); stub -> ``stub-1``; openai_compatible -> required.
+  ``claude-opus-5-5`` for Opus); stub -> ``stub-1``; openai_compatible -> required;
+  claude_cli -> the CLI's own default unless set (aliases like ``sonnet``/``opus`` work).
 - ``MAILSIM_LLM_BASE_URL``: OpenAI-compatible base URL, e.g. ``http://127.0.0.1:11434/v1``
   (Ollama). ``MAILSIM_OLLAMA_URL`` is accepted as a fallback. Must be ``https://`` unless
   the host is loopback.
@@ -48,7 +52,7 @@ SECRET_ENV_VARS = (
 )
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
-_PROVIDERS: tuple[ProviderName, ...] = ("stub", "anthropic", "openai_compatible")
+_PROVIDERS: tuple[ProviderName, ...] = ("stub", "anthropic", "openai_compatible", "claude_cli")
 _EFFORTS: tuple[Effort, ...] = ("low", "medium", "high", "xhigh", "max")
 _FALSY = frozenset({"0", "false", "no", "off"})
 _SECRET_PATTERNS = (
@@ -82,6 +86,7 @@ class LLMConfig(BaseModel):
     effort: Effort | None = None
     fallbacks: bool = True
     stub_fixtures: str | None = None
+    cli_executable: str = "claude"
     budget: Budget = Field(default_factory=Budget)
 
     @model_validator(mode="after")
@@ -113,7 +118,7 @@ class LLMConfig(BaseModel):
         if not model:
             if provider == "openai_compatible":
                 raise InvalidRequest("MAILSIM_LLM_MODEL is required for openai_compatible")
-            model = DEFAULT_MODEL if provider == "anthropic" else STUB_MODEL
+            model = {"anthropic": DEFAULT_MODEL, "claude_cli": ""}.get(provider, STUB_MODEL)
         if provider == "openai_compatible" and not base_url:
             raise InvalidRequest("MAILSIM_LLM_BASE_URL is required for openai_compatible")
         effort = e.get("MAILSIM_LLM_EFFORT", "").strip() or None
@@ -137,6 +142,7 @@ class LLMConfig(BaseModel):
                 effort=effort,
                 fallbacks=e.get("MAILSIM_LLM_FALLBACKS", "1").strip().lower() not in _FALSY,
                 stub_fixtures=e.get("MAILSIM_LLM_STUB_FIXTURES") or None,
+                cli_executable=e.get("MAILSIM_CLAUDE_CLI", "").strip() or "claude",
                 budget=budget,
             )
         except ValidationError as exc:

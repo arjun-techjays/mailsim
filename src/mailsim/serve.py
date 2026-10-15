@@ -10,8 +10,13 @@ Environment: ``MAILSIM_DATABASE_URL`` (default: the local Compose database),
   + project with one controller and one evaluator key. Keys are shown once (only hashes are
   stored). Prefer ``--output`` (file written with mode 0600; stdout then carries ids only),
   and never run it where stdout is captured by logs or CI output.
-- ``serve [--host 127.0.0.1] [--port 8000]`` runs uvicorn on the app built from the
-  environment.
+- ``serve [--host 127.0.0.1] [--port 8000] [--local-no-auth]`` runs uvicorn on the app built
+  from the environment. ``--local-no-auth`` (or ``MAILSIM_LOCAL_NO_AUTH=1``) is a LOCAL
+  DEVELOPMENT convenience: key-less requests act as a controller+evaluator operator for one
+  project (``MAILSIM_LOCAL_PROJECT_ID``, else the only project, else a new "local" project).
+  It refuses to start unless bound to a loopback address. Agent interfaces (agent mailbox
+  REST, Gmail, Graph, IMAP/SMTP, MCP agent tools) still require agent keys, and hidden
+  answer keys stay unreachable for agents.
 """
 
 from __future__ import annotations
@@ -21,18 +26,23 @@ import importlib
 import importlib.util
 import inspect
 import json
+import logging
 import os
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI
+from sqlalchemy import select
 
 from mailsim.api.app import create_app
 from mailsim.api.auth import bootstrap
 from mailsim.api.idempotency import SWEEP_BATCH, sweep_expired
+from mailsim.api.local_mode import LocalAccess, is_loopback, new_token
+from mailsim.auth.principal import Principal, Role
 from mailsim.domain.errors import SimError
 from mailsim.engine.core import SimEngine
 from mailsim.llm.gateway import LLMGateway
@@ -40,6 +50,7 @@ from mailsim.llm.judge import LLMJudge
 from mailsim.personas.runtime import PersonaRuntime
 from mailsim.store.blob import FilesystemBlobStore
 from mailsim.store.db import make_engine, make_session_factory, run_migrations
+from mailsim.store.models import Project
 
 DEFAULT_BLOB_DIR = "var/blobs"
 EVALUATION_SERVICE = "mailsim.evaluation.service"
@@ -71,6 +82,44 @@ def evaluation_service(**deps: Any) -> Any | None:
     return cls(**{k: v for k, v in deps.items() if k in params})
 
 
+LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
+DEFAULT_DASHBOARD_URL = "http://127.0.0.1:5173"
+TRUE = frozenset({"1", "true", "yes", "on"})
+log = logging.getLogger("mailsim.serve")
+
+
+def local_no_auth_requested(environ: Mapping[str, str]) -> bool:
+    return environ.get("MAILSIM_LOCAL_NO_AUTH", "").strip().lower() in TRUE
+
+
+def check_loopback(host: str) -> None:
+    if host.strip("[]").lower() not in LOOPBACK:
+        raise SystemExit(
+            f"--local-no-auth refuses to bind to {host!r}: use 127.0.0.1, ::1 or localhost"
+        )
+
+
+def local_operator(session_factory: Any, environ: Mapping[str, str]) -> Principal:
+    """The key-less local operator principal (controller + evaluator for one project)."""
+    with session_factory.begin() as session:
+        wanted = environ.get("MAILSIM_LOCAL_PROJECT_ID", "").strip()
+        if wanted:
+            project = session.get(Project, wanted)
+            if project is None:
+                raise SystemExit(f"MAILSIM_LOCAL_PROJECT_ID={wanted!r} does not exist")
+        else:
+            projects = session.execute(select(Project).order_by(Project.created_at)).scalars().all()
+            if len(projects) > 1:
+                raise SystemExit("several projects exist: set MAILSIM_LOCAL_PROJECT_ID")
+            project = projects[0] if projects else None
+            if project is None:
+                created = bootstrap(session, "local", "local")  # keys are not printed
+                project = session.get(Project, created["project_id"])
+        assert project is not None
+        return Principal(project.tenant_id, project.id, Role.CONTROLLER, key_id="local-operator",
+                         local_operator=True)  # fmt: skip
+
+
 def build_state(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
     env = os.environ if environ is None else environ
     db = make_engine(env.get("MAILSIM_DATABASE_URL") or None)
@@ -88,6 +137,23 @@ def build_state(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
     state["evaluation_service"] = evaluation_service(
         **state, judge_factory=lambda run_id: LLMJudge(gateway, run_id=run_id)
     )
+    if local_no_auth_requested(env):
+        access = LocalAccess(local_operator(session_factory, env), new_token())
+        state["local_access"] = access
+        warning = (
+            "LOCAL NO-AUTH MODE: the dashboard needs no API key and acts as controller+evaluator "
+            f"for project {access.operator.project_id}. Loopback clients only; never expose this "
+            "server. Agent interfaces still require agent keys."
+        )
+        log.warning("!" * 20 + " " + warning + " " + "!" * 20)
+        dashboard = env.get("MAILSIM_DASHBOARD_URL", DEFAULT_DASHBOARD_URL).rstrip("/")
+        if not is_loopback(urlsplit(dashboard).hostname):
+            print("WARNING: MAILSIM_DASHBOARD_URL is not a loopback URL; the launch token in the "
+                  "link below is readable by that site", file=sys.stderr)  # fmt: skip
+        # the launch token goes to the terminal only (never to the log): it is what separates
+        # the developer's browser from other local processes, such as the agent under test
+        print(f"WARNING: {warning}\nOpen the dashboard: {dashboard}/#local_token={access.token}",
+              file=sys.stderr)  # fmt: skip
     return state
 
 
@@ -114,6 +180,8 @@ def _parser() -> argparse.ArgumentParser:
     srv = sub.add_parser("serve", help="run the HTTP API with uvicorn")
     srv.add_argument("--host", default="127.0.0.1")
     srv.add_argument("--port", type=int, default=8000)
+    srv.add_argument("--local-no-auth", action="store_true",
+                     help="LOCAL DEV ONLY: no key needed for the operator (loopback only)")  # fmt: skip
     return p
 
 
@@ -121,6 +189,17 @@ def _serve(host: str, port: int) -> None:  # pragma: no cover - blocks; exercise
     import uvicorn
 
     uvicorn.run(app_from_env(), host=host, port=port)
+
+
+def serve_command(host: str, port: int, local_no_auth: bool, serve: Callable[[str, int], Any],
+                  environ: dict[str, str] | None = None) -> int:  # fmt: skip
+    env = os.environ if environ is None else environ
+    if local_no_auth:
+        env["MAILSIM_LOCAL_NO_AUTH"] = "1"
+    if local_no_auth_requested(env):
+        check_loopback(host)
+    serve(host, port)
+    return 0
 
 
 def _write_secret(path: Path, data: str) -> None:
@@ -133,8 +212,7 @@ def _write_secret(path: Path, data: str) -> None:
 def main(argv: Sequence[str] | None = None, *, serve: Callable[[str, int], Any] = _serve) -> int:
     args = _parser().parse_args(argv)
     if args.cmd == "serve":
-        serve(args.host, args.port)
-        return 0
+        return serve_command(args.host, args.port, args.local_no_auth, serve)
     if args.cmd == "sweep":
         state = build_state()
         try:

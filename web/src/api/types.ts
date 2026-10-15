@@ -39,5 +39,8 @@ export type MeOut = S['MeOut'];
 export type RunPage = S['RunPage'];
 export type ReportFormat = 'json' | 'junit' | 'markdown';
 
-export type Role = 'controller' | 'evaluator' | 'agent';
+/** `operator` = local no-auth mode (`serve --local-no-auth`): combined controller + evaluator. */
+export type Role = 'controller' | 'evaluator' | 'agent' | 'operator';
+/** Roles a key can carry (`operator` has no key). */
+export type KeyRole = Exclude<Role, 'operator'>;
 

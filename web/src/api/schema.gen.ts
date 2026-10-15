@@ -423,6 +423,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runs/{run_id}/mailboxes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Mailboxes
+         * @description Mailboxes of the run (operator view).
+         */
+        get: operations["list_mailboxes_v1_runs__run_id__mailboxes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/runs/{run_id}/mailboxes/{mailbox_id}/inject": {
         parameters: {
             query?: never;
@@ -438,6 +458,27 @@ export interface paths {
          *     the only delivery status is `delivered_to_simulated_mailbox`.
          */
         post: operations["inject_v1_runs__run_id__mailboxes__mailbox_id__inject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{run_id}/mailboxes/{mailbox_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Inspect Messages
+         * @description Operator read of any mailbox in the run. Unlike the agent mailbox API this is not an
+         *     agent action: nothing is recorded and no triggers are armed; finished runs are readable.
+         */
+        get: operations["inspect_messages_v1_runs__run_id__mailboxes__mailbox_id__messages_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1259,6 +1300,15 @@ export interface components {
              */
             role: "controller" | "evaluator" | "agent";
         };
+        /** MailboxOut */
+        MailboxOut: {
+            /** Email */
+            email: string;
+            /** Id */
+            id: string;
+            /** Owner Id */
+            owner_id: string;
+        };
         /**
          * MeOut
          * @description The calling credential's identity (`GET /v1/me`).
@@ -1266,6 +1316,12 @@ export interface components {
         MeOut: {
             /** Key Id */
             key_id: string | null;
+            /**
+             * Local No Auth
+             * @description true for the key-less local operator (loopback dev mode)
+             * @default false
+             */
+            local_no_auth: boolean;
             /** Mailbox Id */
             mailbox_id: string | null;
             /** Project Id */
@@ -1274,7 +1330,7 @@ export interface components {
              * Role
              * @enum {string}
              */
-            role: "controller" | "evaluator" | "agent";
+            role: "controller" | "evaluator" | "agent" | "operator";
             /** Run Id */
             run_id: string | null;
             /** Tenant Id */
@@ -2366,6 +2422,37 @@ export interface operations {
             };
         };
     };
+    list_mailboxes_v1_runs__run_id__mailboxes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MailboxOut"][];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     inject_v1_runs__run_id__mailboxes__mailbox_id__inject_post: {
         parameters: {
             query?: never;
@@ -2391,6 +2478,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InjectResult"];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    inspect_messages_v1_runs__run_id__mailboxes__mailbox_id__messages_get: {
+        parameters: {
+            query?: {
+                folder?: string | null;
+                cursor?: string | null;
+                page_size?: number;
+                order?: "asc" | "desc";
+            };
+            header?: never;
+            path: {
+                run_id: string;
+                mailbox_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MessagePage"];
                 };
             };
             /** @description Default Response */
