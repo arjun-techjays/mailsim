@@ -1,6 +1,7 @@
 // Validation issues carry dotted paths into the document (`scenario.personas.1.email`; the
 // server's reference checks use `scenario.personas[1].email`). Form fields register under the
 // same normalized path, so an issue can be shown next to its field and focused from the summary.
+import { isApiError } from '../api/client';
 import type { ValidationIssue } from '../api/types';
 
 export type SectionId = 'basics' | 'organisation' | 'personas' | 'mailboxes' | 'messages' | 'events' | 'agent' | 'limits';
@@ -75,4 +76,22 @@ export function findTarget(path: string): HTMLElement | null {
     parts.pop();
   }
   return null;
+}
+
+/** Issues from a publish error envelope: `details.issues` [{path, message}] or `details.errors` ["path: message"]. */
+export function publishIssues(err: unknown): ValidationIssue[] {
+  if (!isApiError(err)) return [];
+  const { issues, errors } = err.details;
+  if (Array.isArray(issues)) {
+    return issues
+      .filter((i): i is { path: unknown; message: unknown } => !!i && typeof i === 'object')
+      .map((i) => ({ path: String(i.path), message: String(i.message) }));
+  }
+  if (Array.isArray(errors)) {
+    return errors.map(String).map((e) => {
+      const at = e.indexOf(': ');
+      return at > 0 ? { path: e.slice(0, at), message: e.slice(at + 2) } : { path: 'scenario', message: e };
+    });
+  }
+  return [];
 }

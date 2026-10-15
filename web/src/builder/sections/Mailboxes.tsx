@@ -2,6 +2,9 @@ import { useBuilder } from '../context';
 import { Group, RadioGroup } from '../fields';
 import { personaLabel, personasNeedingMailbox, uid, type ScenarioForm } from '../model';
 
+const confirmRemoval = (who: string, count: number) =>
+  count === 0 || window.confirm(`Remove the mailbox of ${who}? Its ${count} initial message(s) will be removed too.`);
+
 function ensureMailbox(d: ScenarioForm, owner: string): void {
   if (!d.mailboxes.some((m) => m.owner === owner)) d.mailboxes.push({ uid: uid(), owner, messages: [] });
 }
@@ -10,10 +13,10 @@ export function MailboxesSection() {
   const { draft, updateForm } = useBuilder();
   const f = draft.form;
   const owners = new Set(f.mailboxes.map((m) => m.owner));
-  const personaIds = new Set(f.personas.map((p) => p.id));
+  const personaUids = new Set(f.personas.map((p) => p.uid));
   const missing = personasNeedingMailbox(f);
-  const orphans = f.mailboxes.map((m, i) => ({ m, i })).filter(({ m }) => !personaIds.has(m.owner));
-  const allHave = f.personas.length > 0 && f.personas.every((p) => owners.has(p.id));
+  const orphans = f.mailboxes.map((m, i) => ({ m, i })).filter(({ m }) => !personaUids.has(m.owner));
+  const allHave = f.personas.length > 0 && f.personas.every((p) => owners.has(p.uid));
   return (
     <>
       <p className="hint">
@@ -31,7 +34,7 @@ export function MailboxesSection() {
               disabled={allHave}
               onClick={() =>
                 updateForm((d) => {
-                  for (const p of d.personas) ensureMailbox(d, p.id);
+                  for (const p of d.personas) ensureMailbox(d, p.uid);
                 })
               }
             >
@@ -41,7 +44,7 @@ export function MailboxesSection() {
           </div>
           {missing.length > 0 && (
             <p className="notice" role="note" data-testid="missing-mailboxes">
-              These personas receive mail (or are the agent’s) but have no mailbox: {missing.join(', ')}.
+              These personas receive mail (or are the agent’s) but have no mailbox: {missing.map(personaLabel).join(', ')}.
             </p>
           )}
           <Group path="scenario.mailboxes" legend="Mailboxes" className="b-checks">
@@ -50,16 +53,19 @@ export function MailboxesSection() {
                 <input
                   id={`mbx-${p.uid}`}
                   type="checkbox"
-                  checked={owners.has(p.id)}
-                  onChange={(e) =>
+                  checked={owners.has(p.uid)}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    const count = f.mailboxes.find((m) => m.owner === p.uid)?.messages.length ?? 0;
+                    if (!checked && !confirmRemoval(personaLabel(p), count)) return;
                     updateForm((d) => {
-                      if (e.target.checked) ensureMailbox(d, p.id);
+                      if (checked) ensureMailbox(d, p.uid);
                       else {
-                        d.mailboxes = d.mailboxes.filter((m) => m.owner !== p.id);
-                        if (d.agentMailbox === p.id) d.agentMailbox = '';
+                        d.mailboxes = d.mailboxes.filter((m) => m.owner !== p.uid);
+                        if (d.agentMailbox === p.uid) d.agentMailbox = '';
                       }
-                    })
-                  }
+                    });
+                  }}
                 />
                 <label htmlFor={`mbx-${p.uid}`}>Mailbox for {personaLabel(p)}</label>
               </div>
@@ -70,7 +76,7 @@ export function MailboxesSection() {
             legend="Agent under test uses this mailbox"
             help="Choosing a persona without a mailbox creates one."
             value={f.agentMailbox}
-            options={f.personas.map((p) => ({ value: p.id, label: personaLabel(p) }))}
+            options={f.personas.map((p) => ({ value: p.uid, label: personaLabel(p) }))}
             onChange={(v) =>
               updateForm((d) => {
                 d.agentMailbox = v;

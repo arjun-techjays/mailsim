@@ -1,7 +1,17 @@
 import { useBuilder } from '../context';
 import { Group, RadioGroup, SelectField, StringListField, TextArea, TextField } from '../fields';
 import { MODE_HELP } from '../help';
-import { blankPersona, blankRule, personaLabel, setPersonaId, slugId, type PersonaForm, type ScenarioForm } from '../model';
+import {
+  blankPersona,
+  blankRule,
+  personaLabel,
+  personaRemovalEffects,
+  removePersona,
+  setPersonaId,
+  slugId,
+  type PersonaForm,
+  type ScenarioForm,
+} from '../model';
 
 function move<T>(list: T[], from: number, to: number): void {
   const [item] = list.splice(from, 1);
@@ -30,7 +40,7 @@ function ScriptRules({ index }: { index: number }) {
             label="When the message is from"
             value={r.from}
             placeholder="Anyone"
-            options={others.map((p) => ({ value: p.id, label: personaLabel(p) }))}
+            options={others.map((p) => ({ value: p.uid, label: personaLabel(p) }))}
             onChange={(v) => edit(j, (x) => void (x.from = v))}
           />
           <TextField path={`${base}.${j}.on.subject_contains`} label="and the subject contains" value={r.subject_contains} onChange={(v) => edit(j, (x) => void (x.subject_contains = v))} />
@@ -159,14 +169,12 @@ function PersonaCard({ index }: { index: number }) {
         </button>
         <button
           type="button"
-          onClick={() =>
-            updateForm((d) => {
-              const id = p.id;
-              d.personas.splice(index, 1);
-              d.mailboxes = d.mailboxes.filter((m) => m.owner !== id);
-              if (d.agentMailbox === id) d.agentMailbox = '';
-            })
-          }
+          onClick={() => {
+            const effects = personaRemovalEffects(f, index);
+            const ask = `Remove ${personaLabel(p)}?\n\nAlso:\n- ${effects.join('\n- ')}`;
+            if (effects.length > 0 && !window.confirm(ask)) return;
+            updateForm((d) => removePersona(d, index));
+          }}
         >
           Remove persona {n}
         </button>

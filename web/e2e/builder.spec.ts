@@ -18,12 +18,14 @@ test.describe('scenario builder', () => {
 
     // A blank scenario is not valid yet: live validation lists what is missing.
     await expect(b.status()).toHaveText(/problems to fix/);
-    await expect(b.saveButton()).toBeDisabled();
-    await expect(b.summary()).toContainText('Basics: must not be empty');
+    await expect(b.summary()).toContainText('Basics: String should have at least 1 character');
+    // Save on an invalid scenario takes you to the problems instead of publishing
+    await b.saveButton().click();
+    await expect(b.summary()).toBeFocused();
     await expectAccessible(page, 'builder (blank)');
 
     // Error summary links focus the field.
-    await b.summary().getByRole('button', { name: /Organisation: must not be empty/ }).click();
+    await b.summary().getByRole('button', { name: /Organisation: String should have at least 1 character/ }).click();
     await expect(page.getByLabel('Mail domain')).toBeFocused();
     await page.getByLabel('Mail domain').fill('acme.test');
 
@@ -45,7 +47,7 @@ test.describe('scenario builder', () => {
     await b.persona(2).getByLabel('Role').fill('Vendor');
     await b.persona(2).getByRole('radio', { name: /^scripted/ }).click();
     await b.persona(2).getByRole('button', { name: 'Add reply rule' }).click();
-    await b.persona(2).getByLabel('When the message is from').selectOption('alice_finance');
+    await b.persona(2).getByLabel('When the message is from').selectOption({ label: 'Alice Finance <alice_finance@acme.test>' });
     await b.persona(2).getByLabel('Reply text').fill('Thanks, noted.');
 
     await b.section('Mailboxes');
@@ -85,13 +87,14 @@ test.describe('scenario builder', () => {
     // An event with a missing subject: the live error is shown inline, then fixed.
     await b.section('Events');
     await page.getByRole('button', { name: 'Add event' }).click();
-    await expect(b.event(1).getByLabel('From')).toHaveValue('bob_vendor');
+    await expect(b.event(1).getByLabel('From').locator('option:checked')).toHaveText('Bob Vendor <bob_vendor@acme.test>');
     await expect(b.event(1).getByRole('checkbox', { name: /Alice Finance/ })).toBeChecked();
     await expect(b.event(1).getByLabel('Seconds after the run starts', { exact: true })).toHaveValue('600');
-    await expect(b.event(1).getByTestId('inline-error')).toHaveText('must not be empty');
-    await expect(b.event(1).getByLabel('Subject')).toHaveAttribute('aria-invalid', 'true');
     await b.event(1).getByRole('radio', { name: /^after_agent_action/ }).check();
+    await expect(b.event(1).getByTestId('inline-error')).toHaveText('unknown action None');
+    await expect(b.event(1).getByLabel('After the agent’s first…')).toHaveAttribute('aria-invalid', 'true');
     await b.event(1).getByLabel('After the agent’s first…').selectOption('send_reply');
+    await expect(b.event(1).getByTestId('inline-error')).toHaveCount(0);
     await b.event(1).getByLabel('Subject').fill('Updated bank details');
     await b.event(1).getByLabel('Body').fill('Please use our new account.');
 
@@ -137,7 +140,7 @@ test.describe('scenario builder', () => {
     await expect(page).toHaveURL(/\/scenarios\/ops\.two-person$/);
     const notice = page.getByTestId('published-notice');
     await expect(notice).toContainText('Published version 1');
-    await expect(notice.getByRole('link', { name: 'Write its answer key' })).toBeVisible();
+    await expect(notice.getByRole('link', { name: 'Write its answer key' })).toHaveAttribute('href', '/scenarios/ops.two-person/answer-key');
     await expect(notice.getByRole('link', { name: 'Start a run' })).toHaveAttribute('href', '/scenarios/ops.two-person/start');
     await expect(page.getByTestId('scenario-versions').getByRole('listitem')).toHaveText(['v1']);
     await expectAccessible(page, 'published');
@@ -177,11 +180,12 @@ test.describe('scenario builder', () => {
     await page.getByRole('button', { name: /Finance example/ }).click();
     await page.getByLabel('Title').fill('Draft that must survive');
     await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Runs' }).click();
-    const dialog = page.getByRole('alertdialog', { name: 'Leave without saving?' });
+    const dialog = page.getByRole('dialog', { name: 'Leave without saving?' });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByRole('button', { name: 'Stay on this page' })).toBeFocused();
     await expectAccessible(page, 'leave dialog');
-    await dialog.getByRole('button', { name: 'Stay on this page' }).click();
+    await page.keyboard.press('Escape'); // Escape = stay
+    await expect(dialog).toBeHidden();
     await expect(page).toHaveURL(/\/scenarios\/new$/);
 
     await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Runs' }).click();

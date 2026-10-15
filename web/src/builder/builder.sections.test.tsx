@@ -73,7 +73,8 @@ describe('builder sections', () => {
     expect(within(p3()).getByText(/No rules yet/)).toBeInTheDocument();
     await user.click(within(p3()).getByRole('button', { name: 'Add reply rule' }));
     const rules = within(p3()).getByRole('group', { name: 'Reply rules' });
-    await user.selectOptions(within(rules).getByLabelText('When the message is from'), 'finance');
+    const fromSelect = within(rules).getByLabelText('When the message is from');
+    await user.selectOptions(fromSelect, within(fromSelect).getByRole('option', { name: 'Finance Manager <finance@example.test>' }));
     await user.type(within(rules).getByLabelText('and the subject contains'), 'INV');
     await user.type(within(rules).getByLabelText('and the body contains'), 'bank');
     await user.type(within(rules).getByLabelText('Reply subject (optional)'), 'Re: bank');
@@ -98,9 +99,27 @@ describe('builder sections', () => {
     expect(persona(1)).toHaveAccessibleName(/Vendor Accounts/);
     await user.click(s.getByRole('button', { name: 'Move persona 2 up' }));
     expect(persona(1)).toHaveAccessibleName(/Finance Manager/);
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
     await user.click(s.getByRole('button', { name: 'Remove persona 1' }));
+    expect(confirm.mock.calls[0]?.[0]).toMatch(/Remove Finance Manager <finance@example.test>\?[\s\S]*its mailbox and 1 initial message\(s\) will be removed[\s\S]*the agent will have no mailbox/);
+    expect(persona(1)).toHaveAccessibleName(/Finance Manager/);
+    await user.click(s.getByRole('button', { name: 'Remove persona 1' }));
+    expect(persona(1)).toHaveAccessibleName(/Vendor Accounts/);
     s = await goSection(user, 'Agent');
     expect(s.getByTestId('agent-mailbox-summary')).toHaveTextContent('no mailbox yet');
+  });
+
+  it('mailboxes: unticking a mailbox with messages asks first', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const { user } = await openNew(true);
+    const s = await goSection(user, 'Mailboxes');
+    const box = () => s.getByRole('checkbox', { name: 'Mailbox for Finance Manager <finance@example.test>' });
+    await user.click(box());
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Its 1 initial message(s) will be removed too.'));
+    expect(box()).toBeChecked();
+    await user.click(box());
+    expect(box()).not.toBeChecked();
+    expect(s.getByTestId('missing-mailboxes')).toHaveTextContent('Finance Manager <finance@example.test>');
   });
 
   it('mailboxes: create for all, agent mailbox choice, missing and orphan mailboxes', async () => {
@@ -111,7 +130,7 @@ describe('builder sections', () => {
     const { user } = renderApp('/scenarios/new', sessionFor('controller'));
     await screen.findByTestId('builder-notice');
     let s = await goSection(user, 'Mailboxes');
-    expect(s.getByTestId('missing-mailboxes')).toHaveTextContent('finance');
+    expect(s.getByTestId('missing-mailboxes')).toHaveTextContent('Finance Manager');
     await user.click(s.getByRole('button', { name: 'Remove mailbox ghost' }));
     await user.click(s.getByRole('button', { name: 'Create mailboxes for all personas' }));
     expect(s.getByText('Every persona has a mailbox.')).toBeInTheDocument();
@@ -127,6 +146,7 @@ describe('builder sections', () => {
     await user.click(s.getByRole('checkbox', { name: 'Mailbox for Finance Manager <finance@example.test>' }));
 
     s = await goSection(user, 'Personas');
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     await user.click(s.getByRole('button', { name: 'Remove persona 1' }));
     await user.click(s.getByRole('button', { name: 'Remove persona 1' }));
     s = await goSection(user, 'Mailboxes');
@@ -142,7 +162,7 @@ describe('builder sections', () => {
     await user.click(s.getByRole('button', { name: 'Remove event 1' }));
     expect(s.getByText(/No events/)).toBeInTheDocument();
     await user.click(s.getByRole('button', { name: 'Add event' }));
-    expect(within(ev()).getByLabelText('From')).toHaveValue('vendor');
+    expect(within(ev()).getByLabelText('From')).toHaveDisplayValue('Vendor Accounts <vendor@example.test>');
     expect(within(ev()).getByRole('checkbox', { name: /Finance Manager/ })).toBeChecked();
     await user.click(within(ev()).getByRole('checkbox', { name: /Vendor Accounts/ }));
     await user.click(within(ev()).getByRole('radio', { name: /^at/ }));
@@ -259,7 +279,8 @@ describe('builder sections', () => {
 
     s = await goSection(user, 'Events');
     const ev = s.getByRole('group', { name: /^Event 1:/ });
-    await user.selectOptions(within(ev).getByLabelText('From'), 'finance');
+    const from = within(ev).getByLabelText('From');
+    await user.selectOptions(from, within(from).getByRole('option', { name: 'Finance Manager <finance@example.test>' }));
     await user.clear(within(ev).getByLabelText(/Event id/));
     expect(s.getByRole('group', { name: 'Event 1: unnamed' })).toBeInTheDocument();
   });

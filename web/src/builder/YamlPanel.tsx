@@ -6,10 +6,10 @@ import { useId, useState } from 'react';
 import type { ValidationIssue } from '../api/types';
 import { ErrorDisplay } from '../components/ErrorDisplay';
 import { useBuilder } from './context';
-import { fromDocument, toDocument, type Imported } from './model';
+import { toDocument } from './model';
 import { LIVE_DEBOUNCE_MS, useDebounced } from './useDebounced';
 
-export function YamlPanel({ onApply }: { onApply: (imported: Imported) => void }) {
+export function YamlPanel({ onApply }: { onApply: (document: Record<string, unknown>) => Promise<void> }) {
   const { api, draft } = useBuilder();
   const id = useId();
   const docKey = useDebounced(JSON.stringify(toDocument(draft.form)), LIVE_DEBOUNCE_MS);
@@ -35,8 +35,8 @@ export function YamlPanel({ onApply }: { onApply: (imported: Imported) => void }
         setParseError(res.error ?? { path: '<root>', message: 'The text is not a scenario document.' });
       } else {
         setParseError(null);
+        await onApply(res.document);
         setEdited(null);
-        onApply(fromDocument(res.document));
       }
     } catch (err) {
       setApplyError(err);

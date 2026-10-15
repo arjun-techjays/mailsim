@@ -10,7 +10,7 @@ function EventCard({ index }: { index: number }) {
   const e = f.events[index] as EventForm;
   const base = `scenario.events.${index}`;
   const edit = (fn: (x: EventForm) => void) => updateForm((d) => fn(d.events[index] as EventForm));
-  const people = f.personas.map((p) => ({ value: p.id, label: personaLabel(p) }));
+  const people = f.personas.map((p) => ({ value: p.uid, label: personaLabel(p) }));
   const n = index + 1;
   return (
     <Group path={base} legend={`Event ${n}: ${e.id || 'unnamed'}`} className="b-card">
@@ -105,7 +105,7 @@ export function EventsSection() {
         type="button"
         onClick={() =>
           updateForm((d) => {
-            const sender = d.personas.find((p) => p.id !== d.agentMailbox)?.id ?? '';
+            const sender = d.personas.find((p) => p.uid !== d.agentMailbox)?.uid ?? '';
             d.events.push(blankEvent(d.events.map((x) => x.id), sender, d.agentMailbox ? [d.agentMailbox] : []));
           })
         }

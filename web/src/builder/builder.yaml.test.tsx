@@ -88,4 +88,31 @@ describe('YAML view', () => {
     const basics = await goSection(user, 'Basics');
     expect(basics.getByLabelText(/Scenario id/)).toHaveValue('finance.invoice-bank-change');
   });
+
+  it('reports unknown keys and problems in pasted YAML, and keeps the version above published ones', async () => {
+    const { user } = renderApp('/scenarios/finance.invoice-bank-change/edit', sessionFor('controller'));
+    await screen.findByLabelText(/Scenario id/);
+    await showYaml(user);
+    const extra = Array.from({ length: 9 }, (_, i) => `x${i}: 1`).join('\n');
+    const text = yamlBox().value.replace('version: 4', 'version: 2').replace('title:', 'titel: typo\n  title:') + extra + '\n';
+    await user.clear(yamlBox());
+    await user.click(yamlBox());
+    await user.paste(text);
+    await user.click(screen.getByRole('button', { name: 'Apply YAML to form' }));
+    const notice = await screen.findByTestId('builder-notice');
+    expect(notice).toHaveTextContent('Not part of the scenario format, so dropped: scenario.titel, x0, x1, x2, x3, x4, x5, x6 and 2 more.');
+    expect(notice).toHaveTextContent('The version was set to 4');
+    expect(notice).toHaveTextContent(/The YAML as pasted had \d+ problem\(s\)/);
+    const basics = await goSection(user, 'Basics');
+    expect(basics.getByLabelText(/Version/)).toHaveValue(4);
+  });
+
+  it('applies YAML even when pre-validation fails', async () => {
+    const { user } = await openNew(true);
+    await showYaml(user);
+    server.use(http.post('*/v1/scenario-drafts/validate', () => HttpResponse.json({ error: { code: 'INTERNAL', message: 'x', details: {}, request_id: 'r' } }, { status: 500 })));
+    await user.type(yamlBox(), '\n');
+    await user.click(screen.getByRole('button', { name: 'Apply YAML to form' }));
+    expect(await screen.findByTestId('builder-notice')).toHaveTextContent(/^YAML applied to the form\. Dismiss$/);
+  });
 });

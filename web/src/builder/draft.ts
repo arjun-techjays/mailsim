@@ -7,6 +7,8 @@ export interface FixtureInfo {
   source: 'composed' | 'uploaded' | 'loaded';
   message_id: string | null;
   in_reply_to: string | null;
+  /** References header (the thread so far), when known. */
+  references?: string[];
   from: string | null;
   to: string[];
   subject: string;
@@ -39,29 +41,41 @@ export function draftStorageKey(mode: BuilderMode, key: string): string {
   return `${PREFIX}${mode}:${key}`;
 }
 
-/** Saves the draft; drops the fixtures if the whole draft would exceed the budget. */
-export function saveDraft(storageKey: string, draft: Draft, baseline: string): { fixturesKept: boolean } {
-  const full: StoredDraft = { draft, baseline, fixturesKept: true };
-  let text = JSON.stringify(full);
-  let fixturesKept = true;
-  if (text.length > DRAFT_BUDGET_CHARS) {
-    fixturesKept = false;
-    text = JSON.stringify({ draft: { ...draft, fixtures: {} }, baseline, fixturesKept } satisfies StoredDraft);
-  }
+const FIXTURES = ':fixtures';
+
+/**
+ * Saves the draft. The form part is small and written every time; the fixtures are written only
+ * when `fixtures` is true (they changed) and dropped when they would exceed the budget.
+ * `fixturesKept` is only reported when the fixtures were written.
+ */
+export function saveDraft(storageKey: string, draft: Draft, baseline: string, fixtures = true): { fixturesKept?: boolean } {
   try {
-    sessionStorage.setItem(storageKey, text);
+    sessionStorage.setItem(storageKey, JSON.stringify({ form: draft.form, info: draft.info, baseline }));
+    if (!fixtures) return {}; // fixtures unchanged: whatever was kept stays kept
+    const text = JSON.stringify(draft.fixtures);
+    if (text.length > DRAFT_BUDGET_CHARS) {
+      sessionStorage.removeItem(storageKey + FIXTURES);
+      return { fixturesKept: false };
+    }
+    sessionStorage.setItem(storageKey + FIXTURES, text);
+    return { fixturesKept: true };
   } catch {
-    return { fixturesKept: false }; // quota or storage disabled: nothing kept
+    return { fixturesKept: false }; // quota or storage disabled
   }
-  return { fixturesKept };
 }
 
 export function loadDraft(storageKey: string): StoredDraft | null {
   try {
     const raw = sessionStorage.getItem(storageKey);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as StoredDraft;
-    return parsed && parsed.draft && parsed.draft.form ? parsed : null;
+    const parsed = JSON.parse(raw) as { form?: Draft['form']; info?: Draft['info']; baseline?: string };
+    if (!parsed.form) return null;
+    const fixturesText = sessionStorage.getItem(storageKey + FIXTURES);
+    return {
+      draft: { form: parsed.form, info: parsed.info ?? {}, fixtures: fixturesText ? (JSON.parse(fixturesText) as Record<string, string>) : {} },
+      baseline: parsed.baseline ?? '',
+      fixturesKept: fixturesText !== null,
+    };
   } catch {
     return null;
   }
@@ -70,6 +84,7 @@ export function loadDraft(storageKey: string): StoredDraft | null {
 export function clearDraft(storageKey: string): void {
   try {
     sessionStorage.removeItem(storageKey);
+    sessionStorage.removeItem(storageKey + FIXTURES);
   } catch {
     /* storage disabled */
   }

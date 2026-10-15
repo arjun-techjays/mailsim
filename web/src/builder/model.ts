@@ -3,8 +3,14 @@
 // values reach the server validator (which reports them at the right path) instead of NaN.
 //
 // Canonical rules (toDocument): fixed key order; optional strings/numbers are omitted when
-// empty; a single event recipient is written as a string; inline evaluation assertions are
-// never written (answer keys are authored separately). fromDocument(toDocument(f)) yields a
+// empty; `behavior.mode` is omitted when silent; a single event recipient is written as a
+// string; schema_version becomes "1.1" when 1.1 features are used; inline evaluation
+// assertions are never written (answer keys are authored separately).
+//
+// Persona references (mailbox owner, agent mailbox, event from/to, reply-rule from,
+// relationships and project participants) hold the persona's internal uid, resolved to its id
+// in toDocument. Editing an id therefore never re-points another persona's references, and a
+// reference to an unknown id keeps that id as text (the validator reports it). fromDocument(toDocument(f)) yields a
 // form whose toDocument is identical, so the YAML round trip is stable.
 
 export type Json = Record<string, unknown>;
@@ -31,8 +37,6 @@ export interface PersonaForm {
   id: string;
   /** The id was typed by hand (stop deriving it from the name). */
   idTouched: boolean;
-  /** While the id field is empty: the id that references still use. */
-  lastId?: string;
   name: string;
   email: string;
   /** The email was typed by hand (stop deriving it from id + domain). */
@@ -98,7 +102,7 @@ const LOAD = Math.floor(Math.random() * 36 ** 4).toString(36);
 /** Local id for React keys (never written to the document). */
 export function uid(): string {
   counter += 1;
-  return `u${LOAD}_${counter}`;
+  return `#u${LOAD}_${counter}`; // '#' never appears in scenario ids
 }
 
 export const SCHEMA_VERSION = '1.1';
@@ -221,19 +225,22 @@ function putNum(target: Json, key: string, value: string): void {
   if (value.trim() !== '') target[key] = num(value);
 }
 
-function personaDoc(p: PersonaForm): Json {
+type Resolve = (ref: string) => string;
+
+function personaDoc(p: PersonaForm, ref: Resolve): Json {
   const out: Json = { id: p.id };
   put(out, 'name', p.name);
   out.email = p.email;
   out.role = p.role;
   out.knowledge = [...p.knowledge];
-  const behavior: Json = { mode: p.mode };
+  const behavior: Json = {};
+  if (p.mode !== 'silent') behavior.mode = p.mode;
   put(behavior, 'response_style', p.response_style);
   putNum(behavior, 'response_delay_seconds', p.response_delay_seconds);
   if (p.script.length > 0) {
     behavior.script = p.script.map((r) => {
       const on: Json = {};
-      put(on, 'from', r.from);
+      put(on, 'from', ref(r.from));
       put(on, 'subject_contains', r.subject_contains);
       put(on, 'body_contains', r.body_contains);
       const reply: Json = {};
@@ -249,7 +256,7 @@ function personaDoc(p: PersonaForm): Json {
   return out;
 }
 
-function eventDoc(e: EventForm): Json {
+function eventDoc(e: EventForm, ref: Resolve): Json {
   const trigger: Json = { type: e.triggerType };
   if (e.triggerType === 'at') put(trigger, 'at', e.at);
   if (e.triggerType === 'after_seconds') putNum(trigger, 'seconds', e.seconds);
@@ -260,16 +267,34 @@ function eventDoc(e: EventForm): Json {
     trigger,
     event: {
       type: 'email.receive',
-      from: e.from,
-      to: e.to.length === 1 ? e.to[0] : [...e.to],
+      from: ref(e.from),
+      to: e.to.length === 1 ? ref(e.to[0] as string) : e.to.map(ref),
       subject: e.subject,
       body: e.body,
     },
   };
 }
 
+/** Maps persona refs between uid (form) and id (document) inside relationships/projects. */
+function mapRelations(items: unknown[], keys: string[], listKey: string | null, fn: Resolve): unknown[] {
+  return items.map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
+    const out: Json = { ...(item as Json) };
+    for (const k of keys) if (typeof out[k] === 'string') out[k] = fn(out[k] as string);
+    if (listKey && Array.isArray(out[listKey])) out[listKey] = (out[listKey] as unknown[]).map((v) => (typeof v === 'string' ? fn(v) : v));
+    return out;
+  });
+}
+
+/** Whether the form uses schema 1.1 features (persona names, reply modes, scripts). */
+export function usesV11(f: ScenarioForm): boolean {
+  return f.personas.some((p) => p.name.trim() !== '' || p.mode !== 'silent' || p.script.length > 0);
+}
+
 /** The scenario document for this form (canonical key order; never contains assertions). */
 export function toDocument(f: ScenarioForm): Json {
+  const ids = new Map(f.personas.map((p) => [p.uid, p.id]));
+  const ref: Resolve = (v) => ids.get(v) ?? v;
   const organization: Json = { domain: f.orgDomain };
   put(organization, 'name', f.orgName);
   organization.policies = f.policies.map((p) => ({ id: p.id, rule: p.rule }));
@@ -287,22 +312,22 @@ export function toDocument(f: ScenarioForm): Json {
       },
     },
     organization,
-    personas: f.personas.map(personaDoc),
+    personas: f.personas.map((p) => personaDoc(p, ref)),
   };
-  if (f.relationships.length > 0) scenario.relationships = f.relationships;
-  if (f.projects.length > 0) scenario.projects = f.projects;
+  if (f.relationships.length > 0) scenario.relationships = mapRelations(f.relationships, ['source', 'target'], null, ref);
+  if (f.projects.length > 0) scenario.projects = mapRelations(f.projects, [], 'participants', ref);
   scenario.mailboxes = f.mailboxes.map((m) => ({
-    owner: m.owner,
+    owner: ref(m.owner),
     initial_messages: m.messages.map((fixture) => ({ fixture })),
   }));
-  scenario.events = f.events.map(eventDoc);
+  scenario.events = f.events.map((e) => eventDoc(e, ref));
   scenario.agent = {
-    mailbox: f.agentMailbox,
+    mailbox: ref(f.agentMailbox),
     allowed_operations: [...f.allowed],
     prohibited_operations: [...f.prohibited],
   };
   scenario.evaluation = { limits: { max_agent_actions: num(f.maxActions), max_virtual_duration_seconds: num(f.maxDuration) } };
-  return { schema_version: f.schemaVersion, scenario };
+  return { schema_version: usesV11(f) ? SCHEMA_VERSION : f.schemaVersion, scenario };
 }
 
 // ---- document -> form -----------------------------------------------------------------
@@ -342,6 +367,42 @@ export function fromDocument(doc: unknown): Imported {
   const agent = obj(s.agent);
   const evaluation = obj(s.evaluation);
   const limits = obj(evaluation.limits);
+  const personas: PersonaForm[] = arr(s.personas).map((raw) => {
+    const p = obj(raw);
+    const b = obj(p.behavior);
+    return {
+      uid: uid(),
+      id: str(p.id),
+      idTouched: true,
+      name: str(p.name),
+      email: str(p.email),
+      emailTouched: true,
+      role: str(p.role),
+      knowledge: strList(p.knowledge),
+      mode: str(b.mode) || 'silent',
+      response_style: str(b.response_style),
+      response_delay_seconds: str(b.response_delay_seconds),
+      script: arr(b.script).map((rr) => {
+        const r = obj(rr);
+        const on = obj(r.on);
+        const reply = obj(r.reply);
+        return {
+          uid: uid(),
+          from: str(on.from),
+          subject_contains: str(on.subject_contains),
+          body_contains: str(on.body_contains),
+          reply_subject: str(reply.subject),
+          reply_body: str(reply.body),
+          delay_seconds: str(r.delay_seconds),
+          once: r.once !== false,
+        };
+      }),
+    };
+  });
+  const uids = new Map<string, string>();
+  for (const p of [...personas].reverse()) uids.set(p.id, p.uid); // first persona wins on duplicates
+  const ref: Resolve = (id) => uids.get(id) ?? id;
+  for (const p of personas) for (const r of p.script) r.from = r.from && ref(r.from);
   const form: ScenarioForm = {
     schemaVersion: str(root.schema_version) || SCHEMA_VERSION,
     id: str(s.id),
@@ -351,41 +412,10 @@ export function fromDocument(doc: unknown): Imported {
     orgDomain: str(org.domain),
     orgName: str(org.name),
     policies: arr(org.policies).map((p) => ({ uid: uid(), id: str(obj(p).id), rule: str(obj(p).rule) })),
-    personas: arr(s.personas).map((raw) => {
-      const p = obj(raw);
-      const b = obj(p.behavior);
-      return {
-        uid: uid(),
-        id: str(p.id),
-        idTouched: true,
-        name: str(p.name),
-        email: str(p.email),
-        emailTouched: true,
-        role: str(p.role),
-        knowledge: strList(p.knowledge),
-        mode: str(b.mode) || 'silent',
-        response_style: str(b.response_style),
-        response_delay_seconds: str(b.response_delay_seconds),
-        script: arr(b.script).map((rr) => {
-          const r = obj(rr);
-          const on = obj(r.on);
-          const reply = obj(r.reply);
-          return {
-            uid: uid(),
-            from: str(on.from),
-            subject_contains: str(on.subject_contains),
-            body_contains: str(on.body_contains),
-            reply_subject: str(reply.subject),
-            reply_body: str(reply.body),
-            delay_seconds: str(r.delay_seconds),
-            once: r.once !== false,
-          };
-        }),
-      };
-    }),
+    personas,
     mailboxes: arr(s.mailboxes).map((raw) => {
       const m = obj(raw);
-      return { uid: uid(), owner: str(m.owner), messages: arr(m.initial_messages).map((im) => str(obj(im).fixture)) };
+      return { uid: uid(), owner: ref(str(m.owner)), messages: arr(m.initial_messages).map((im) => str(obj(im).fixture)) };
     }),
     events: arr(s.events).map((raw) => {
       const e = obj(raw);
@@ -399,13 +429,13 @@ export function fromDocument(doc: unknown): Imported {
         seconds: str(t.seconds),
         action: str(t.action),
         delay_seconds: str(t.delay_seconds),
-        from: str(ev.from),
-        to: strList(ev.to),
+        from: ref(str(ev.from)),
+        to: strList(ev.to).map(ref),
         subject: str(ev.subject),
         body: str(ev.body),
       };
     }),
-    agentMailbox: str(agent.mailbox),
+    agentMailbox: ref(str(agent.mailbox)),
     allowed: strList(agent.allowed_operations),
     prohibited: strList(agent.prohibited_operations),
     seed: str(env.seed),
@@ -414,8 +444,8 @@ export function fromDocument(doc: unknown): Imported {
     personaReplies: delivery.persona_replies !== 'disabled',
     maxActions: str(limits.max_agent_actions) || '100',
     maxDuration: str(limits.max_virtual_duration_seconds) || '86400',
-    relationships: arr(s.relationships),
-    projects: arr(s.projects),
+    relationships: mapRelations(arr(s.relationships), ['source', 'target'], null, ref),
+    projects: mapRelations(arr(s.projects), [], 'participants', ref),
   };
   return { form, droppedAssertions: arr(evaluation.assertions).length };
 }
@@ -425,33 +455,42 @@ export function documentKey(f: ScenarioForm): string {
   return JSON.stringify(toDocument(f));
 }
 
-// ---- edits that keep references consistent -------------------------------------------------
-/** Renames a persona id everywhere it is referenced (mailboxes, agent, events, scripts). */
-export function renamePersonaRefs(f: ScenarioForm, from: string, to: string): void {
-  if (!from || from === to) return;
-  const swap = (v: string) => (v === from ? to : v);
-  for (const m of f.mailboxes) m.owner = swap(m.owner);
-  f.agentMailbox = swap(f.agentMailbox);
-  for (const e of f.events) {
-    e.from = swap(e.from);
-    e.to = e.to.map(swap);
-  }
-  for (const p of f.personas) for (const r of p.script) r.from = swap(r.from);
-}
-
-/** Sets a persona's id, keeping references and the derived email in sync. */
+// ---- edits ------------------------------------------------------------------------------------
+/** Sets a persona's id (references follow automatically: they hold the uid) and the derived email. */
 export function setPersonaId(f: ScenarioForm, index: number, id: string, touched: boolean): void {
   const p = f.personas[index] as PersonaForm;
-  const current = p.id || p.lastId || '';
-  if (id) {
-    renamePersonaRefs(f, current, id);
-    delete p.lastId;
-  } else {
-    p.lastId = current; // keep references until a new id is typed
-  }
   p.id = id;
   p.idTouched = p.idTouched || touched;
   if (!p.emailTouched) p.email = defaultEmail(id, f.orgDomain);
+}
+
+/** What removing persona `index` changes elsewhere (for a confirmation). */
+export function personaRemovalEffects(f: ScenarioForm, index: number): string[] {
+  const p = f.personas[index] as PersonaForm;
+  const out: string[] = [];
+  const box = f.mailboxes.find((m) => m.owner === p.uid);
+  if (box) out.push(`its mailbox${box.messages.length > 0 ? ` and ${box.messages.length} initial message(s)` : ''} will be removed`);
+  if (f.agentMailbox === p.uid) out.push('the agent will have no mailbox');
+  for (const e of f.events) {
+    if (e.from === p.uid) out.push(`event ${e.id || '(unnamed)'} will have no sender`);
+    if (e.to.includes(p.uid)) out.push(`event ${e.id || '(unnamed)'} will no longer be sent to it`);
+  }
+  for (const other of f.personas) {
+    if (other.script.some((r) => r.from === p.uid)) out.push(`reply rules of ${other.id || '(no id)'} will match any sender`);
+  }
+  return out;
+}
+
+/** Removes persona `index` and every reference to it. */
+export function removePersona(f: ScenarioForm, index: number): void {
+  const [p] = f.personas.splice(index, 1) as [PersonaForm];
+  f.mailboxes = f.mailboxes.filter((m) => m.owner !== p.uid);
+  if (f.agentMailbox === p.uid) f.agentMailbox = '';
+  for (const e of f.events) {
+    if (e.from === p.uid) e.from = '';
+    e.to = e.to.filter((t) => t !== p.uid);
+  }
+  for (const other of f.personas) for (const r of other.script) if (r.from === p.uid) r.from = '';
 }
 
 /** Every fixture path referenced by a mailbox. */
@@ -459,17 +498,74 @@ export function referencedFixtures(f: ScenarioForm): string[] {
   return f.mailboxes.flatMap((m) => m.messages);
 }
 
-/** Persona ids that send or receive scheduled events but have no mailbox. */
-export function personasNeedingMailbox(f: ScenarioForm): string[] {
+/** Personas that receive events (or are the agent's) but have no mailbox. */
+export function personasNeedingMailbox(f: ScenarioForm): PersonaForm[] {
   const owners = new Set(f.mailboxes.map((m) => m.owner));
   const needed = new Set<string>();
   if (f.agentMailbox) needed.add(f.agentMailbox);
   for (const e of f.events) for (const t of e.to) needed.add(t);
-  return f.personas.map((p) => p.id).filter((id) => needed.has(id) && !owners.has(id));
+  return f.personas.filter((p) => needed.has(p.uid) && !owners.has(p.uid));
+}
+
+/** Display text for a persona reference (uid or raw id). */
+export function refLabel(f: ScenarioForm, ref: string): string {
+  const p = f.personas.find((x) => x.uid === ref);
+  return p ? personaLabel(p) : ref;
 }
 
 /** Label for a persona in pickers: `Name <email>` (or the id when unnamed). */
 export function personaLabel(p: { id: string; name: string; email: string }): string {
   const who = p.name.trim() || p.id || '(no id)';
   return p.email ? `${who} <${p.email}>` : who;
+}
+
+// ---- keys the form understands (to report what a pasted YAML document would lose) -----------
+type Shape = true | { [key: string]: Shape } | [Shape];
+const RULE: Shape = { on: { from: true, subject_contains: true, body_contains: true }, reply: { subject: true, body: true }, delay_seconds: true, once: true };
+const KNOWN: Shape = {
+  schema_version: true,
+  scenario: {
+    id: true,
+    version: true,
+    title: true,
+    tags: true,
+    environment: { seed: true, clock: { start_at: true, mode: true }, delivery: { external_delivery: true, persona_replies: true } },
+    organization: { domain: true, name: true, policies: [{ id: true, rule: true }] },
+    personas: [
+      {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        knowledge: true,
+        behavior: { mode: true, response_style: true, response_delay_seconds: true, script: [RULE] },
+      },
+    ],
+    relationships: true,
+    projects: true,
+    mailboxes: [{ owner: true, initial_messages: [{ fixture: true }] }],
+    events: [
+      {
+        id: true,
+        trigger: { type: true, at: true, seconds: true, action: true, delay_seconds: true },
+        event: { type: true, from: true, to: true, subject: true, body: true },
+      },
+    ],
+    agent: { mailbox: true, allowed_operations: true, prohibited_operations: true },
+    evaluation: { assertions: true, limits: { max_agent_actions: true, max_virtual_duration_seconds: true } },
+  },
+};
+
+/** Dotted paths of keys in `doc` that the scenario format does not have (the form drops them). */
+export function unknownKeys(doc: unknown, shape: Shape = KNOWN, path = ''): string[] {
+  if (shape === true) return [];
+  if (Array.isArray(shape)) {
+    return arr(doc).flatMap((item, i) => unknownKeys(item, shape[0], `${path}.${i}`));
+  }
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return [];
+  return Object.entries(doc as Json).flatMap(([k, v]) => {
+    const p = path ? `${path}.${k}` : k;
+    const sub = shape[k];
+    return sub === undefined ? [p] : unknownKeys(v, sub, p);
+  });
 }

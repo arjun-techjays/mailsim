@@ -6,7 +6,7 @@ import { personaLabel } from '../model';
 export function AgentSection({ onGoTo }: { onGoTo: (section: 'mailboxes') => void }) {
   const { draft, updateForm, meta } = useBuilder();
   const f = draft.form;
-  const owner = f.personas.find((p) => p.id === f.agentMailbox);
+  const owner = f.personas.find((p) => p.uid === f.agentMailbox);
   const ops = meta.agent_operations.map((op) => ({ value: op, label: op, help: OPERATION_HELP[op] }));
   const prohibitable = [...ops, { value: 'external_delivery', label: 'external_delivery', help: OPERATION_HELP.external_delivery }];
   return (

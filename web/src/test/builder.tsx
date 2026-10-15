@@ -1,5 +1,5 @@
 // Helpers for the scenario builder tests (UX-F1).
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import type { UserEvent } from '@testing-library/user-event';
 import type { KeyRole } from '../api/types';
 import { server } from './server';
@@ -20,8 +20,9 @@ export async function goSection(user: UserEvent, name: string) {
   return within(screen.getByRole('region', { name }));
 }
 
-export const waitValid = () => screen.findByText('Valid: ready to save', {}, SLOW);
-export const waitInvalid = () => screen.findByText(/^\d+ problems? to fix$/, {}, SLOW);
+const status = () => screen.getByTestId('validation-status');
+export const waitValid = () => waitFor(() => expect(status()).toHaveTextContent('Valid: ready to save'), SLOW);
+export const waitInvalid = () => waitFor(() => expect(status()).toHaveTextContent(/^\d+ problems? to fix$/), SLOW);
 
 /** Collects JSON bodies of requests whose URL ends with `suffix`. */
 export function captureBodies(suffix: string): unknown[] {

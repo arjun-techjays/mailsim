@@ -30,7 +30,7 @@ describe('scenario builder page', () => {
     expect(Object.keys(body.fixtures)).toEqual(['fixtures/invoice-001.eml']);
     const notice = await screen.findByTestId('published-notice');
     expect(notice).toHaveTextContent('Published version 1');
-    expect(within(notice).getByRole('link', { name: 'Write its answer key' })).toHaveAttribute('href', '/scenarios/finance.invoice-review/answer-keys/new');
+    expect(within(notice).getByRole('link', { name: 'Write its answer key' })).toHaveAttribute('href', '/scenarios/finance.invoice-review/answer-key');
     expect(within(notice).getByRole('link', { name: 'Start a run' })).toHaveAttribute('href', '/scenarios/finance.invoice-review/start');
     expect(sessionStorage.getItem(draftStorageKey('new', ''))).toBeNull();
   });
@@ -38,32 +38,36 @@ describe('scenario builder page', () => {
   it('lists problems for a blank scenario, links them to fields and counts them per section', async () => {
     const { user } = await openNew();
     await waitInvalid();
-    expect(screen.getByRole('button', { name: 'Save and publish' })).toBeDisabled();
-    expect(screen.getByText('Saving is available once the scenario is valid.')).toBeInTheDocument();
+    const save = screen.getByRole('button', { name: 'Save and publish' });
+    expect(save).toBeEnabled();
+    expect(screen.getByText('Fix the listed problems first; Save takes you to them.')).toBeInTheDocument();
     const summary = screen.getByTestId('error-summary');
-    // id + title + domain + agent mailbox
-    expect(within(summary).getAllByRole('listitem')).toHaveLength(4);
+    // schema problems first (as on the server): id + title + domain
+    expect(within(summary).getAllByRole('listitem')).toHaveLength(3);
+    expect(screen.getByTestId('validation-announcer')).toHaveTextContent('3 problems to fix');
     const nav = screen.getByRole('navigation', { name: 'Scenario sections' });
     expect(within(nav).getByRole('button', { name: '1. Basics, 2 problems' })).toHaveAttribute('aria-current', 'step');
-    expect(within(nav).getByRole('button', { name: '4. Mailboxes, 1 problem' })).toBeInTheDocument();
+    expect(within(nav).getByRole('button', { name: '2. Organisation, 1 problem' })).toBeInTheDocument();
+    // Save on an invalid scenario opens and focuses the summary instead of publishing
+    summary.removeAttribute('open');
+    await user.click(save);
+    expect(summary).toHaveFocus();
+    expect(summary).toHaveAttribute('open');
 
-    // an edit that does not change the problems keeps the same list
+    // an edit that does not change the problems keeps the same list; "Validating…" is not announced
     await user.type(screen.getByRole('textbox', { name: /Tags/ }), 'z');
     await user.click(screen.getByRole('button', { name: 'Add to Tags' }));
-    await screen.findByText('Validating…');
+    await waitFor(() => expect(screen.getByTestId('validation-status')).toHaveTextContent('Validating…'));
+    expect(screen.getByTestId('validation-announcer')).toHaveTextContent('3 problems to fix');
     await waitInvalid();
-    expect(within(screen.getByTestId('error-summary')).getAllByRole('listitem')).toHaveLength(4);
-    await user.click(within(summary).getByRole('button', { name: /Organisation: must not be empty/ }));
+    expect(within(screen.getByTestId('error-summary')).getAllByRole('listitem')).toHaveLength(3);
+    await user.click(within(summary).getByRole('button', { name: /Organisation: String should have at least 1 character/ }));
     expect(screen.getByLabelText(/Mail domain/)).toHaveFocus();
     expect(screen.getByLabelText(/Mail domain/)).toHaveAttribute('aria-invalid', 'true');
-    // agent.mailbox maps to the radio group in Mailboxes; with no personas it is not on screen
-    await user.click(within(summary).getByRole('button', { name: /Mailboxes: Field required|agent mailbox/ }));
-    expect(screen.getByRole('heading', { level: 2, name: 'Mailboxes' })).toHaveFocus();
-    expect(within(summary).getByText(/agent\.mailbox/).parentElement).toHaveTextContent('not tied to a single field');
 
     // pager
     await user.click(screen.getByRole('button', { name: 'Next section' }));
-    expect(screen.getByRole('heading', { level: 2, name: 'Initial messages' })).toHaveFocus();
+    expect(screen.getByRole('heading', { level: 2, name: 'Personas' })).toHaveFocus();
     await user.click(screen.getByRole('button', { name: 'Previous section' }));
     await user.click(within(nav).getByRole('button', { name: /^8\. Limits/ }));
     expect(screen.getByRole('button', { name: 'Next section' })).toBeDisabled();
@@ -78,10 +82,23 @@ describe('scenario builder page', () => {
     await screen.findByText('Input should be greater than or equal to 1', {}, SLOW);
   });
 
+  it('lists problems without a field of their own and focuses the nearest section', async () => {
+    server.use(
+      http.post('*/v1/scenario-drafts/validate', () =>
+        HttpResponse.json({ ok: false, errors: [{ path: 'scenario.relationships[0]', message: "unknown persona 'x'" }], warnings: [], document: null }),
+      ),
+    );
+    const { user } = await openNew(true);
+    const summary = await screen.findByTestId('error-summary', {}, SLOW);
+    expect(within(summary).getByText(/scenario\.relationships\.0/).parentElement).toHaveTextContent('not tied to a single field');
+    await user.click(within(summary).getByRole('button', { name: /Personas: unknown persona/ }));
+    expect(screen.getByRole('heading', { level: 2, name: 'Personas' })).toHaveFocus();
+  });
+
   it('shows validation and publish failures', async () => {
     server.use(http.post('*/v1/scenario-drafts/validate', () => fail(500, 'INTERNAL', 'validator down')));
     const { user } = await openNew(true);
-    await screen.findByText('Could not validate', {}, SLOW);
+    await waitFor(() => expect(screen.getByTestId('validation-status')).toHaveTextContent('Could not validate'), SLOW);
     expect(screen.getByTestId('api-error')).toHaveTextContent('validator down');
     server.use(http.post('*/v1/scenario-drafts/validate', () => HttpResponse.json({ ok: true, errors: [], warnings: [], document: null })));
     await user.type(screen.getByLabelText(/^Title/), '!');
@@ -166,13 +183,12 @@ describe('scenario builder page', () => {
   it('warns about too-large drafts while editing', async () => {
     const stored = templateDraft();
     stored.fixtures['fixtures/invoice-001.eml'] = 'A'.repeat(2_100_000);
-    sessionStorage.setItem(
-      draftStorageKey('edit', 'finance.invoice-bank-change'),
-      JSON.stringify({ draft: stored, baseline: 'base', fixturesKept: true }),
-    );
+    expect(saveDraft(draftStorageKey('edit', 'finance.invoice-bank-change'), stored, 'base')).toEqual({ fixturesKept: false });
     const { user } = renderApp('/scenarios/finance.invoice-bank-change/edit', sessionFor('controller'));
-    await user.type(await screen.findByLabelText(/^Title/), 'x');
-    expect(await screen.findByTestId('fixtures-not-kept', {}, SLOW)).toBeInTheDocument();
+    expect(await screen.findByTestId('fixtures-not-kept')).toBeInTheDocument();
+    await user.type(screen.getByLabelText(/^Title/), 'x');
+    await waitFor(() => expect(sessionStorage.getItem(draftStorageKey('edit', 'finance.invoice-bank-change'))).toContain('x"'), SLOW);
+    expect(screen.getByTestId('fixtures-not-kept')).toBeInTheDocument();
   });
 
   it('guards unsaved changes: stay, leave keeping the draft, discard', async () => {
@@ -183,13 +199,13 @@ describe('scenario builder page', () => {
     expect(ev.defaultPrevented).toBe(true);
 
     await act(() => router.navigate('/runs'));
-    const dialog = await screen.findByRole('alertdialog', { name: 'Leave without saving?' });
+    const dialog = await screen.findByRole('dialog', { name: 'Leave without saving?' });
     expect(within(dialog).getByRole('button', { name: 'Stay on this page' })).toHaveFocus();
     await user.click(within(dialog).getByRole('button', { name: 'Stay on this page' }));
     expect(router.state.location.pathname).toBe('/scenarios/new');
     // same page (query change) is never blocked
     await act(() => router.navigate('/scenarios/new?x=1'));
-    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
 
     await act(() => router.navigate('/runs'));
     await user.click(await screen.findByRole('button', { name: 'Leave (keep the draft)' }));
@@ -238,5 +254,93 @@ describe('scenario builder page', () => {
     renderApp('/scenarios/empty.one', sessionFor('controller'));
     expect(await screen.findByText('No published version.')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Clone' })).toBeNull();
+  });
+
+  it('maps publish error issues to fields and explains Save while validating or broken', async () => {
+    server.use(
+      http.post('*/v1/scenarios', () =>
+        HttpResponse.json(
+          {
+            error: {
+              code: 'INVALID_REQUEST',
+              message: 'scenario validation failed',
+              details: { issues: [{ path: 'scenario.title', message: 'title taken' }, 'junk'] },
+              request_id: 'r',
+            },
+          },
+          { status: 400 },
+        ),
+      ),
+    );
+    const { user } = await openNew(true);
+    await waitValid();
+    await user.click(screen.getByRole('button', { name: 'Save and publish' }));
+    expect(await screen.findByText('title taken', { selector: '[data-testid="inline-error"]' })).toBeInTheDocument();
+    expect(screen.getByTestId('validation-status')).toHaveTextContent('1 problem to fix');
+    // the next edit clears it again
+    await user.type(screen.getByLabelText(/^Title/), '!');
+    await waitValid();
+    expect(screen.queryByText('title taken', { selector: '[data-testid="inline-error"]' })).toBeNull();
+
+    // Save while validating
+    await user.type(screen.getByLabelText(/^Title/), '?');
+    await user.click(screen.getByRole('button', { name: 'Save and publish' }));
+    expect(screen.getByText('Still checking the scenario: try again in a moment.')).toHaveAttribute('role', 'alert');
+    await waitValid();
+    // Save when the validator is down
+    server.use(http.post('*/v1/scenario-drafts/validate', () => fail(500, 'INTERNAL', 'down')));
+    await user.type(screen.getByLabelText(/^Title/), '#');
+    await waitFor(() => expect(screen.getByTestId('validation-status')).toHaveTextContent('Could not validate'), SLOW);
+    await user.click(screen.getByRole('button', { name: 'Save and publish' }));
+    expect(screen.getByText('The scenario could not be validated; see the error above.')).toBeInTheDocument();
+  });
+
+  it('uses errors strings from older servers', async () => {
+    server.use(
+      http.post('*/v1/scenarios', () =>
+        HttpResponse.json(
+          { error: { code: 'INVALID_REQUEST', message: 'bad', details: { errors: ['scenario.personas[0].email: nope', 'no path here'] }, request_id: 'r' } },
+          { status: 400 },
+        ),
+      ),
+    );
+    const { user } = await openNew(true);
+    await waitValid();
+    await user.click(screen.getByRole('button', { name: 'Save and publish' }));
+    const summary = await screen.findByTestId('error-summary');
+    expect(summary).toHaveTextContent('Personas: nope');
+    expect(summary).toHaveTextContent('Basics: no path here');
+  });
+
+  it('warns when a restored edit draft is behind the latest published version', async () => {
+    const draft = templateDraft();
+    draft.form.id = 'finance.invoice-bank-change';
+    draft.form.version = '3';
+    saveDraft(draftStorageKey('edit', 'finance.invoice-bank-change'), draft, 'b');
+    const { user } = renderApp('/scenarios/finance.invoice-bank-change/edit', sessionFor('controller'));
+    const warning = await screen.findByTestId('version-behind');
+    expect(warning).toHaveTextContent('Version 3 has been published since this draft was started, so version 3 can no longer be published.');
+    await user.click(within(warning).getByRole('button', { name: 'Use version 4' }));
+    expect(screen.queryByTestId('version-behind')).toBeNull();
+    expect(screen.getByLabelText(/Version/)).toHaveValue(4);
+  });
+
+  it('the leave dialog is a modal: showModal when available, Escape stays', async () => {
+    const showModal = vi.fn(function (this: HTMLDialogElement) {
+      this.setAttribute('open', '');
+    });
+    Object.defineProperty(HTMLDialogElement.prototype, 'showModal', { value: showModal, configurable: true });
+    try {
+      const { user, router } = await openNew(true);
+      await user.type(screen.getByLabelText(/^Title/), ' changed');
+      await act(() => router.navigate('/runs'));
+      const dialog = await screen.findByRole('dialog', { name: 'Leave without saving?' });
+      expect(showModal).toHaveBeenCalled();
+      fireEvent(dialog, new Event('cancel', { cancelable: true }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+      expect(router.state.location.pathname).toBe('/scenarios/new');
+    } finally {
+      delete (HTMLDialogElement.prototype as { showModal?: unknown }).showModal;
+    }
   });
 });

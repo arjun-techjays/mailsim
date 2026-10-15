@@ -45,7 +45,7 @@ describe('initial messages', () => {
     const big = new File(['x'], 'big.bin');
     Object.defineProperty(big, 'size', { value: 6 * 1024 * 1024 });
     await user.upload(form.getByLabelText('Attachments'), [new File(['%PDF'], 'a.pdf', { type: 'application/pdf' }), new File(['raw'], 'b'), big]);
-    expect(await form.findByText('big.bin is larger than 5.0 MB.')).toBeInTheDocument();
+    expect(await form.findByText('big.bin does not fit: attachments of one message can total 3.7 MB.')).toBeInTheDocument();
     expect(form.getByRole('list', { name: 'Attached files' })).toHaveTextContent('a.pdf');
     await user.click(form.getByRole('button', { name: 'Remove b' }));
     await user.click(form.getByRole('button', { name: 'Add message' }));
@@ -83,9 +83,44 @@ describe('initial messages', () => {
       references: ['<invoice-001@vendor.example.test>', '<compose-1@outside.test>'],
       text: 'Again',
       html: null,
-      date: null,
+      date: '2026-10-15T09:00:00Z', // the scenario's clock start, not the server's "now"
     });
     await waitValid();
+  });
+
+  it('caps attachments per message and message files per scenario', async () => {
+    const { user } = await openNew(true);
+    const s = await goSection(user, 'Initial messages');
+    expect(s.getByTestId('fixture-budget')).toHaveTextContent('Message files: 366 B of 28.0 MB per scenario');
+    await user.click(s.getByRole('button', { name: /Compose a message for Finance Manager/ }));
+    const form = within(s.getByRole('form'));
+    const files = Array.from({ length: 21 }, (_, i) => new File(['x'], `Scan ${i}.PDF`));
+    await user.upload(form.getByLabelText('Attachments'), files);
+    expect(await form.findByText('At most 20 attachments per message.')).toBeInTheDocument();
+    expect(form.getByRole('list', { name: 'Attached files' }).children).toHaveLength(20);
+    expect(form.getByRole('list', { name: 'Attached files' })).toHaveTextContent('scan-0.pdf');
+    await user.upload(form.getByLabelText('Attachments'), new File(['y'], 'one-more.txt'));
+    expect(form.getByRole('list', { name: 'Attached files' }).children).toHaveLength(20);
+
+    server.use(
+      http.post('*/v1/scenario-drafts/compose-eml', () =>
+        HttpResponse.json({ path: 'fixtures/huge.eml', content_b64: 'QQ==', message_id: '<h@x>', size: 29 * 1024 * 1024 }),
+      ),
+    );
+    await user.type(form.getByLabelText('Plain-text body'), 'x');
+    await user.click(form.getByRole('button', { name: 'Add message' }));
+    expect(await form.findByText(/would take the scenario's message files over 28.0 MB/)).toBeInTheDocument();
+    expect(s.getAllByTestId('initial-message')).toHaveLength(1);
+    await user.click(form.getByRole('button', { name: 'Cancel' }));
+
+    const eml = (i: number) => {
+      const f = new File([EML], `m${i}.eml`);
+      Object.defineProperty(f, 'size', { value: Math.floor(4.9 * 1024 * 1024) });
+      return f;
+    };
+    await user.upload(s.getByLabelText(/Upload .eml files for Finance Manager/), [1, 2, 3, 4, 5, 6].map(eml));
+    expect(await s.findByText(/m6.eml would take the scenario's message files over 28.0 MB/)).toBeInTheDocument();
+    expect(s.getAllByTestId('initial-message')).toHaveLength(6);
   });
 
   it('shows compose errors from the API and can be cancelled', async () => {

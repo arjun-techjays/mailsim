@@ -37,6 +37,19 @@ export function formatBytes(n: number): string {
 
 /** Same limit as the API (5 MB per fixture/attachment). */
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
+/** At most this many attachments per composed message (API limit). */
+export const MAX_ATTACHMENTS = 20;
+/** Attachment bytes per composed message: base64 in the .eml adds a third, plus room for the
+ * headers and body, and the .eml must stay within MAX_FILE_BYTES. */
+export const ATTACHMENT_BUDGET_BYTES = Math.floor((MAX_FILE_BYTES * 3) / 4) - 64 * 1024;
+/** All message files of one scenario: the publish request (base64 in JSON) must stay well under
+ * the API's 40 MB request body limit. */
+export const DRAFT_FIXTURE_BUDGET_BYTES = 28 * 1024 * 1024;
+
+/** Decoded bytes of the given fixtures. */
+export function fixturesBytes(fixtures: Record<string, string>, paths: readonly string[]): number {
+  return [...new Set(paths)].reduce((n, p) => n + base64Size(fixtures[p] ?? ''), 0);
+}
 
 /** `Invoice #1 (final).eml` -> `invoice-1-final.eml`. */
 export function safeFileName(name: string): string {
@@ -64,4 +77,14 @@ export function uniqueFixturePath(name: string, taken: readonly string[]): strin
     n += 1;
   }
   return path;
+}
+
+/** FNV-1a over the whole text: detects any content change (not just length or tail). */
+export function contentHash(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i += 1) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
 }

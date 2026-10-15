@@ -7,7 +7,7 @@ interface PublishedState {
 }
 
 /** Where evaluators write a scenario's answer key (answer-key editor workstream). */
-const answerKeyPath = (key: string) => `/scenarios/${encodeURIComponent(key)}/answer-keys/new`;
+const answerKeyPath = (key: string) => `/scenarios/${encodeURIComponent(key)}/answer-key`;
 
 export function PublishedNotice({ scenarioKey }: { scenarioKey: string }) {
   const state = useLocation().state as PublishedState | null;

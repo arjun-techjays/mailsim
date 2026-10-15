@@ -4,6 +4,7 @@
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import type { ValidationIssue } from '../api/types';
 import { useApi } from '../auth/session';
 import { RequireRole } from '../components/Gates';
 import { ErrorDisplay } from '../components/ErrorDisplay';
@@ -13,10 +14,11 @@ import { usePageTitle } from '../hooks/usePageTitle';
 import './builder.css';
 import { BuilderContext, type BuilderValue } from './context';
 import { clearDraft, draftStorageKey, loadDraft, saveDraft, type BuilderMode, type Draft, type FixtureInfo } from './draft';
+import { contentHash } from './files';
 import { FALLBACK_META, type BuilderMeta } from './help';
 import { LeaveGuard } from './LeaveGuard';
-import { blankForm, documentKey, fromDocument, referencedFixtures, toDocument, type Imported, type ScenarioForm } from './model';
-import { findTarget, indexIssues, SECTIONS, type IndexedIssue, type SectionId } from './paths';
+import { blankForm, documentKey, fromDocument, num, referencedFixtures, toDocument, unknownKeys, type ScenarioForm } from './model';
+import { findTarget, indexIssues, publishIssues, SECTIONS, type IndexedIssue, type SectionId } from './paths';
 import { AgentSection } from './sections/Agent';
 import { BasicsSection } from './sections/Basics';
 import { EventsSection } from './sections/Events';
@@ -49,7 +51,7 @@ function usedFixtures(draft: Draft): Record<string, string> {
 
 function fixturesSignature(fixtures: Record<string, string>): string {
   return Object.entries(fixtures)
-    .map(([p, b]) => `${p}:${b.length}:${b.slice(-16)}`)
+    .map(([p, b]) => `${p}:${b.length}:${contentHash(b)}`)
     .join('|');
 }
 
@@ -75,13 +77,16 @@ function Chooser({ onPick }: { onPick: (l: Loaded) => void }) {
   );
 }
 
-function Builder({ mode, scenarioKey, initial, storageKey, restored, metaQ }: {
+function Builder({ mode, scenarioKey, initial, storageKey, restored, restoredFixtures, metaQ, minVersion }: {
   mode: BuilderMode;
   scenarioKey: string;
   initial: Loaded;
   storageKey: string;
   restored: boolean;
+  restoredFixtures: boolean;
   metaQ: { data?: BuilderMeta; isError: boolean };
+  /** Edit mode: the lowest version that can still be published (latest + 1), once known. */
+  minVersion: number | null;
 }) {
   const api = useApi();
   const navigate = useNavigate();
@@ -92,8 +97,11 @@ function Builder({ mode, scenarioKey, initial, storageKey, restored, metaQ }: {
   const [focusPath, setFocusPath] = useState<string | null>(null);
   const [showYaml, setShowYaml] = useState(false);
   const [notice, setNotice] = useState<string | null>(restored ? 'Restored your unsaved draft from this browser tab.' : null);
-  const [fixturesKept, setFixturesKept] = useState(true);
+  const [fixturesKept, setFixturesKept] = useState(restoredFixtures);
   const [publishError, setPublishError] = useState<unknown>(null);
+  const [publishFailed, setPublishFailed] = useState<{ key: string; issues: ValidationIssue[] } | null>(null);
+  const [saveNote, setSaveNote] = useState<string | null>(null);
+  const summaryRef = useRef<HTMLDetailsElement>(null);
   const [saving, setSaving] = useState(false);
   const allowLeave = useRef(false);
   const meta = metaQ.data ?? FALLBACK_META;
@@ -155,8 +163,11 @@ function Builder({ mode, scenarioKey, initial, storageKey, restored, metaQ }: {
 
   // ---- live validation
   const docKey = documentKey(draft.form);
-  const fixtures = useMemo(() => usedFixtures(draft), [draft]);
-  const liveKey = `${docKey}\n${fixturesSignature(fixtures)}`;
+  const refsKey = referencedFixtures(draft.form).join('\n');
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- recompute only when the files or the paths in use change
+  const fixtures = useMemo(() => usedFixtures(draft), [draft.fixtures, refsKey]);
+  const fixturesSig = useMemo(() => fixturesSignature(fixtures), [fixtures]);
+  const liveKey = `${docKey}\n${fixturesSig}`;
   const settledKey = useDebounced(liveKey, LIVE_DEBOUNCE_MS);
   const fixturesRef = useRef(fixtures);
   fixturesRef.current = fixtures;
@@ -169,12 +180,15 @@ function Builder({ mode, scenarioKey, initial, storageKey, restored, metaQ }: {
     retry: false,
   });
   const stale = settledKey !== liveKey || validation.isFetching || validation.isPlaceholderData;
-  const issues: IndexedIssue[] = useMemo(() => indexIssues(validation.data?.errors ?? []), [validation.data]);
+  const issues: IndexedIssue[] = useMemo(
+    () => indexIssues([...(validation.data?.errors ?? []), ...(publishFailed?.key === liveKey ? publishFailed.issues : [])]),
+    [validation.data, publishFailed, liveKey],
+  );
   const state: ValidationState = stale
     ? 'validating'
     : validation.isError
       ? 'error'
-      : validation.data?.ok
+      : validation.data?.ok && issues.length === 0
         ? 'valid'
         : 'invalid';
   const dirty = docKey !== baseline;
@@ -183,18 +197,31 @@ function Builder({ mode, scenarioKey, initial, storageKey, restored, metaQ }: {
   const latest = useRef({ draft, dirty });
   latest.current = { draft, dirty };
   const discarded = useRef(false);
-  useEffect(() => {
-    const t = setTimeout(() => {
-      if (dirty) setFixturesKept(saveDraft(storageKey, draft, baseline).fixturesKept);
-      else clearDraft(storageKey);
-    }, PERSIST_MS);
-    return () => clearTimeout(t);
-  }, [draft, dirty, storageKey, baseline]);
-  useEffect(
-    () => () => {
-      if (!discarded.current && latest.current.dirty) saveDraft(storageKey, latest.current.draft, baseline);
+  const savedFixtures = useRef<Draft['fixtures'] | null>(restored ? initial.draft.fixtures : null);
+  const persist = useCallback(
+    (d: Draft) => {
+      const changed = savedFixtures.current !== d.fixtures;
+      const { fixturesKept: kept } = saveDraft(storageKey, d, baseline, changed);
+      savedFixtures.current = d.fixtures;
+      if (kept !== undefined) setFixturesKept(kept);
     },
     [storageKey, baseline],
+  );
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (dirty) persist(draft);
+      else {
+        clearDraft(storageKey);
+        savedFixtures.current = null;
+      }
+    }, PERSIST_MS);
+    return () => clearTimeout(t);
+  }, [draft, dirty, storageKey, persist]);
+  useEffect(
+    () => () => {
+      if (!discarded.current && latest.current.dirty) persist(latest.current.draft);
+    },
+    [persist],
   );
   const discard = () => {
     discarded.current = true;
@@ -217,25 +244,48 @@ function Builder({ mode, scenarioKey, initial, storageKey, restored, metaQ }: {
     setFocusPath(`sec:${id}`);
   };
 
-  const onApplyYaml = (imported: Imported) => {
-    const form = imported.form;
+  const onApplyYaml = async (raw: Record<string, unknown>) => {
+    const { form, droppedAssertions } = fromDocument(raw);
     const notes: string[] = ['YAML applied to the form.'];
+    const unknown = unknownKeys(raw);
+    if (unknown.length > 0) {
+      notes.push(`Not part of the scenario format, so dropped: ${unknown.slice(0, 8).join(', ')}${unknown.length > 8 ? ` and ${unknown.length - 8} more` : ''}.`);
+    }
+    if (droppedAssertions > 0) {
+      notes.push(`${droppedAssertions} inline evaluation assertion(s) were removed: grading belongs in the answer key, written separately.`);
+    }
     if (idLocked && form.id !== draft.form.id) {
       form.id = draft.form.id;
       notes.push('The scenario id cannot change while editing (use Clone); it was kept.');
     }
-    if (imported.droppedAssertions > 0) {
-      notes.push(
-        `${imported.droppedAssertions} inline evaluation assertion(s) were removed: grading belongs in the answer key, written separately.`,
-      );
+    if (minVersion !== null && !(Number(num(form.version)) >= minVersion)) {
+      form.version = String(minVersion);
+      notes.push(`The version was set to ${minVersion}: it must be higher than every published version.`);
+    }
+    try {
+      const check = await api.builder.validate({ document: raw, fixtures });
+      if (!check.ok) notes.push(`The YAML as pasted had ${check.errors.length} problem(s); the form lists what is left to fix.`);
+    } catch {
+      /* live validation of the form reports problems anyway */
     }
     setDraft((d) => ({ ...d, form }));
     setNotice(notes.join(' '));
   };
 
   const save = async () => {
+    if (state !== 'valid') {
+      if (summaryRef.current) {
+        summaryRef.current.open = true;
+        summaryRef.current.focus();
+        setSaveNote(null);
+      } else {
+        setSaveNote(state === 'validating' ? 'Still checking the scenario: try again in a moment.' : 'The scenario could not be validated; see the error above.');
+      }
+      return;
+    }
     setSaving(true);
     setPublishError(null);
+    setSaveNote(null);
     try {
       const out = await api.builder.publish({ document: toDocument(draft.form), fixtures });
       discard();
@@ -247,6 +297,8 @@ function Builder({ mode, scenarioKey, initial, storageKey, restored, metaQ }: {
       });
     } catch (err) {
       setPublishError(err);
+      const found = publishIssues(err);
+      setPublishFailed(found.length > 0 ? { key: liveKey, issues: found } : null);
       setSaving(false);
     }
   };
@@ -254,7 +306,7 @@ function Builder({ mode, scenarioKey, initial, storageKey, restored, metaQ }: {
   const value: BuilderValue = { api, draft, meta, idLocked, issues, updateForm, addFixture, removeMessage, setInfo };
   const counts = (id: SectionId) => issues.filter((i) => i.section === id).length;
   const index = SECTIONS.findIndex((s) => s.id === section);
-  const canSave = state === 'valid' && !saving;
+  const behind = mode === 'edit' && minVersion !== null && !(Number(num(draft.form.version)) >= minVersion);
   const heading = mode === 'new' ? 'New scenario' : mode === 'edit' ? `Edit ${scenarioKey} (new version)` : `Clone of ${scenarioKey}`;
 
   return (
@@ -265,6 +317,17 @@ function Builder({ mode, scenarioKey, initial, storageKey, restored, metaQ }: {
           <span>{notice}</span>{' '}
           <button type="button" className="link" onClick={() => setNotice(null)}>
             Dismiss
+          </button>
+        </div>
+      )}
+      {behind && (
+        <div className="notice" role="note" data-testid="version-behind">
+          <span>
+            Version {(minVersion as number) - 1} has been published since this draft was started, so version{' '}
+            {draft.form.version} can no longer be published.
+          </span>{' '}
+          <button type="button" onClick={() => updateForm((d) => void (d.version = String(minVersion)))}>
+            Use version {minVersion}
           </button>
         </div>
       )}
@@ -284,18 +347,23 @@ function Builder({ mode, scenarioKey, initial, storageKey, restored, metaQ }: {
         <button type="button" aria-pressed={showYaml} aria-controls={showYaml ? "b-yaml-region" : undefined} onClick={() => setShowYaml(!showYaml)}>
           {showYaml ? 'Hide YAML' : 'Show YAML'}
         </button>
-        <button type="button" className="b-primary" disabled={!canSave} aria-describedby="save-hint" onClick={() => void save()}>
+        <button type="button" className="b-primary" disabled={saving} aria-describedby="save-hint" onClick={() => void save()}>
           {saving ? 'Publishing…' : mode === 'edit' ? `Publish version ${draft.form.version}` : 'Save and publish'}
         </button>
         <span id="save-hint" className="hint">
           {state === 'valid'
             ? 'Publishing creates an immutable version you can start runs from.'
-            : 'Saving is available once the scenario is valid.'}
+            : 'Fix the listed problems first; Save takes you to them.'}
         </span>
+        {saveNote && (
+          <span role="alert" className="field-error">
+            {saveNote}
+          </span>
+        )}
       </div>
       {validation.isError && !stale && <ErrorDisplay error={validation.error} title="Could not validate the scenario" />}
       {publishError !== null && <ErrorDisplay error={publishError} title="Could not publish" />}
-      <ErrorSummary issues={issues} onGoTo={goTo} />
+      <ErrorSummary ref={summaryRef} issues={issues} onGoTo={goTo} />
       <div className={`b-layout${showYaml ? ' b-with-yaml' : ''}`}>
         <nav aria-label="Scenario sections" className="b-nav">
           <ol>
@@ -369,7 +437,12 @@ function BuilderLoader({ mode, scenarioKey }: { mode: BuilderMode; scenarioKey: 
   const [picked, setPicked] = useState<Loaded | null>(null);
   const metaQ = useQuery({ queryKey: ['authoring-meta'], queryFn: () => api.builder.meta(), staleTime: Infinity, retry: false });
   const needsLoad = mode !== 'new' && !stored;
-  const scenarioQ = useQuery({ queryKey: ['scenario', scenarioKey], queryFn: () => api.getScenario(scenarioKey), enabled: needsLoad });
+  const scenarioQ = useQuery({
+    queryKey: ['scenario', scenarioKey],
+    queryFn: () => api.getScenario(scenarioKey),
+    enabled: mode !== 'new', // also for a restored draft: someone may have published meanwhile
+  });
+  const minVersion = mode === 'edit' && scenarioQ.data ? Math.max(0, ...scenarioQ.data.versions) + 1 : null;
   const from = Number(params.get('from'));
   const version = from > 0 ? from : scenarioQ.data?.latest_version?.version;
   const docQ = useQuery({
@@ -417,7 +490,9 @@ function BuilderLoader({ mode, scenarioKey }: { mode: BuilderMode; scenarioKey: 
           initial={loaded}
           storageKey={storageKey}
           restored={!!stored}
+          restoredFixtures={stored ? stored.fixturesKept : true}
           metaQ={metaQ}
+          minVersion={minVersion}
         />
       ) : mode === 'new' ? (
         <>

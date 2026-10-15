@@ -1,7 +1,8 @@
 import { clearDraft, DRAFT_BUDGET_CHARS, draftStorageKey, loadDraft, saveDraft, type Draft } from './draft';
-import { base64Size, bytesToBase64, fileToBase64, formatBytes, safeFileName, textToBase64, uniqueFixturePath } from './files';
+import { ApiError } from '../api/client';
+import { base64Size, bytesToBase64, contentHash, fileToBase64, fixturesBytes, formatBytes, safeFileName, textToBase64, uniqueFixturePath } from './files';
 import { blankForm } from './model';
-import { fieldId, findTarget, indexIssues, normalizePath, sectionFor } from './paths';
+import { fieldId, findTarget, indexIssues, normalizePath, publishIssues, sectionFor } from './paths';
 import { fromIsoInput, toIsoInput } from './time';
 
 describe('paths', () => {
@@ -41,6 +42,19 @@ describe('paths', () => {
   });
 });
 
+describe('publish issues', () => {
+  const err = (details: Record<string, unknown>) => new ApiError({ kind: 'http', status: 400, code: 'INVALID_REQUEST', message: 'x', details });
+  it('reads issues or errors from an error envelope', () => {
+    expect(publishIssues(new Error('x'))).toEqual([]);
+    expect(publishIssues(err({}))).toEqual([]);
+    expect(publishIssues(err({ issues: [{ path: 'scenario.id', message: 'm' }, null] }))).toEqual([{ path: 'scenario.id', message: 'm' }]);
+    expect(publishIssues(err({ errors: ['scenario.id: m', 'plain'] }))).toEqual([
+      { path: 'scenario.id', message: 'm' },
+      { path: 'scenario', message: 'plain' },
+    ]);
+  });
+});
+
 describe('files', () => {
   it('encodes, sizes and names files', async () => {
     expect(textToBase64('héllo')).toBe(btoa('hÃ©llo'));
@@ -64,6 +78,9 @@ describe('files', () => {
     expect(uniqueFixturePath('a.eml', [])).toBe('fixtures/a.eml');
     expect(uniqueFixturePath('a.eml', ['fixtures/a.eml', 'fixtures/a-2.eml'])).toBe('fixtures/a-3.eml');
     expect(uniqueFixturePath('noext', ['fixtures/noext'])).toBe('fixtures/noext-2');
+    expect(fixturesBytes({ a: 'YWJj', b: 'YQ==' }, ['a', 'a', 'b', 'missing'])).toBe(4);
+    expect(contentHash('abc')).toBe(contentHash('abc'));
+    expect(contentHash('A'.repeat(1000) + 'x' + 'A'.repeat(1000))).not.toBe(contentHash('A'.repeat(1000) + 'y' + 'A'.repeat(1000)));
   });
 });
 
@@ -88,6 +105,13 @@ describe('draft storage', () => {
     expect(loadDraft(key)).toBeNull();
     expect(saveDraft(key, draft({ 'f.eml': 'QQ==' }), 'base')).toEqual({ fixturesKept: true });
     expect(loadDraft(key)).toMatchObject({ baseline: 'base', fixturesKept: true, draft: { fixtures: { 'f.eml': 'QQ==' } } });
+    // unchanged fixtures are not rewritten
+    const setItem = vi.spyOn(Storage.prototype, 'setItem');
+    expect(saveDraft(key, draft({ 'f.eml': 'QQ==' }), 'base2', false)).toEqual({});
+    expect(setItem).toHaveBeenCalledTimes(1);
+    setItem.mockRestore();
+    sessionStorage.setItem(key, JSON.stringify({ form: blankForm() }));
+    expect(loadDraft(key)).toMatchObject({ baseline: '', draft: { info: {} } });
     clearDraft(key);
     expect(loadDraft(key)).toBeNull();
   });
@@ -98,7 +122,7 @@ describe('draft storage', () => {
     expect(loadDraft(key)).toMatchObject({ fixturesKept: false, draft: { fixtures: {} } });
     sessionStorage.setItem(key, '{not json');
     expect(loadDraft(key)).toBeNull();
-    sessionStorage.setItem(key, '{"draft":{}}');
+    sessionStorage.setItem(key, '{"info":{}}');
     expect(loadDraft(key)).toBeNull();
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('quota');

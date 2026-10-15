@@ -5,8 +5,19 @@ import { SafeEmailBody } from '../../components/SafeEmailBody';
 import { useBuilder, useIssues } from '../context';
 import type { FixtureInfo } from '../draft';
 import { CheckboxGroup, SelectField, TextArea, TextField } from '../fields';
-import { base64Size, fileToBase64, formatBytes, MAX_FILE_BYTES, uniqueFixturePath } from '../files';
-import { personaLabel, slugId, type MailboxForm, type PersonaForm } from '../model';
+import {
+  ATTACHMENT_BUDGET_BYTES,
+  base64Size,
+  DRAFT_FIXTURE_BUDGET_BYTES,
+  fileToBase64,
+  fixturesBytes,
+  formatBytes,
+  MAX_ATTACHMENTS,
+  MAX_FILE_BYTES,
+  safeFileName,
+  uniqueFixturePath,
+} from '../files';
+import { personaLabel, referencedFixtures, slugId, type MailboxForm, type PersonaForm } from '../model';
 import { fieldId } from '../paths';
 import { fromIsoInput } from '../time';
 
@@ -83,8 +94,8 @@ function MessageItem({ mailboxIndex, index, path, owner }: { mailboxIndex: numbe
 function ComposeForm({ owner, onClose }: { owner: string; onClose: () => void }) {
   const { api, draft, addFixture } = useBuilder();
   const personas = draft.form.personas;
-  const ownerPersona = personas.find((p) => p.id === owner);
-  const firstOther = personas.find((p) => p.id !== owner);
+  const ownerPersona = personas.find((p) => p.uid === owner);
+  const firstOther = personas.find((p) => p.uid !== owner);
   const formId = useId();
   const [fromKind, setFromKind] = useState<'persona' | 'external'>(firstOther ? 'persona' : 'external');
   const [fromPersona, setFromPersona] = useState(firstOther?.email ?? '');
@@ -112,13 +123,19 @@ function ComposeForm({ owner, onClose }: { owner: string; onClose: () => void })
     const files = Array.from(e.target.files as FileList);
     e.target.value = '';
     const added: Attachment[] = [];
+    let used = attachments.reduce((n, a) => n + a.size, 0);
     for (const file of files) {
-      if (file.size > MAX_FILE_BYTES) {
-        setProblem(`${file.name} is larger than ${formatBytes(MAX_FILE_BYTES)}.`);
+      if (attachments.length + added.length >= MAX_ATTACHMENTS) {
+        setProblem(`At most ${MAX_ATTACHMENTS} attachments per message.`);
+        break;
+      }
+      if (used + file.size > ATTACHMENT_BUDGET_BYTES) {
+        setProblem(`${file.name} does not fit: attachments of one message can total ${formatBytes(ATTACHMENT_BUDGET_BYTES)}.`);
         continue;
       }
+      used += file.size;
       added.push({
-        filename: file.name,
+        filename: safeFileName(file.name),
         content_type: file.type || 'application/octet-stream',
         content_b64: await fileToBase64(file),
         size: file.size,
@@ -130,7 +147,7 @@ function ComposeForm({ owner, onClose }: { owner: string; onClose: () => void })
   const onReplyTo = (path: string) => {
     setReplyTo(path);
     const prev = draft.info[path];
-    if (prev && !subject) setSubject(/^re:/i.test(prev.subject) ? prev.subject : `Re: ${prev.subject}`);
+    if (prev && !subject.trim()) setSubject(/^re:/i.test(prev.subject) ? prev.subject : `Re: ${prev.subject}`);
   };
 
   const submit = async (e: FormEvent) => {
@@ -151,19 +168,25 @@ function ComposeForm({ owner, onClose }: { owner: string; onClose: () => void })
       subject,
       text: text || null,
       html: html || null,
-      date: fromIsoInput(date) || null,
+      date: fromIsoInput(date) || draft.form.startAt || null,
       in_reply_to: inReplyTo,
-      references: parent && inReplyTo ? [...(parent.in_reply_to ? [parent.in_reply_to] : []), inReplyTo] : [],
+      references: parent && inReplyTo ? [...(parent.references ?? (parent.in_reply_to ? [parent.in_reply_to] : [])), inReplyTo] : [],
       attachments: attachments.map(({ filename, content_type, content_b64 }) => ({ filename, content_type, content_b64 })),
-      fixture_path: uniqueFixturePath(`${owner}-${slugId(subject) || 'message'}.eml`, Object.keys(draft.fixtures)),
+      fixture_path: uniqueFixturePath(`${ownerPersona?.id || 'message'}-${slugId(subject) || 'message'}.eml`, Object.keys(draft.fixtures)),
     };
     setBusy(true);
     try {
       const res = await api.builder.composeEml(body);
+      const total = fixturesBytes(draft.fixtures, referencedFixtures(draft.form)) + res.size;
+      if (total > DRAFT_FIXTURE_BUDGET_BYTES) {
+        setProblem(`This message would take the scenario's message files over ${formatBytes(DRAFT_FIXTURE_BUDGET_BYTES)}.`);
+        return;
+      }
       const info: FixtureInfo = {
         source: 'composed',
         message_id: res.message_id,
         in_reply_to: inReplyTo,
+        references: body.references,
         from,
         to: toAll,
         subject,
@@ -236,14 +259,15 @@ function ComposeForm({ owner, onClose }: { owner: string; onClose: () => void })
         label="Date (UTC, optional)"
         type="datetime-local"
         value={date}
-        help="Defaults to the scenario's clock start."
+        help={`Defaults to the scenario's clock start${draft.form.startAt ? ` (${draft.form.startAt})` : ''}.`}
         onChange={setDate}
       />
       <div className="field">
         <label htmlFor={`${formId}-att`}>Attachments</label>
         <input id={`${formId}-att`} type="file" multiple onChange={(e) => void onFiles(e)} aria-describedby={`${formId}-att-h`} />
         <span id={`${formId}-att-h`} className="hint">
-          Up to {formatBytes(MAX_FILE_BYTES)} each. Files are read in your browser and sent with the message.
+          Up to {MAX_ATTACHMENTS} files, {formatBytes(ATTACHMENT_BUDGET_BYTES)} in total (the message file must stay under{' '}
+          {formatBytes(MAX_FILE_BYTES)}). Files are read in your browser and sent with the message.
         </span>
         {attachments.length > 0 && (
           <ul aria-label="Attached files">
@@ -279,7 +303,7 @@ function ComposeForm({ owner, onClose }: { owner: string; onClose: () => void })
 function MailboxMessages({ mailboxIndex }: { mailboxIndex: number }) {
   const { api, draft, addFixture } = useBuilder();
   const mailbox = draft.form.mailboxes[mailboxIndex] as MailboxForm;
-  const persona = draft.form.personas.find((p) => p.id === mailbox.owner);
+  const persona = draft.form.personas.find((p) => p.uid === mailbox.owner);
   const [composing, setComposing] = useState(false);
   const [uploadError, setUploadError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
@@ -292,9 +316,14 @@ function MailboxMessages({ mailboxIndex }: { mailboxIndex: number }) {
     setUploadError(null);
     setBusy(true);
     const taken = Object.keys(draft.fixtures);
+    let total = fixturesBytes(draft.fixtures, referencedFixtures(draft.form));
     try {
       for (const file of files) {
         if (file.size > MAX_FILE_BYTES) throw new Error(`${file.name} is larger than ${formatBytes(MAX_FILE_BYTES)}.`);
+        if (total + file.size > DRAFT_FIXTURE_BUDGET_BYTES) {
+          throw new Error(`${file.name} would take the scenario's message files over ${formatBytes(DRAFT_FIXTURE_BUDGET_BYTES)}.`);
+        }
+        total += file.size;
         const b64 = await fileToBase64(file);
         const summary = await api.builder.inspectEml(b64);
         const path = uniqueFixturePath(file.name, taken);
@@ -347,12 +376,17 @@ function MailboxMessages({ mailboxIndex }: { mailboxIndex: number }) {
 export function MessagesSection() {
   const { draft } = useBuilder();
   const mailboxes = draft.form.mailboxes;
+  const used = fixturesBytes(draft.fixtures, referencedFixtures(draft.form));
   return (
     <>
       <p className="hint">
         Messages already in each mailbox when a run starts. Compose them here (the server builds a standard .eml file,
         with attachments and threading headers) or upload existing .eml files. To make a thread, compose a reply to an
         earlier message.
+      </p>
+      <p className="hint" data-testid="fixture-budget">
+        Message files: {formatBytes(used)} of {formatBytes(DRAFT_FIXTURE_BUDGET_BYTES)} per scenario (each file at most{' '}
+        {formatBytes(MAX_FILE_BYTES)}).
       </p>
       {mailboxes.length === 0 ? (
         <p className="empty">No mailboxes yet. Create them in the Mailboxes section first.</p>
