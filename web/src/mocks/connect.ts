@@ -38,7 +38,7 @@ interface ConnState {
 const STATE = new WeakMap<MockDb, ConnState>();
 
 /** 12-hex prefix of an msk_<prefix>_<secret> key (mock fixture keys have none). */
-const prefixOf = (secret: string) => /^msk_([0-9a-f]{12})_/.exec(secret)?.[1] ?? null;
+const prefixOf = (secret: string) => /^msk_([0-9a-f]{12})_/.exec(secret)?.[1] ?? secret.slice(0, 12);
 
 function state(db: MockDb): ConnState {
   let s = STATE.get(db);

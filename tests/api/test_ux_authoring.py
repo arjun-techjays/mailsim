@@ -598,6 +598,15 @@ def test_json_to_yaml_refuses_non_finite_and_too_deep_documents(api):
     assert r.status_code == 400 and "NaN" in r.json()["error"]["message"]
 
 
+def test_answer_key_documents_with_nan_are_refused(api):
+    headers = {**api.h("evaluator"), "content-type": "application/json"}
+    body = b'{"document": {"answer_key": {"scenario": "x", "score": NaN}}}'
+    for path in (f"/v1/scenarios/{KEY}/answer-keys/validate", f"/v1/scenarios/{KEY}/answer-keys"):
+        r = api.client.post(path, headers=headers, content=body)
+        assert r.status_code in (200, 400), r.text
+        assert "NaN" in r.text and r.status_code != 500
+
+
 def test_json_to_yaml_reports_too_deep_documents(api, monkeypatch):
     def deep(*_a, **_kw):
         raise RecursionError

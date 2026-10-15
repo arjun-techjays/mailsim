@@ -38,7 +38,7 @@ function connection(over: Partial<RunConnection>): RunConnection {
     mailbox_id: 'mbx_finance',
     mailbox_address: 'finance@acme.test',
     persona_id: 'finance',
-    agent_keys: [{ key_id: 'key_1', created_at: 'T0', expires_at: 'T9', revoked: false }],
+    agent_keys: [{ key_id: 'key_1', prefix: '000000000001', created_at: 'T0', expires_at: 'T9', revoked: false }],
     interfaces: [],
     ...over,
   };

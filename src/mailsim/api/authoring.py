@@ -33,7 +33,7 @@ from mailsim.mime.build import build_mime
 from mailsim.mime.parse import ParsedAttachment, parse_mime, sanitize_filename
 from mailsim.scenario import validator
 from mailsim.scenario.answer_key import CHECK_MODELS
-from mailsim.scenario.loader import parse_source
+from mailsim.scenario.loader import check_finite, parse_source
 from mailsim.scenario.validator import dotted
 
 MAX_FIXTURES = 200
@@ -89,6 +89,7 @@ def answer_key_data(source: str | None, document: dict[str, Any] | None) -> obje
         raise InvalidRequest("provide exactly one of `source` or `document`")
     if source is not None:
         return parse_source(source.encode(), is_json=source.lstrip().startswith("{"))
+    check_finite(document)  # a JSON document can carry NaN/Infinity too
     return document
 
 
