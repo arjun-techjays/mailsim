@@ -62,8 +62,7 @@ def gmail_service(
 ) -> GmailService:
     mailbox = facade_for(_state(request, "engine"), principal)
     assert isinstance(mailbox, AgentMailbox)  # agent role checked above
-    service = GmailService(mailbox, principal, _state(request, "session_factory"),
-                           _state(request, "blobs"), _registry(request))  # fmt: skip
+    service = GmailService(mailbox, principal, _state(request, "blobs"), _registry(request))
     service.check_user(user_id)
     return service
 

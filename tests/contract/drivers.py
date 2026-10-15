@@ -318,7 +318,9 @@ class GmailDriver(NeutralDriver):
         flags = {f for f, lab in self._FLAG_ADD.items() if lab in labels}
         if "UNREAD" not in labels:
             flags.add("SEEN")
-        names = {bytes.fromhex(x[6:]).decode() for x in labels if x.startswith("Label_")}
+        from mailsim.adapters.gmail.labels import is_user_label_id, user_label_name
+
+        names = {user_label_name(x) for x in labels if is_user_label_id(x)}
         return Msg(res["id"], self.mb.resolve_external_id("gmail", "message", res["id"]),
                    headers["message-id"], res["threadId"], headers.get("subject", ""), folder,
                    frozenset(flags), frozenset(names), headers.get("in-reply-to"),

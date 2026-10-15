@@ -74,7 +74,8 @@ def test_label_mapping_edges():
     assert lb.system_label("MAILSIM_ANSWERED")["labelListVisibility"] == "labelHide"
     reg = lb.LabelRegistry()
     reg.drop(("r", "m"), "absent")
-    reg.put(("r", "m"), "A", {"color": 1})
+    reg.put(("r", "m"), "A", {"color": 1}, 5)
+    assert reg.since(("r", "m")) == 5 and reg.since(("x", "y")) is None
     assert reg.get(("r", "m")) == {"A": {"color": 1}} and reg.get(("x", "y")) == {}
 
 
@@ -126,13 +127,17 @@ def test_history_record_mapping():
 
 
 @pytest.mark.db
-def test_service_store_facts_and_raw_fallback(gm):
+def test_service_facts_and_raw_fallback(gm):
+    from mailsim.engine.facades import AgentMailbox
+
     p = Principal(gm.env.scope.tenant_id, gm.env.scope.project_id, "agent", gm.run, "mbx_nope")
-    s = svc.GmailService(gm.mb, p, gm.env.session_factory, gm.env.blobs, lb.LabelRegistry())
+    other = AgentMailbox(gm.env.engine, gm.env.scope, gm.run, "mbx_nope")
+    s = svc.GmailService(other, p, gm.env.blobs, lb.LabelRegistry())
     with pytest.raises(NotFound):
         s.email()
     p = Principal(gm.env.scope.tenant_id, gm.env.scope.project_id, "agent", gm.run, gm.mailbox_id)
-    s = svc.GmailService(gm.mb, p, gm.env.session_factory, gm.env.blobs, lb.LabelRegistry())
+    s = svc.GmailService(gm.mb, p, gm.env.blobs, lb.LabelRegistry())
+    assert s.email() == "finance@example.test" and s.now().tzinfo is not None
     m = s.message(gm.gid(INVOICE)).model_copy(update={"raw_blob_ref": None})
     assert b"Subject: Invoice INV-001" in s.raw(m)
 
@@ -148,11 +153,11 @@ def test_paged_listing_and_relative_dates(gm, monkeypatch):
 
 
 @pytest.mark.db
-def test_reply_with_other_recipients_is_sent_as_composed(gm):
+def test_reply_with_other_recipients_is_one_reply(gm):
     gm.inject(From="vendor@example.test", To="finance@example.test", Subject="Ping",
               **{"Message-ID": "<ping@example.test>"})  # fmt: skip
     raw = raw_message({"To": "finance@example.test", "Subject": "Re: Ping",
                        "In-Reply-To": "<ping@example.test>"})  # fmt: skip
     gm.post("/messages/send", json={"raw": b64(raw)})
     ops = [a for a in gm.actions() if a[0] != "read"]
-    assert ("draft", "ok") in ops and ("reply", "ok") not in ops
+    assert ("reply", "ok") in ops and ("draft", "ok") not in ops

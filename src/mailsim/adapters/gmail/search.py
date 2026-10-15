@@ -35,7 +35,11 @@ IN_VALUES = frozenset({"inbox", "sent", "drafts", "draft", "trash", "archive", "
 IS_VALUES = frozenset({"unread", "read", "starred", "unstarred", "draft"})
 HAS_VALUES = frozenset({"attachment", "userlabels", "nouserlabels"})
 _STOP = set('(){}"')
-_RELATIVE = re.compile(r"^(\d{1,6})([dmy])$")
+_RELATIVE = re.compile(r"^([0-9]{1,6})([dmy])$")
+MAX_QUERY_CHARS = 2048
+MAX_DEPTH = 32
+MAX_DAYS = 100 * 365
+_EPOCH_MAX = 4102444800  # 2100-01-01
 _DAYS = {"d": 1, "m": 30, "y": 365}
 _SYSTEM_LABEL_NAMES = {"inbox": "inbox", "sent": "sent", "draft": "drafts", "drafts": "drafts",
                        "trash": "trash"}  # fmt: skip
@@ -99,8 +103,8 @@ def _validate(op: str, value: str) -> str:
         raise _bad(f"unsupported value {op}:{value}")
     if op in ("after", "before", "older", "newer"):
         parse_date(v)
-    if op in ("older_than", "newer_than") and not _RELATIVE.match(v):
-        raise _bad(f"{op} expects <number><d|m|y>, got {value!r}")
+    if op in ("older_than", "newer_than"):
+        relative_days(v)
     return value.strip()
 
 
@@ -176,41 +180,45 @@ class _Parser:
         self.pos += 1
         return tok
 
-    def or_expr(self) -> Node:
-        nodes = [self.and_expr()]
+    def or_expr(self, depth: int = 0) -> Node:
+        if depth > MAX_DEPTH:
+            raise _bad(f"nesting deeper than {MAX_DEPTH}")
+        nodes = [self.and_expr(depth)]
         while self.peek() == "OR":
             self.take()
-            nodes.append(self.and_expr())
+            nodes.append(self.and_expr(depth))
         return nodes[0] if len(nodes) == 1 else Or(tuple(nodes))
 
-    def and_expr(self) -> Node:
+    def and_expr(self, depth: int) -> Node:
         nodes: list[Node] = []
         while self.peek() not in (None, ")", "}", "OR"):
             if self.peek() == "AND":
                 self.take()
                 continue
-            nodes.append(self.unary())
+            nodes.append(self.unary(depth))
         if not nodes:
             raise _bad("expected a search term")
         return nodes[0] if len(nodes) == 1 else And(tuple(nodes))
 
-    def unary(self) -> Node:
+    def unary(self, depth: int) -> Node:
+        if depth > MAX_DEPTH:
+            raise _bad(f"nesting deeper than {MAX_DEPTH}")
         if self.peek() == "-":
             self.take()
-            return Not(self.unary())
-        return self.atom()
+            return Not(self.unary(depth + 1))
+        return self.atom(depth)
 
-    def atom(self) -> Node:
+    def atom(self, depth: int) -> Node:
         tok = self.take()
         if tok == "(":
-            node = self.or_expr()
+            node = self.or_expr(depth + 1)
             if self.take() != ")":
                 raise _bad("missing ')'")
             return node
         if tok == "{":
             nodes: list[Node] = []
             while self.peek() not in (None, "}"):
-                nodes.append(self.unary())
+                nodes.append(self.unary(depth + 1))
             if self.take() != "}" or not nodes:
                 raise _bad("unbalanced or empty '{...}' group")
             return nodes[0] if len(nodes) == 1 else Or(tuple(nodes))
@@ -221,6 +229,8 @@ class _Parser:
 
 def parse_query(q: str) -> Node | None:
     """Parse a Gmail `q` string. None means "match everything" (blank query)."""
+    if len(q) > MAX_QUERY_CHARS:
+        raise _bad(f"longer than {MAX_QUERY_CHARS} characters")
     if not q.strip():
         return None
     parser = _Parser(tokenize(q))
@@ -269,14 +279,23 @@ def includes_trash(node: Node | None) -> bool:
 # -------------------------------------------------------------------------------- matching
 
 
+def relative_days(value: str) -> int:
+    m = _RELATIVE.match(value)
+    days = int(m.group(1)) * _DAYS[m.group(2)] if m else -1
+    if not 0 <= days <= MAX_DAYS:
+        raise _bad(f"expected <number><d|m|y> up to 100 years, got {value!r}")
+    return days
+
+
 def parse_date(value: str) -> datetime:
-    """YYYY/MM/DD, YYYY-MM-DD or epoch seconds, read as UTC (Gmail uses the account zone)."""
-    if value.isdigit() and len(value) > 8:
+    """YYYY/MM/DD, YYYY-MM-DD or epoch seconds (1970..2100), read as UTC (Gmail uses the
+    account zone)."""
+    if value.isascii() and value.isdigit() and 8 < len(value) <= 10 and int(value) <= _EPOCH_MAX:
         return datetime.fromtimestamp(int(value), UTC)
-    for fmt in ("%Y/%m/%d", "%Y-%m-%d"):
+    for fmt in ("%Y/%m/%d", "%Y-%m-%d") if value.isascii() else ():
         try:
             return datetime.strptime(value, fmt).replace(tzinfo=UTC)
-        except ValueError:
+        except (ValueError, OverflowError):
             continue
     raise _bad(f"invalid date {value!r} (use YYYY/MM/DD)")
 
@@ -344,9 +363,7 @@ def _date(op: str, v: str, msg: CanonicalMessage, ctx: Context) -> bool:
         return when >= parse_date(v)
     if op in ("before", "older"):
         return when < parse_date(v)
-    m = _RELATIVE.match(v)
-    assert m is not None  # validated at parse time
-    cutoff = ctx.now() - timedelta(days=int(m.group(1)) * _DAYS[m.group(2)])
+    cutoff = ctx.now() - timedelta(days=relative_days(v))
     return when < cutoff if op == "older_than" else when > cutoff
 
 

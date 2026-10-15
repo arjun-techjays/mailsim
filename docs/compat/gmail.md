@@ -54,8 +54,9 @@ Notes for google-api-python-client:
 - The adapter reaches the engine only through the agent's `AgentMailbox` facade: scenario
   permissions (`allowed_operations` / `prohibited_operations`), the run state and the write
   budget all apply. Reads are free but audited; every write is one budgeted, audited action.
-  Two facts the facade does not expose are read from the store, scoped to the key's
-  tenant/project/run: the mailbox address and the run's virtual time.
+  The mailbox address and the run's virtual time come from `AgentMailbox.mailbox_info()`.
+- Every path under `/gmail/v1` and `/upload/gmail/v1`, including unknown and unsupported ones,
+  checks the credential first (401 before 404/501).
 - Hidden scenario data (answer keys, evaluation, scenario controls) is not reachable from any
   Gmail route.
 
@@ -69,7 +70,7 @@ All paths are under `/gmail/v1/users/{userId}`; media uploads under
 | `getProfile` | yes | reads |
 | `messages.list` | `q`, `labelIds` (repeated, AND), `maxResults` (default 100, max 500), `pageToken`, `includeSpamTrash` | read; free text also `search` |
 | `messages.get` | `format=minimal\|metadata\|full\|raw`, `metadataHeaders` | read |
-| `messages.send` | JSON `raw` (+`threadId`); upload `media`/`multipart` | `send`, or `reply` (see below), or `draft`+`send` |
+| `messages.send` | JSON `raw` (+`threadId`); upload `media`/`multipart` | `send`, or one `reply` (see below) |
 | `messages.insert`, `messages.import` | JSON `raw` + `labelIds`; upload `media`/`multipart` | `insert` (+`flag`, +`label`) |
 | `messages.modify`, `batchModify` | `addLabelIds`, `removeLabelIds` | `move` / `flag` / `label` |
 | `messages.trash`, `untrash` | yes | `move` |
@@ -90,13 +91,14 @@ All paths are under `/gmail/v1/users/{userId}`; media uploads under
 
 - The `From` header of a composed message is ignored: mail is always from the mailbox address
   (no send-as aliases). `Bcc` is honoured and never written to the wire copy.
-- A message whose `In-Reply-To` (or last `References` id) names a message in the mailbox **and**
-  whose recipients and subject (ignoring `Re:` prefixes) are exactly what a reply / reply-all
-  would produce, is executed as the engine's **`reply`** (one write; it marks the original
-  `\Answered` and arms `after_agent_action: send_reply` scenario triggers). Only the text body
-  is used for such a reply (an HTML-only body is converted to text).
-- Any other reply (different recipients or subject, or a Bcc) is created as a draft with the
-  reply headers and sent: **two writes** (`draft`, `send`); threading is preserved.
+- A message whose `In-Reply-To` (or last `References` id) names a message in the mailbox is
+  executed as **one engine `reply`** with the composed message's `To`/`Cc`/`Bcc`, `Subject`,
+  text and HTML bodies as overrides (addresses case-folded). It is a single budgeted `reply`
+  operation: the scenario's `reply` permission applies (a scenario that allows `reply` but not
+  `send` accepts it), the original is marked `\Answered`, and `after_agent_action:
+  send_reply` triggers are armed. Threading headers always come from the original. If a
+  recipient is outside the sandbox and the policy denies it, the whole reply fails with
+  `EXTERNAL_DELIVERY_BLOCKED` and leaves nothing behind (no draft).
 - Everything else is a plain `send` (one write). A reply header that matches no message in the
   mailbox is dropped (the message is sent as new).
 - `threadId` must name an existing thread of the mailbox (404 otherwise); membership is decided
@@ -145,15 +147,27 @@ fixed state, no duplicates or gaps.
 `modify` semantics: adding `INBOX`/`SENT`/`TRASH` moves the message there (two of them at
 once is 400); removing the current folder label archives it (removing `TRASH` restores it to
 where it was trashed from); `DRAFT` cannot be added or removed (400). Changes that are already
-in effect cost nothing. Otherwise the writes are, in order: folder move, user labels, flags,
+in effect cost nothing (also `trash` of a trashed and `untrash` of a non-trashed message). Otherwise the writes are, in order: folder move, user labels, flags,
 each a separate budgeted write; if a later write fails the earlier ones stay applied.
 
-User labels exist when at least one message carries them, or after `labels.create` in the
-running server process. The engine stores labels only on messages, so a created but never
-applied label (and the cosmetic `color`/visibility settings) lives in the adapter process and
-is lost on restart; `labels.create` itself is not an engine write (not budgeted or audited).
+User labels exist when at least one message carries them, or after `labels.create`. The
+engine stores labels only on messages, so a created but never applied label and the cosmetic
+settings live in an **adapter-side registry**:
+
+- it assumes a **single server process** and is lost on restart;
+- it is kept per (run, mailbox) and **emptied when the run is reset** after its entries were
+  recorded (labels never survive a reset);
+- at most 1000 registered labels per (run, mailbox) (400 beyond);
+- `labels.create` (and settings-only updates) are **not** engine writes: not budgeted, not in
+  the audit trail;
+- settings are validated strictly: `messageListVisibility` in `show|hide`,
+  `labelListVisibility` in `labelShow|labelShowIfUnread|labelHide`, `color` exactly
+  `{textColor, backgroundColor}` as `#rrggbb` (400 otherwise); other keys are ignored.
+
 Renaming or deleting a label rewrites it on every message carrying it (one `label` write per
-message). Names are unique case-insensitively (409 on conflict); system names are reserved.
+message). This is **not atomic**: if a write fails (budget, run ended), the messages already
+rewritten keep the change and the error is returned; repeat the call to finish. Names are
+unique case-insensitively (409 on conflict); system names are reserved.
 
 ## Search (`q`)
 
@@ -184,22 +198,29 @@ Trash is excluded from `messages.list`, `threads.list` and `drafts.list` unless
 `includeSpamTrash=true`, `labelIds` contains `TRASH`, or the query names `in:trash`,
 `in:anywhere` or `label:trash` (Gmail behaviour). There is no spam folder.
 
+Limits: `q` at most 2048 characters and 32 levels of nesting (parentheses, braces,
+negation); dates between 1970 and 2100; `older_than`/`newer_than` at most 100 years; digits
+must be ASCII. `fields` at most 1024 characters and 32 levels. Violations are 400.
+
 Evaluation: the query is parsed first (bad queries fail before any read). Free text is matched
 with the engine's search (so the scenario's `search` permission applies and the call is audited
 as `search`); a positive top-level phrase's engine hits are the candidate set, otherwise the
-whole mailbox is listed and filtered in the adapter. Mailboxes are small; there is no index.
+mailbox is listed and filtered in the adapter. When the filters require exactly one folder
+(`labelIds` with one of `INBOX`/`SENT`/`DRAFT`/`TRASH`, or a top-level `in:<folder>`), only that
+folder is listed. Mailboxes are small; there is no index.
 Results are newest first by internal date (received time, else creation time).
 
 ## history.list
 
-`historyId` is the run's event sequence. `startHistoryId` must be a non-negative integer.
+`historyId` is the run's event sequence. `startHistoryId` must be a non-negative integer
+(ASCII digits, at most 2^62).
 Each mailbox change after it becomes one history record with `messages: [{id, threadId}]`:
 
 | Engine change | Record field | `historyTypes` |
 |---|---|---|
 | delivered / sent / inserted / draft created / copied | `messagesAdded` (with current `labelIds`) | `messageAdded` |
 | deleted | `messagesDeleted` | `messageDeleted` |
-| labels / flags changed, moved | **no `labelsAdded`/`labelsRemoved` detail** (the engine change feed carries no delta): refetch the listed message | `labelAdded`, `labelRemoved` |
+| labels / flags changed, moved | **no `labelsAdded`/`labelsRemoved` fields at all** (the engine change feed carries no delta): only `messages`; clients must refetch the listed message | `labelAdded`, `labelRemoved` |
 
 A run reset after `startHistoryId` answers 404 (as Gmail does for a stale history id): perform a
 full sync. `labelId` filters on the message's current labels (deleted messages never match).
@@ -217,7 +238,9 @@ Paging follows `nextPageToken`; the response `historyId` is the latest sequence.
 - `metadata`: top-level headers, filtered by `metadataHeaders` (case-insensitive).
 
 Request `raw` fields accept base64url with or without padding (the standard alphabet is
-tolerated).
+tolerated). HTML bodies are reduced to text (snippets, HTML-only messages) by a linear tag
+stripper over at most 256 KB (8 KB for snippets); script/style content is dropped. Multipart
+upload metadata is limited to 64 KB.
 
 ## Errors
 
@@ -258,8 +281,7 @@ middleware with the REST error envelope (400), not the Gmail shape.
 - User label ids derive from names and change on rename; unapplied labels live in the server
   process only; `labels.create` is not an audited write.
 - Extra system labels `MAILSIM_ANSWERED` / `MAILSIM_DELETED`.
-- No attachments when composing; no send-as aliases; replies with the exact reply recipients
-  use only the text body.
+- No attachments when composing; no send-as aliases.
 - History records for label/flag/folder changes carry no label delta.
 - Free-text search is substring-based over subject, text body and sender address; dates are UTC.
 - `historyId` on messages and threads is the mailbox's latest sequence.

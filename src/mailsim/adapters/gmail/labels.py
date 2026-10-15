@@ -16,6 +16,7 @@ id (a documented deviation: Gmail keeps the id).
 from __future__ import annotations
 
 import binascii
+import re
 import threading
 from typing import Any
 
@@ -107,6 +108,34 @@ def check_user_label_name(name: object) -> str:
 
 
 SETTING_KEYS = ("messageListVisibility", "labelListVisibility", "color")
+MESSAGE_VISIBILITY = frozenset({"show", "hide"})
+LABEL_VISIBILITY = frozenset({"labelShow", "labelShowIfUnread", "labelHide"})
+_HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
+MAX_REGISTERED_LABELS = 1000
+
+
+def check_settings(body: dict[str, Any]) -> dict[str, Any]:
+    """Strictly validated cosmetic settings from a labels.create/update/patch body."""
+    out: dict[str, Any] = {}
+    if "messageListVisibility" in body:
+        if body["messageListVisibility"] not in MESSAGE_VISIBILITY:
+            raise InvalidRequest("messageListVisibility must be one of show, hide")
+        out["messageListVisibility"] = body["messageListVisibility"]
+    if "labelListVisibility" in body:
+        if body["labelListVisibility"] not in LABEL_VISIBILITY:
+            raise InvalidRequest("labelListVisibility must be one of labelShow, "
+                                 "labelShowIfUnread, labelHide")  # fmt: skip
+        out["labelListVisibility"] = body["labelListVisibility"]
+    if "color" in body:
+        color = body["color"]
+        if not (isinstance(color, dict) and set(color) == {"textColor", "backgroundColor"}
+                and all(isinstance(v, str) and _HEX_COLOR.fullmatch(v) for v in color.values())):  # fmt: skip
+            raise InvalidRequest("color must be {textColor, backgroundColor} as #rrggbb")
+        out["color"] = {
+            "textColor": color["textColor"],
+            "backgroundColor": color["backgroundColor"],
+        }
+    return out
 
 
 def system_label(label_id: str) -> dict[str, Any]:
@@ -123,25 +152,42 @@ def user_label(name: str, settings: dict[str, Any] | None = None) -> dict[str, A
 
 
 class LabelRegistry:
-    """Labels created through the Gmail API that are not (yet) on any message.
+    """Labels created through the Gmail API that are not (yet) on any message, plus the cosmetic
+    settings (visibility, color) of every label.
 
-    The engine stores labels only on messages, so an unapplied label lives here, per run and
-    mailbox, in this server process (it does not survive a restart; once applied to a message
-    it is engine state). Also keeps the cosmetic settings (visibility, color).
+    The engine stores labels only on messages, so this lives in the adapter process: it assumes
+    a SINGLE server process, does not survive a restart, and `labels.create` is not an audited
+    or budgeted engine write. Entries are kept per (run, mailbox) with the history id they were
+    recorded at, so the owner can drop them when the run was reset since (`clear`); at most
+    MAX_REGISTERED_LABELS per (run, mailbox).
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._labels: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
+        self._since: dict[tuple[str, str], int] = {}
+
+    def since(self, key: tuple[str, str]) -> int | None:
+        with self._lock:
+            return self._since.get(key) if self._labels.get(key) else None
 
     def get(self, key: tuple[str, str]) -> dict[str, dict[str, Any]]:
         with self._lock:
             return {n: dict(s) for n, s in self._labels.get(key, {}).items()}
 
-    def put(self, key: tuple[str, str], name: str, settings: dict[str, Any]) -> None:
+    def put(self, key: tuple[str, str], name: str, settings: dict[str, Any], since: int) -> None:
         with self._lock:
-            self._labels.setdefault(key, {})[name] = dict(settings)
+            bucket = self._labels.setdefault(key, {})
+            if name not in bucket and len(bucket) >= MAX_REGISTERED_LABELS:
+                raise InvalidRequest(f"too many labels (at most {MAX_REGISTERED_LABELS})")
+            self._since.setdefault(key, since)
+            bucket[name] = dict(settings)
 
     def drop(self, key: tuple[str, str], name: str) -> None:
         with self._lock:
             self._labels.get(key, {}).pop(name, None)
+
+    def clear(self, key: tuple[str, str]) -> None:
+        with self._lock:
+            self._labels.pop(key, None)
+            self._since.pop(key, None)

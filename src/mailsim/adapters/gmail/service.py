@@ -2,19 +2,15 @@
 
 Each request builds one `GmailService`. Reads go through the facade (audited, free); every
 state change is one or more facade writes (each counted against the run's agent budget by the
-engine). Two small facts the facade does not expose are read from the store, scoped to the
-credential's tenant/project/run: the mailbox address (for ``userId`` and ``from:me``) and the
-run's virtual time (for ``older_than:``/``newer_than:``).
+engine). The mailbox address (``userId``, ``from:me``) and the run's virtual time
+(``older_than:``/``newer_than:``) come from ``AgentMailbox.mailbox_info()``.
 """
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
-
-from sqlalchemy.orm import Session, sessionmaker
 
 from mailsim.adapters.gmail import labels as lb
 from mailsim.adapters.gmail.resources import (
@@ -51,8 +47,6 @@ from mailsim.engine.pagination import decode_cursor, encode_cursor
 from mailsim.mime.build import build_mime
 from mailsim.mime.parse import ParsedMessage, parse_mime
 from mailsim.providers.ids import gmail_id
-from mailsim.store import models as m
-from mailsim.store import repos
 from mailsim.store.blob import BlobStore
 
 DEFAULT_PAGE = 100
@@ -62,7 +56,10 @@ ADDED_EVENTS = frozenset({"message.delivered", "message.sent", "message.inserted
                           "draft.created", "message.copied"})  # fmt: skip
 LABEL_EVENTS = frozenset({"message.labels_changed", "message.flags_changed", "message.moved"})
 HISTORY_TYPES = frozenset({"messageAdded", "messageDeleted", "labelAdded", "labelRemoved"})
-_RE_PREFIX = re.compile(r"^\s*(re\s*:\s*)+", re.IGNORECASE)
+FOLDER_FOR_LABEL = {"INBOX": "inbox", "SENT": "sent", "DRAFT": "drafts", "TRASH": "trash"}
+FOLDER_FOR_IN = {"inbox": "inbox", "sent": "sent", "drafts": "drafts", "draft": "drafts",
+                 "trash": "trash", "archive": "archive"}  # fmt: skip
+MAX_HISTORY_ID = 2**62
 
 
 def page_size(max_results: int | None) -> int:
@@ -92,8 +89,14 @@ def _msg_key(msg: CanonicalMessage) -> tuple[datetime, str]:
     return message_date(msg), gmail_message_id(msg)
 
 
-def _strip_re(subject: str) -> str:
-    return " ".join(_RE_PREFIX.sub("", subject).split()).casefold()
+def history_number(value: str | None, message: str) -> int:
+    """A history id / sequence: ASCII digits only, bounded."""
+    if value is None or not (0 < len(value) <= 19 and value.isascii() and value.isdigit()):
+        raise InvalidRequest(message)
+    number = int(value)
+    if number > MAX_HISTORY_ID:
+        raise InvalidRequest(message)
+    return number
 
 
 def history_record(
@@ -119,11 +122,11 @@ def history_record(
 
 
 class GmailService:
-    def __init__(self, mb: AgentMailbox, principal: Principal, sessions: sessionmaker[Session],
-                 blobs: BlobStore, registry: lb.LabelRegistry) -> None:  # fmt: skip
-        self.mb, self.principal, self._sessions = mb, principal, sessions
+    def __init__(self, mb: AgentMailbox, principal: Principal, blobs: BlobStore,
+                 registry: lb.LabelRegistry) -> None:  # fmt: skip
+        self.mb, self.principal = mb, principal
         self._blobs, self._registry = blobs, registry
-        self._all: list[CanonicalMessage] | None = None
+        self._listings: dict[str | None, list[CanonicalMessage]] = {}
         self._facts: tuple[str, datetime] | None = None
         self._history: str | None = None
 
@@ -131,15 +134,8 @@ class GmailService:
 
     def _run_facts(self) -> tuple[str, datetime]:
         if self._facts is None:
-            p = self.principal
-            assert p.run_id is not None and p.mailbox_id is not None  # agent keys are bound
-            with self._sessions() as s:
-                run = repos.get_run(s, repos.Scope(p.tenant_id, p.project_id), p.run_id)
-                box = s.get(m.Mailbox, (p.mailbox_id, run.id))
-                if box is None:
-                    raise NotFound(f"mailbox {p.mailbox_id} not found")
-                assert run.virtual_time is not None
-                self._facts = (box.email, run.virtual_time)
+            info = self.mb.mailbox_info()
+            self._facts = (str(info["email"]), parse_ts(info["virtual_time"]))
         return self._facts
 
     def email(self) -> str:
@@ -158,22 +154,26 @@ class GmailService:
         return self._history
 
     def _changed(self) -> None:
-        self._all, self._history = None, None
+        self._listings, self._history = {}, None
 
     # ------------------------------------------------------------------------- lookups
 
-    def all_messages(self) -> list[CanonicalMessage]:
-        if self._all is None:
+    def listing(self, folder: str | None = None) -> list[CanonicalMessage]:
+        """Every message (of one folder), oldest first, through the facade's paged listing."""
+        if folder not in self._listings:
             out: list[CanonicalMessage] = []
             cursor: str | None = None
             while True:
-                page = self.mb.list_messages(page_size=MAX_PAGE, cursor=cursor)
+                page = self.mb.list_messages(folder=folder, page_size=MAX_PAGE, cursor=cursor)
                 out += page.items
                 cursor = page.next_cursor
                 if cursor is None:
                     break
-            self._all = out
-        return self._all
+            self._listings[folder] = out
+        return self._listings[folder]
+
+    def all_messages(self) -> list[CanonicalMessage]:
+        return self.listing(None)
 
     def message(self, gid: str) -> CanonicalMessage:
         return self.mb.get_message(self.mb.resolve_external_id("gmail", "message", gid))
@@ -206,15 +206,24 @@ class GmailService:
 
     # ------------------------------------------------------------------------- search
 
-    def _candidates(self, node: Any) -> list[CanonicalMessage]:
+    @staticmethod
+    def _folder_filter(node: Any, label_ids: list[str]) -> str | None:
+        """A single folder the result must lie in, pushed down to the engine listing."""
+        folders = {FOLDER_FOR_LABEL[x] for x in label_ids if x in FOLDER_FOR_LABEL}
+        folders |= {FOLDER_FOR_IN[t.value.lower()] for t, top in terms(node)
+                    if top and t.op == "in" and t.value.lower() in FOLDER_FOR_IN}  # fmt: skip
+        return folders.pop() if len(folders) == 1 else None
+
+    def _candidates(self, node: Any, folder: str | None) -> list[CanonicalMessage]:
         """Free text goes through the engine search (guarded + audited as `search`); when a
-        positive top-level phrase exists its hits are the candidate set, else everything."""
+        positive top-level phrase exists its hits are the candidate set, else the listing of
+        the single folder the filters require (or everything)."""
         free = [(t, top) for t, top in terms(node) if t.op is None]
         if not free:
-            return self.all_messages()
+            return self.listing(folder)
         term, top = next(((t, tp) for t, tp in free if tp), free[0])
         hits = self.mb.search_messages(term.value)
-        return hits if top else self.all_messages()
+        return hits if top else self.listing(folder)
 
     def select(
         self, q: str | None, label_ids: list[str], include_spam_trash: bool
@@ -225,7 +234,7 @@ class GmailService:
         keep_trash = include_spam_trash or includes_trash(node) or "TRASH" in label_ids
         ctx = Context(self.email, self.now)
         out = []
-        for msg in self._candidates(node):
+        for msg in self._candidates(node, self._folder_filter(node, label_ids)):
             if not keep_trash and lb.folder_type(msg) == "trash":
                 continue
             ids = lb.message_label_ids(msg)
@@ -332,9 +341,12 @@ class GmailService:
         return self.mb.get_message(msg.id)
 
     def trash(self, msg: CanonicalMessage, restore: bool = False) -> CanonicalMessage:
-        (self.mb.untrash if restore else self.mb.trash)(msg.id)
-        self._changed()
-        return self.mb.get_message(msg.id)
+        """Trash / untrash; a message already in the requested state costs no write."""
+        if (lb.folder_type(msg) == "trash") == restore:
+            (self.mb.untrash if restore else self.mb.trash)(msg.id)
+            self._changed()
+            return self.mb.get_message(msg.id)
+        return msg
 
     def delete(self, msg: CanonicalMessage) -> None:
         self.mb.delete(msg.id)
@@ -357,7 +369,7 @@ class GmailService:
 
     @staticmethod
     def _emails(addrs: list[Address]) -> list[str]:
-        return [a.email for a in addrs]
+        return list(dict.fromkeys(a.email.casefold() for a in addrs))
 
     def _check_thread(self, thread_id: str | None) -> None:
         if thread_id:
@@ -370,39 +382,17 @@ class GmailService:
         found = [x for x in self.all_messages() if x.message_id_header == ref and not x.is_draft]
         return min(found, key=lambda x: lb.folder_type(x) == "sent", default=None)
 
-    def _reply_mode(self, orig: CanonicalMessage, parsed: ParsedMessage) -> bool | None:
-        """True/False when the engine's reply / reply-all produces exactly these recipients and
-        subject; None when the message must be sent as composed."""
-        if parsed.bcc or _strip_re(parsed.subject) != _strip_re(orig.subject):
-            return None
-        me = self.email().lower()
-        sender = orig.from_.email
-        base = [sender] if sender != me else self._emails(orig.to)
-        single = [a for a in dict.fromkeys(base) if a != me] or [sender]
-        everyone = set(single) | {a.email for a in (*orig.to, *orig.cc) if a.email != me}
-        rcpts = set(self._emails([*parsed.to, *parsed.cc]))
-        if rcpts == set(single):
-            return False
-        if rcpts == everyone:
-            return True
-        return None
-
     def send(self, raw: bytes, thread_id: str | None) -> CanonicalMessage:
-        """Gmail `send`. A message replying (In-Reply-To/References) to a mailbox message with the
-        recipients and subject of a reply / reply-all is the engine's `reply`; any other reply is
-        composed as a draft and sent (2 writes, headers kept); everything else is `send`."""
+        """Gmail `send`. A message whose In-Reply-To (or last References id) names a message of
+        the mailbox is ONE engine `reply` with the composed recipients, subject and body as
+        overrides (policy, budget, ANSWERED, send_reply triggers); anything else is `send`."""
         parsed, text = self._parse(raw)
         self._check_thread(thread_id)
         to, cc, bcc = (self._emails(parsed.to), self._emails(parsed.cc), self._emails(parsed.bcc))
         orig = self._reply_target(parsed)
-        mode = self._reply_mode(orig, parsed) if orig is not None else None
-        if orig is not None and mode is not None:
-            result = self.mb.reply(orig.id, text=text, reply_all=mode)
-        elif orig is not None:
-            draft = self.mb.create_draft(to=to, subject=parsed.subject, text=text, cc=cc, bcc=bcc,
-                                         html=parsed.body_html, in_reply_to=parsed.in_reply_to,
-                                         references=parsed.references or None)  # fmt: skip
-            result = self.mb.send_draft(draft["message_id"])
+        if orig is not None:
+            result = self.mb.reply(orig.id, text=text, to=to, cc=cc, bcc=bcc,
+                                   subject=parsed.subject, html=parsed.body_html)  # fmt: skip
         else:
             result = self.mb.send(to=to, subject=parsed.subject, text=text, cc=cc, bcc=bcc,
                                   html=parsed.body_html)  # fmt: skip
@@ -485,11 +475,23 @@ class GmailService:
     def _key(self) -> tuple[str, str]:
         return str(self.principal.run_id), str(self.principal.mailbox_id)
 
+    def _registered(self) -> dict[str, dict[str, Any]]:
+        """The adapter-side registry for this (run, mailbox); emptied when the run was reset
+        after its entries were recorded (labels do not survive a reset)."""
+        key = self._key()
+        since = self._registry.since(key)
+        if since is not None and self.mb.list_changes(since, limit=1)["reset_since"]:
+            self._registry.clear(key)
+        return self._registry.get(key)
+
+    def _register(self, name: str, settings: dict[str, Any]) -> None:
+        self._registry.put(self._key(), name, settings, int(self.history_id()))
+
     def label_settings(self) -> dict[str, dict[str, Any]]:
         names: dict[str, dict[str, Any]] = {
             n: {} for x in self.all_messages() for n in lb.user_labels(x)
         }
-        names.update(self._registry.get(self._key()))
+        names.update(self._registered())
         return names
 
     def list_labels(self) -> dict[str, Any]:
@@ -530,16 +532,17 @@ class GmailService:
     def create_label(self, body: dict[str, Any]) -> dict[str, Any]:
         name = lb.check_user_label_name(body.get("name"))
         self._check_free(name)
-        settings = {k: body[k] for k in lb.SETTING_KEYS if k in body}
-        self._registry.put(self._key(), name, settings)
+        settings = lb.check_settings(body)
+        self._register(name, settings)
         return lb.user_label(name, settings)
 
     def update_label(self, label_id: str, body: dict[str, Any], patch: bool) -> dict[str, Any]:
         """Rename and/or change settings. A rename rewrites the label on every message that has
-        it (one `label` write per message) and changes the label id (ids derive from names)."""
+        it (one `label` write per message, not atomic: if a write fails, the messages already
+        rewritten keep the new name) and changes the label id (ids derive from names)."""
         name, settings = self._existing(label_id)
         new_name = lb.check_user_label_name(body.get("name", name) if patch else body.get("name"))
-        fresh = {k: body[k] for k in lb.SETTING_KEYS if k in body}
+        fresh = lb.check_settings(body)
         merged = {**settings, **fresh} if patch else fresh
         if new_name != name:
             self._check_free(new_name, ignore=name)
@@ -548,10 +551,11 @@ class GmailService:
                     self.mb.modify_labels(msg.id, add=[new_name], remove=[name])
             self._registry.drop(self._key(), name)
             self._changed()
-        self._registry.put(self._key(), new_name, merged)
+        self._register(new_name, merged)
         return lb.user_label(new_name, merged)
 
     def delete_label(self, label_id: str) -> None:
+        """One `label` write per message carrying it (not atomic, like a rename)."""
         name, _ = self._existing(label_id)
         for msg in self.all_messages():
             if name in lb.user_labels(msg):
@@ -561,30 +565,34 @@ class GmailService:
 
     # ------------------------------------------------------------------------- history
 
+    def _current(self, message_id: str) -> CanonicalMessage | None:
+        try:
+            return self.mb.get_message(message_id)
+        except NotFound:
+            return None
+
     def history(self, start: str | None, max_results: int | None, token: str | None,
                 label_id: str | None, history_types: list[str]) -> dict[str, Any]:  # fmt: skip
-        if start is None or not start.isdigit():
-            raise InvalidRequest("startHistoryId is required (a non-negative integer)")
+        since = history_number(start, "startHistoryId is required (a non-negative integer)")
         unknown = set(history_types) - HISTORY_TYPES
         if unknown:
             raise InvalidRequest(f"Invalid historyTypes: {sorted(unknown)}")
         if label_id:
             lb.check_label_id(label_id)
-        since = int(start)
         if token:
-            stamp, _ = decode_cursor(token)
-            if not stamp.isdigit():
-                raise InvalidRequest("malformed page token")
-            since = int(stamp)
+            since = history_number(decode_cursor(token)[0], "malformed page token")
         feed = self.mb.list_changes(since, limit=page_size(max_results))
         if feed["reset_since"]:
             raise NotFound("Requested entity was not found: startHistoryId predates a run reset; "
                            "perform a full sync")  # fmt: skip
-        index = {x.id: x for x in self.all_messages()}
+        changes = [c for c in feed["changes"] if c.get("message_id")]
+        current = {
+            mid: self._current(mid) for mid in dict.fromkeys(str(c["message_id"]) for c in changes)
+        }
         wanted = set(history_types)
         records = []
-        for change in [c for c in feed["changes"] if c.get("message_id")]:
-            msg = index.get(str(change["message_id"]))
+        for change in changes:
+            msg = current[str(change["message_id"])]
             record, kinds = history_record(change, msg)
             if wanted and not kinds & wanted:
                 continue

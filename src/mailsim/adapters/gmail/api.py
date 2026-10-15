@@ -15,7 +15,7 @@ from fastapi import APIRouter, Body, Query, Request, Response
 from fastapi.responses import JSONResponse
 from starlette.concurrency import run_in_threadpool
 
-from mailsim.adapters.gmail.auth import Gmail
+from mailsim.adapters.gmail.auth import Agent, Gmail
 from mailsim.adapters.gmail.errors import GmailRoute
 from mailsim.adapters.gmail.fields import select
 from mailsim.adapters.gmail.labels import message_label_ids
@@ -268,7 +268,7 @@ def get_draft(request: Request, user_id: str, draft_id: str, gmail: Gmail,
 
 
 def _create_draft(gmail: GmailService, body: dict[str, Any], raw: bytes | None) -> dict[str, Any]:
-    message = _message_part(body) if raw is None else body.get("message") or {}
+    message = _message_part(body) if raw is None or "message" in body else {}
     data = raw if raw is not None else decode_raw(message.get("raw"))
     return gmail.draft_resource(gmail.create_draft(data, _thread_id(message)))
 
@@ -300,8 +300,8 @@ def _send_draft(gmail: GmailService, body: dict[str, Any], raw: bytes | None) ->
     draft_id = body.get("id")
     if not isinstance(draft_id, str) or not draft_id:
         raise InvalidRequest("'id' (the draft id) is required")
-    message = body.get("message") or {}
-    if raw is None and isinstance(message, dict) and message.get("raw"):
+    message = _message_part(body) if "message" in body else {}
+    if raw is None and message.get("raw"):
         raw = decode_raw(message["raw"])
     return _labelled(gmail.send_draft(draft_id, raw))
 
@@ -342,8 +342,8 @@ _UPLOADS = {
 async def upload(request: Request, user_id: str, gmail: Gmail,
                  uploadType: str | None = None) -> Response:  # fmt: skip
     action = request.scope["route"].path.removeprefix(UPLOAD + "/")
-    meta, raw = read_upload(
-        uploadType, request.headers.get("content-type", ""), await request.body()
+    meta, raw = await run_in_threadpool(
+        read_upload, uploadType, request.headers.get("content-type", ""), await request.body()
     )
     data = await run_in_threadpool(_UPLOADS[action], gmail, meta, raw)
     return _out(request, data)
@@ -352,8 +352,8 @@ async def upload(request: Request, user_id: str, gmail: Gmail,
 @router.put(UPLOAD + "/drafts/{draft_id}")
 async def upload_draft_update(request: Request, user_id: str, draft_id: str, gmail: Gmail,
                               uploadType: str | None = None) -> Response:  # fmt: skip
-    meta, raw = read_upload(
-        uploadType, request.headers.get("content-type", ""), await request.body()
+    meta, raw = await run_in_threadpool(
+        read_upload, uploadType, request.headers.get("content-type", ""), await request.body()
     )
     return _out(request, await run_in_threadpool(_update_draft, gmail, draft_id, meta, raw))
 
@@ -366,7 +366,7 @@ _ANY = ["GET", "POST", "PUT", "PATCH", "DELETE"]
 
 @router.api_route("/gmail/v1/{rest:path}", methods=_ANY)
 @router.api_route("/upload/gmail/v1/{rest:path}", methods=_ANY)
-def not_in_profile(request: Request, rest: str) -> Response:
+def not_in_profile(request: Request, rest: str, principal: Agent) -> Response:
     """Capability discovery: Gmail features outside this profile fail explicitly (501); paths
     that do not exist in Gmail answer 404."""
     parts = rest.split("/")

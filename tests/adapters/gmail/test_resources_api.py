@@ -66,7 +66,11 @@ def test_labels_crud(gm):
     gm.call("GET", f"/labels/Label_{b'missing'.hex()}", 404)
 
     # patch keeps settings, rename rewrites the label on messages and changes the id
-    patched = gm.call("PATCH", f"/labels/{lid}", json={"color": {"textColor": "#000000"}}).json()
+    patched = gm.call(
+        "PATCH",
+        f"/labels/{lid}",
+        json={"color": {"textColor": "#000000", "backgroundColor": "#ffffff"}},
+    ).json()
     assert patched["labelListVisibility"] == "labelHide" and patched["color"]
     renamed = gm.call("PATCH", f"/labels/{lid}", json={"name": "Suppliers"}).json()
     assert renamed["id"] != lid and renamed["name"] == "Suppliers"

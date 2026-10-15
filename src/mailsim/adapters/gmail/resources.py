@@ -20,6 +20,10 @@ from mailsim.providers.ids import gmail_id
 
 FORMATS = ("minimal", "metadata", "full", "raw")
 SNIPPET_CHARS = 200
+SNIPPET_HTML_CHARS = 8 * 1024
+MAX_HTML_CHARS = 256 * 1024
+_TAG = re.compile(r"/?[a-z0-9]{1,16}")
+_BREAKS = frozenset({"br", "/p", "/div", "/li", "/tr", "/h1", "/h2", "/h3"})
 
 
 def b64url(data: bytes) -> str:
@@ -42,15 +46,40 @@ def decode_raw(value: object) -> bytes:
     return data
 
 
-def html_to_text(markup: str) -> str:
-    text = re.sub(r"(?is)<(script|style)\b.*?</\1\s*>", " ", markup)
-    text = re.sub(r"(?i)<br\s*/?>|</p\s*>|</div\s*>", "\n", text)
-    return html.unescape(re.sub(r"<[^>]+>", "", text))
+def html_to_text(markup: str, limit: int = MAX_HTML_CHARS) -> str:
+    """Strip tags (and script/style content) in ONE linear pass over at most `limit` chars.
+    An unterminated tag or script/style element ends the text (no backtracking regexes)."""
+    markup = markup[:limit]
+    low = markup.lower()
+    out: list[str] = []
+    i = 0
+    while i < len(markup):
+        lt = markup.find("<", i)
+        if lt < 0:
+            out.append(markup[i:])
+            break
+        out.append(markup[i:lt])
+        gt = markup.find(">", lt + 1)
+        if gt < 0:
+            break
+        name = _TAG.match(low, lt + 1, gt)
+        tag = name.group(0) if name else ""
+        if tag in ("script", "style"):
+            close = low.find("</" + tag, gt + 1)
+            gt = low.find(">", close) if close >= 0 else -1
+            if gt < 0:
+                break
+            out.append(" ")
+        elif tag in _BREAKS:
+            out.append("\n")
+        i = gt + 1
+    return html.unescape("".join(out))
 
 
 def snippet(msg: CanonicalMessage) -> str:
-    text = msg.body_text if msg.body_text is not None else html_to_text(msg.body_html or "")
-    return " ".join(text.split())[:SNIPPET_CHARS]
+    text = (msg.body_text if msg.body_text is not None
+            else html_to_text(msg.body_html or "", SNIPPET_HTML_CHARS))  # fmt: skip
+    return " ".join(text[:SNIPPET_HTML_CHARS].split())[:SNIPPET_CHARS]
 
 
 def gmail_message_id(msg: CanonicalMessage) -> str:

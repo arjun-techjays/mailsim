@@ -139,24 +139,21 @@ def test_send_reply_maps_to_engine_reply(gm):
     assert [m["subject"] for m in theirs] == ["Re: Invoice INV-001"]
 
 
-def test_send_reply_all_and_free_form_reply(gm):
+def test_every_reply_is_one_engine_reply(gm):
     # PO is from procurement (outside the sandbox) -> use an internal thread instead
     gm.inject(From="vendor@example.test", To="finance@example.test", Cc="vendor@example.test",
               Subject="Group", **{"Message-ID": "<group-1@example.test>"})  # fmt: skip
     gm.send("vendor@example.test", "RE: group", "all", **{"In-Reply-To": "<group-1@example.test>"})
-    assert ("reply", "ok") in gm.actions()
-    # different subject: sent as composed (draft + send), reply headers kept
-    out = gm.send("vendor@example.test", "Another topic", "x",
-                  **{"In-Reply-To": "<group-1@example.test>"})  # fmt: skip
-    ops = gm.actions()
-    assert ("draft", "ok") in ops and ops.count(("send", "ok")) == 1
+    # different subject and a Bcc: still ONE reply, composed fields kept, reply headers set
+    out = gm.send("Vendor@Example.Test", "Another topic", "x",
+                  **{"In-Reply-To": "<group-1@example.test>", "Bcc": "vendor@example.test"})  # fmt: skip
+    ops = [a for a in gm.actions() if a[0] != "read"]
+    assert ops.count(("reply", "ok")) == 2 and ("send", "ok") not in ops
+    assert ("draft", "ok") not in ops
     got = gm.get(f"/messages/{out['id']}", params={"format": "metadata",
-                                                    "metadataHeaders": "In-Reply-To"})  # fmt: skip
-    assert got["payload"]["headers"] == [{"name": "In-Reply-To", "value": "<group-1@example.test>"}]
-    # a Bcc never maps to the engine reply either
-    gm.send("vendor@example.test", "Re: Group", "x",
-            **{"In-Reply-To": "<group-1@example.test>", "Bcc": "vendor@example.test"})  # fmt: skip
-    assert gm.actions().count(("send", "ok")) == 2
+                                                    "metadataHeaders": ["In-Reply-To", "Subject"]})  # fmt: skip
+    assert {h["name"]: h["value"] for h in got["payload"]["headers"]} == {
+        "In-Reply-To": "<group-1@example.test>", "Subject": "Another topic"}  # fmt: skip
 
 
 def test_reply_all_recipients(gm):

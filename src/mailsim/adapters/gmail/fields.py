@@ -24,7 +24,13 @@ def _tokens(spec: str) -> list[str]:
     return out
 
 
+MAX_FIELDS_CHARS = 1024
+MAX_DEPTH = 32
+
+
 def parse_fields(spec: str) -> Tree:
+    if len(spec) > MAX_FIELDS_CHARS:
+        raise InvalidRequest(f"Invalid field selection: longer than {MAX_FIELDS_CHARS} characters")
     tokens = _tokens(spec)
     pos = 0
 
@@ -41,8 +47,10 @@ def parse_fields(spec: str) -> Tree:
             for k, v in sub.items():
                 merge(existing, k, v)
 
-    def selection() -> Tree:
+    def selection(depth: int = 0) -> Tree:
         nonlocal pos
+        if depth > MAX_DEPTH:
+            raise InvalidRequest(f"Invalid field selection: nested deeper than {MAX_DEPTH}")
         tree: Tree = {}
         while True:
             if pos >= len(tokens) or tokens[pos] in ",/()":
@@ -53,11 +61,13 @@ def parse_fields(spec: str) -> Tree:
                 if pos + 1 >= len(tokens) or tokens[pos + 1] in ",/()":
                     raise bad()
                 path.append(tokens[pos + 1])
+                if len(path) > MAX_DEPTH:
+                    raise bad()
                 pos += 2
             sub: Tree | None = None
             if pos < len(tokens) and tokens[pos] == "(":
                 pos += 1
-                sub = selection()
+                sub = selection(depth + 1)
                 if pos >= len(tokens) or tokens[pos] != ")":
                     raise bad()
                 pos += 1

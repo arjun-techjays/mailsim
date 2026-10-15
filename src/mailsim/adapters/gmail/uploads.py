@@ -14,6 +14,7 @@ from typing import Any
 
 from mailsim.domain.errors import InvalidRequest, UnsupportedOperation
 
+MAX_METADATA_BYTES = 64 * 1024
 _BOUNDARY = re.compile(r'boundary="?([^";]+)"?', re.IGNORECASE)
 
 
@@ -45,9 +46,11 @@ def split_multipart(body: bytes, content_type: str) -> tuple[dict[str, Any], byt
     parts = [_split(c) for c in itertools.takewhile(lambda c: not c.startswith(b"--"), chunks)]
     if len(parts) != 2:
         raise InvalidRequest("a multipart upload needs exactly a JSON part and a message part")
+    if len(parts[0][1]) > MAX_METADATA_BYTES:
+        raise InvalidRequest(f"the multipart metadata part exceeds {MAX_METADATA_BYTES} bytes")
     try:
         meta = json.loads(parts[0][1] or b"{}")
-    except ValueError:
+    except (ValueError, RecursionError):
         raise InvalidRequest("the multipart metadata part is not JSON") from None
     if not isinstance(meta, dict):
         raise InvalidRequest("the multipart metadata part must be a JSON object")
