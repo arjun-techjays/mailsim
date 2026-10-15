@@ -32,6 +32,7 @@ import {
   type MockDb,
   type MockRun,
 } from './db';
+import { createConnectHandlers } from './connect'; // connect & status (UX-F3)
 
 type Guard = 'controller' | 'evaluator' | 'inspector' | 'agent';
 const ALLOWED: Record<Guard, Role[]> = {
@@ -507,5 +508,6 @@ export function createHandlers(db: MockDb = createMockDb()) {
         return ok(report);
       }),
     ),
+    ...createConnectHandlers(db), // connect & status (UX-F3)
   ];
 }

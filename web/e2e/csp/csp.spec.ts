@@ -64,3 +64,29 @@ test('the policy is enforced (inline script blocked) and the violation watcher s
   expect(await page.evaluate(() => (window as unknown as { __inlineRan?: boolean }).__inlineRan)).toBeUndefined();
   await expect.poll(() => violations.length).toBeGreaterThan(0);
 });
+
+// ---- connect & guide (UX-F3)
+test('home, connect-your-agent and dark mode work under the strict CSP without inline styles', async ({ page }) => {
+  const violations = watchCsp(page);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await new ConnectPage(page).connectAs(KEYS.controller, 'controller');
+  await page.goto('/');
+  await expect(page.getByTestId('step-4-state')).toHaveText('Done');
+  expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(18, 20, 23)');
+  expect(await page.locator('[style]').count()).toBe(0);
+
+  await expect(page.getByTestId('step-4').getByRole('link', { name: 'Connect your agent' })).toHaveAttribute('href', '/runs/run_empty/connect');
+  await page.goto('/runs/run_demo/connect'); // the RUNNING demo run (mk_agent belongs to it)
+  await page.getByLabel('Saved agent key').fill(KEYS.agent);
+  await page.getByRole('button', { name: 'Use this key' }).click();
+  await page.getByRole('radio', { name: /Microsoft Graph/ }).check();
+  await page.getByRole('button', { name: 'Test Microsoft Graph connection' }).click();
+  await expect(page.getByTestId('test-ok-graph')).toBeVisible();
+  await page.getByRole('button', { name: 'Mint a new agent key' }).click();
+  await expect(page.getByRole('alertdialog')).toBeVisible();
+  expect(await page.locator('[style]').count()).toBe(0);
+  await page.getByLabel('Theme').selectOption('light');
+  expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(255, 255, 255)');
+  await expectAccessible(page, 'connect (csp build)');
+  expect(violations).toEqual([]);
+});

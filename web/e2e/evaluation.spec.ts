@@ -80,7 +80,7 @@ test.describe('evaluation (evaluator)', () => {
   test('empty evaluation list', async ({ page }) => {
     const ev = new EvaluationPage(page);
     await ev.goto('run_empty');
-    await expect(page.getByTestId('empty-state')).toHaveText('This run has not been evaluated yet.');
+    await expect(page.getByTestId('empty-state')).toContainText('This run has not been evaluated yet.');
     await expect(ev.report()).toHaveCount(0);
   });
 });

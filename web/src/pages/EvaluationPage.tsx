@@ -5,6 +5,8 @@ import type { EvaluationRequest } from '../api/types';
 import { useApi } from '../auth/session';
 import { RequireRole } from '../components/Gates';
 import { ErrorDisplay } from '../components/ErrorDisplay';
+import { PageIntro } from '../components/PageIntro';
+import { WhatIsThis } from '../guide/Concepts';
 import { pct } from '../components/format';
 import { Badge, Empty, Loading } from '../components/Status';
 import { EvaluationReportView } from '../evaluation/ReportView';
@@ -106,7 +108,7 @@ function EvaluationContent({ runId }: { runId: string }) {
         ) : evals.isError ? (
           <ErrorDisplay error={evals.error} title="Could not load evaluations" />
         ) : list.length === 0 ? (
-          <Empty>This run has not been evaluated yet.</Empty>
+          <Empty>This run has not been evaluated yet. Use “Evaluate this run” above.</Empty>
         ) : (
           <table data-testid="evaluations-table">
             <thead>
@@ -161,6 +163,14 @@ export function EvaluationPage() {
       <h1>
         Evaluations for <code>{runId}</code>
       </h1>
+      <PageIntro next={[{ to: `/runs/${encodeURIComponent(runId)}`, label: 'Back to the run' }]}>
+        <p>
+          Grade what the agent did in this run against the scenario’s hidden answer key. Each report explains every
+          assertion with evidence from the event trace and mailboxes. Evaluating again (another answer-key version,
+          checks on/off) adds a new report.
+        </p>
+        <WhatIsThis term="evaluation" />
+      </PageIntro>
       <RequireRole roles={['evaluator']} what="Evaluation results">
         <EvaluationContent runId={runId} />
       </RequireRole>

@@ -15,7 +15,7 @@ export function ArtifactsTable({ runId, highlight }: { runId: string; highlight:
       <h2 id="artifacts-h">Artifacts</h2>
       <p className="hint">API v1 lists artifact references but has no download endpoint; refs are shown for lookup.</p>
       {q.data.length === 0 ? (
-        <Empty>No artifacts.</Empty>
+        <Empty>No artifacts yet. Raw messages, attachments and traces appear here as the run produces them.</Empty>
       ) : (
         <table data-testid="artifacts-table">
           <thead>

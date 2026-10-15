@@ -5,22 +5,25 @@ import type { RunCreate, RunCreated } from '../api/types';
 import { useApi } from '../auth/session';
 import { rememberRun } from '../auth/storage';
 import { CopyButton } from '../components/CopyButton';
+import { PageIntro } from '../components/PageIntro';
+import { keyPrefix, useAgentKeys } from '../connect/agentKeys';
+import { WhatIsThis } from '../guide/Concepts';
 import { ErrorDisplay } from '../components/ErrorDisplay';
 import { Loading } from '../components/Status';
 import { usePageTitle } from '../hooks/usePageTitle';
 
 /**
  * Agent credentials are returned exactly once by POST /scenarios/{key}/runs. They live only
- * in this component's state (the mutation cache entry is discarded immediately) and are gone
- * once the user dismisses them or leaves the page.
+ * in memory: this component's state and the tab's agent-key store (so "Connect your agent"
+ * can use the key); never the URL, history state or browser storage. A reload forgets them.
  */
 function CredentialPanel({ created, onDismiss }: { created: RunCreated; onDismiss: () => void }) {
   return (
     <section aria-labelledby="cred-h" className="card warning" data-testid="agent-credentials">
       <h2 id="cred-h">Agent credential (shown once)</h2>
       <p role="alert">
-        Copy this key now and give it only to the agent under test. It will not be shown again, and it is not stored
-        by the dashboard.
+        Copy this key now and give it only to the agent under test. It will not be shown again. The dashboard keeps
+        it in this tab’s memory only (for Connect your agent) and forgets it when you reload.
       </p>
       {created.agent_credentials.map((c) => (
         <div key={c.api_key} className="credential">
@@ -49,6 +52,9 @@ function CredentialPanel({ created, onDismiss }: { created: RunCreated; onDismis
         </div>
       ))}
       <div className="row">
+        <Link className="button primary" to={`/runs/${encodeURIComponent(created.run.id)}/connect`} data-testid="next-connect">
+          Next: connect your agent
+        </Link>
         <button type="button" onClick={onDismiss}>
           I have stored the key, hide it
         </button>
@@ -69,6 +75,7 @@ export function StartRunPage() {
   const [start, setStart] = useState(true);
   const [created, setCreated] = useState<RunCreated | null>(null);
   const [dismissedRun, setDismissedRun] = useState<string | null>(null);
+  const agentKeys = useAgentKeys();
 
   const mutation = useMutation({
     mutationFn: (body: RunCreate) => api.createRun(key, body),
@@ -76,6 +83,15 @@ export function StartRunPage() {
     onSuccess: (data) => {
       setCreated(data);
       rememberRun({ id: data.run.id, scenarioKey: key });
+      const cred = data.agent_credentials[0];
+      if (cred) {
+        agentKeys.set(data.run.id, {
+          apiKey: cred.api_key,
+          prefix: keyPrefix(cred.api_key),
+          mailboxAddress: cred.mailbox_address,
+          mailboxId: cred.mailbox_id,
+        });
+      }
     },
   });
 
@@ -97,6 +113,18 @@ export function StartRunPage() {
         <Link to={`/scenarios/${encodeURIComponent(key)}`}>← Scenario {key}</Link>
       </p>
       <h1>Start a run</h1>
+      <PageIntro
+        next={[
+          { to: `/scenarios/${encodeURIComponent(key)}`, label: 'Back to the scenario' },
+          { to: '/runs', label: 'Runs already started' },
+        ]}
+      >
+        <p>
+          A run is an isolated copy of this scenario: every persona gets a fresh mailbox and the virtual clock starts at
+          the scenario’s start time. Creating it issues the agent key, shown once; next you connect your agent.
+        </p>
+        <WhatIsThis term="run" />
+      </PageIntro>
       {scenario.isPending ? (
         <Loading />
       ) : scenario.isError ? (
@@ -119,6 +147,7 @@ export function StartRunPage() {
             <p className="hint" id="checks-help">
               Evaluation preference only. It is stored with the run and never shown to the agent.
             </p>
+            <WhatIsThis term="checks" />
             {(
               [
                 ['', 'Answer-key default'],

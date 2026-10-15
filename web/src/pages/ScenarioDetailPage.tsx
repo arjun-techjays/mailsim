@@ -3,6 +3,8 @@ import { Link, useParams } from 'react-router-dom';
 import { useApi } from '../auth/session';
 import { ShowFor } from '../components/Gates';
 import { ErrorDisplay } from '../components/ErrorDisplay';
+import { PageIntro } from '../components/PageIntro';
+import { WhatIsThis } from '../guide/Concepts';
 import { Empty, Loading } from '../components/Status';
 import { usePageTitle } from '../hooks/usePageTitle';
 
@@ -13,12 +15,16 @@ function AnswerKeys({ scenarioKey }: { scenarioKey: string }) {
     <section aria-labelledby="ak-h">
       <h2 id="ak-h">Answer-key versions</h2>
       <p className="hint">Evaluator only. Metadata only: grading content is never shown here or to agents.</p>
+      <WhatIsThis term="answer-key" />
       {q.isPending ? (
         <Loading />
       ) : q.isError ? (
         <ErrorDisplay error={q.error} title="Could not load answer keys" />
       ) : q.data.length === 0 ? (
-        <Empty>No answer keys yet.</Empty>
+        <Empty>
+          No answer keys yet. Without one, runs of this scenario cannot be graded.{' '}
+          <Link to={`/scenarios/${encodeURIComponent(scenarioKey)}/answer-key`}>Write the answer key</Link>
+        </Empty>
       ) : (
         <table data-testid="answer-keys">
           <thead>
@@ -63,6 +69,17 @@ export function ScenarioDetailPage() {
       <h1>
         Scenario <code>{key}</code>
       </h1>
+      <PageIntro
+        next={[
+          { to: '/runs', label: 'Runs' },
+          { to: '/concepts#persona', label: 'How personas and mailboxes fit together' },
+        ]}
+      >
+        <p>
+          The published versions of this scenario. Start a run to give your agent a fresh copy of its personas’
+          mailboxes; the answer key (evaluators only) decides how runs are graded.
+        </p>
+      </PageIntro>
       {q.isPending ? (
         <Loading />
       ) : q.isError ? (
@@ -99,7 +116,7 @@ export function ScenarioDetailPage() {
                 <dd>{q.data.latest_version.created_at}</dd>
               </dl>
             ) : (
-              <Empty>No published version.</Empty>
+              <Empty>No published version. Publish one before starting runs.</Empty>
             )}
           </section>
           <section aria-labelledby="versions-h">

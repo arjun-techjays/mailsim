@@ -117,7 +117,7 @@ function errorFromResponse(res: Response, text: string): ApiError {
 
 async function send(
   cfg: ApiConfig,
-  method: 'GET' | 'POST' | 'PATCH',
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
   path: string,
   opts: RequestOptions,
   accept: string,
@@ -176,7 +176,7 @@ async function send(
 
 export async function apiRequest<T>(
   cfg: ApiConfig,
-  method: 'GET' | 'POST' | 'PATCH',
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
   path: string,
   opts: RequestOptions = {},
 ): Promise<T> {

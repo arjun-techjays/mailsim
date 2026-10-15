@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+import { PageIntro } from '../components/PageIntro';
 import { usePageTitle } from '../hooks/usePageTitle';
 
 /**
@@ -15,9 +15,18 @@ export function AgentKeyNotice() {
         Agent keys belong to the agent under test. Anything done with them is recorded as the agent’s own activity
         and can change the run being evaluated, so the dashboard does not use them.
       </p>
-      <p>
-        <Link to="/connect">Connect with a controller or evaluator key</Link> to inspect and control runs.
-      </p>
+      <PageIntro
+        next={[
+          { to: '/connect', label: 'Connect with a controller or evaluator key' },
+          { to: '/concepts#agent-key', label: 'What agent keys are for' },
+        ]}
+      >
+        <p>
+          Give this key to your agent instead: it works as a bearer token (REST, Gmail, Graph, MCP over HTTP), as the
+          IMAP/SMTP password, or as <code>MAILSIM_API_KEY</code> for MCP over stdio. A controller can see the exact
+          settings on the run’s Connect your agent page.
+        </p>
+      </PageIntro>
     </section>
   );
 }

@@ -44,3 +44,17 @@ export type Role = 'controller' | 'evaluator' | 'agent' | 'operator';
 /** Roles a key can carry (`operator` has no key). */
 export type KeyRole = Exclude<Role, 'operator'>;
 
+
+// ---- connect & status (UX-F3) ----------------------------------------------------------------
+export type SystemStatus = S['SystemStatus'];
+export type ListenerStatus = S['ListenerStatus'];
+export type RunConnection = Omit<S['RunConnection'], 'agent_keys'> & { agent_keys: AgentKeyInfo[] };
+export type InterfaceEndpoint = S['InterfaceEndpoint'];
+/**
+ * An agent key's metadata (never the secret). Named to avoid clashing with mock KeyInfo.
+ * `prefix` (12-hex part of msk_<prefix>_...) is being added by UX-B; optional until regenerated.
+ */
+export type AgentKeyInfo = S['KeyInfo'] & { prefix?: string | null };
+export type ConnectionTestRequest = S['ConnectionTestRequest'];
+export type ConnectionTestResult = S['ConnectionTestResult'];
+export type AgentInterface = S['InterfaceEndpoint']['interface'];

@@ -5,6 +5,8 @@ import type { RunOut } from '../api/types';
 import { useApi } from '../auth/session';
 import { loadRecentRuns } from '../auth/storage';
 import { ErrorDisplay } from '../components/ErrorDisplay';
+import { PageIntro } from '../components/PageIntro';
+import { WhatIsThis } from '../guide/Concepts';
 import { Badge, Empty, Loading } from '../components/Status';
 import { useCursorList } from '../hooks/useCursorList';
 import { usePageTitle } from '../hooks/usePageTitle';
@@ -56,7 +58,9 @@ function RunList() {
     <>
       <h2>Runs in this project</h2>
       {list.items.length === 0 ? (
-        <Empty>No runs yet.</Empty>
+        <Empty>
+          No runs yet. <Link to="/scenarios">Pick a scenario</Link> and start a run; then connect your agent to it.
+        </Empty>
       ) : (
         <table data-testid="runs-table">
           <thead>
@@ -113,6 +117,18 @@ export function RunsPage() {
   return (
     <>
       <h1>Runs</h1>
+      <PageIntro
+        next={[
+          { to: '/scenarios', label: 'Start a new run from a scenario' },
+          { to: '/', label: 'Getting started checklist' },
+        ]}
+      >
+        <p>
+          Every run is an isolated execution of a scenario version with its own mailboxes, virtual clock and event log.
+          Open one to connect your agent, advance time, inspect mailboxes and evaluate it.
+        </p>
+        <WhatIsThis term="run" />
+      </PageIntro>
       <form className="form inline" onSubmit={onSubmit} noValidate aria-label="Open run by id">
         <div className="field">
           <label htmlFor="run-id">Run id</label>
