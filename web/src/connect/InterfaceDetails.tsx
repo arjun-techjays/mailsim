@@ -22,7 +22,7 @@ function UrlValue({ label, url }: { label: string; url: string }) {
       <dt>{label}</dt>
       <dd className="row tight">
         <code data-testid="endpoint-url">{url}</code>
-        <CopyButton value={url} label={`Copy ${label.toLowerCase()}`} />
+        <CopyButton value={url} label={`Copy ${label}`} />
       </dd>
     </>
   );

@@ -46,7 +46,8 @@ for (const role of ['controller', 'evaluator', 'agent'] as const) {
     const calls = trackApi(page);
     await new ConnectPage(page).connect(key as string);
     await expect(page.getByTestId('detected-role')).toHaveText(role);
-    expect(calls).toEqual(['GET /v1/me']); // no probing fallback needed
+    // no probing fallback needed (the header status pill may also ask /v1/system/status)
+    expect(calls.filter((c) => c !== 'GET /v1/system/status')).toEqual(['GET /v1/me']);
     await expectAccessible(page, `connect (${role})`);
   });
 }
