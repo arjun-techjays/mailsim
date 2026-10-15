@@ -6,11 +6,12 @@ from pathlib import Path
 import pytest
 from sqlalchemy import func, select
 
-from mailsim.domain.errors import InvalidRequest, SimulationLimitExceeded
+from mailsim.domain.errors import InvalidRequest
 from mailsim.engine.facades import AgentMailbox, Controller, EvaluatorView
-from mailsim.llm.contract import Budget
-from mailsim.llm.gateway import LLMGateway, LLMProviderError
+from mailsim.llm.contract import Budget, LLMResponse
+from mailsim.llm.gateway import LLMGateway, LLMUnavailable
 from mailsim.llm.providers.stub import StubProvider
+from mailsim.personas import runtime as runtime_mod
 from mailsim.personas.runtime import PersonaRuntime, reply_subject
 from mailsim.store import models as m
 from tests.llm.conftest import ScriptedProvider
@@ -55,15 +56,15 @@ def scenario(tmp_path, *, vendor=None, cfo=None, fm=None, events=None, extra_per
 
 
 class Harness:
-    def __init__(self, env, tmp_path, provider=None, budget=None, **kw):
-        self.ctl = Controller(env.engine, env.scope)
+    def __init__(self, env, tmp_path, provider=None, budget=None, controller=Controller, **kw):
+        self.ctl = controller(env.engine, env.scope)
         self.ev = EvaluatorView(env.engine, env.scope)
         self.run = self.ctl.create_run(env.version(scenario(tmp_path, **kw)))
         self.ctl.start_run(self.run)
         self.provider = provider or ScriptedProvider("Happy to help with that.")
         self.gateway = LLMGateway(self.provider, session_factory=env.session_factory,
                                   budget=budget)  # fmt: skip
-        self.rt = PersonaRuntime(self.ctl, self.gateway, agent_owner=lambda run: "finance_manager")
+        self.rt = PersonaRuntime(self.ctl, self.gateway)
         self.agent = AgentMailbox(env.engine, env.scope, self.run,
                                   self.ctl.mailbox_id_for(self.run, "finance_manager"))  # fmt: skip
         self.sf = env.session_factory
@@ -73,6 +74,10 @@ class Harness:
 
     def generated(self):
         return [e["payload"] for e in self.ev.events(self.run) if e["type"] == "persona.generated"]
+
+    def failed(self):
+        return [e["payload"] for e in self.ev.events(self.run)
+                if e["type"] == "persona.generation_failed"]  # fmt: skip
 
     def inbox(self, persona="finance_manager"):
         mbx = self.ctl.mailbox_id_for(self.run, persona)
@@ -214,35 +219,130 @@ def test_llm_personas_do_not_ping_pong(env, tmp_path):
     assert h.rt.step(h.run) == [] and h.provider.calls == 0
 
 
-def test_inactive_run_and_missing_agent_owner(env, tmp_path):
+def test_inactive_run_returns_nothing(env, tmp_path):
     h = Harness(env, tmp_path)
     h.ctl.cancel_run(h.run)
     assert h.rt.step(h.run) == []
     run2 = h.ctl.create_run(env.version(scenario(tmp_path)))
     assert h.rt.step(run2) == [], "not started"
-    h.ctl.start_run(run2)
-    with pytest.raises(InvalidRequest, match="agent mailbox owner"):
-        PersonaRuntime(h.ctl, h.gateway).step(run2)
-
-    class ControllerWithOwner(Controller):
-        def agent_mailbox_owner(self, run_id):
-            return "finance_manager"
-
-    rt = PersonaRuntime(ControllerWithOwner(env.engine, env.scope), h.gateway)
-    assert rt.agent_owner(run2) == "finance_manager" and rt.step(run2) == []
 
 
-def test_llm_errors_and_budget_propagate(env, tmp_path):
-    h = Harness(env, tmp_path, provider=ScriptedProvider("   "), cfo={"mode": "llm"})
+def test_non_retryable_failure_is_recorded_once_and_others_continue(env, tmp_path):
+    out = [LLMResponse(text="", provider="stub", model="fake-1", output_tokens=2),
+           "Second reply."]  # fmt: skip
+    h = Harness(env, tmp_path, provider=ScriptedProvider(*out), cfo={"mode": "llm"})
+    h.send("cfo@example.test", "Q1", "?")
+    h.send("cfo@example.test", "Q2", "?")
+    [done] = h.rt.step(h.run)
+    [f] = h.failed()
+    assert f["persona_id"] == "cfo" and f["reason"] == "INVALID_REQUEST: empty_output"
+    assert f["generation"]["mode"] == "llm" and f["generation"]["llm_call_id"].startswith("llm_")
+    failed_msg = next(x for x in h.inbox("cfo") if x["id"] == f["message_id"])
+    assert done["subject"] == f"Re: {'Q2' if failed_msg['subject'] == 'Q1' else 'Q1'}", (
+        "the failure of one message did not block the other"
+    )
+    assert h.rt.step(h.run) == [] and h.provider.calls == 2, "never retried"
+    with h.sf() as s:
+        statuses = s.execute(select(m.LlmCall.status).where(m.LlmCall.run_id == h.run)).scalars()
+        assert sorted(statuses) == ["failed", "ok"]
+
+
+def test_truncated_persona_output_is_a_recorded_failure(env, tmp_path):
+    cut = LLMResponse(text="Dear", provider="stub", model="fake-1", stop_reason="max_tokens")
+    h = Harness(env, tmp_path, provider=ScriptedProvider(cut), cfo={"mode": "llm"})
     h.send("cfo@example.test", "Q", "?")
-    with pytest.raises(LLMProviderError, match="empty"):
-        h.rt.step(h.run)
-    assert h.generated() == []
-    h2 = Harness(env, tmp_path, cfo={"mode": "llm"}, budget=Budget(max_calls=0))
-    h2.send("cfo@example.test", "Q", "?")
-    with pytest.raises(SimulationLimitExceeded):
-        h2.rt.step(h2.run)
-    assert h2.provider.calls == 0
+    assert h.rt.step(h.run) == [] and h.generated() == []
+    assert h.failed()[0]["reason"] == "INVALID_REQUEST: truncated"
+
+
+def test_retryable_failure_is_retried_next_step(env, tmp_path):
+    p = ScriptedProvider(LLMUnavailable("timeout"), "Back online.")
+    h = Harness(env, tmp_path, provider=p, cfo={"mode": "llm"})
+    h.send("cfo@example.test", "Q", "?")
+    assert h.rt.step(h.run) == [] and h.failed() == []
+    [done] = h.rt.step(h.run)
+    assert done["mode"] == "llm" and h.generated()[0]["text"] == "Back online."
+
+
+def test_budget_stops_llm_personas_but_scripted_continue(env, tmp_path):
+    h = Harness(env, tmp_path, cfo={"mode": "llm"}, budget=Budget(max_calls=0))
+    h.send("cfo@example.test", "Q", "?")
+    h.send("cfo@example.test", "Q again", "?")
+    h.send("vendor@example.test", "Invoice", "payment due?")
+    h.ctl.advance(h.run, 60)
+    done = h.rt.step(h.run)
+    assert [d["persona_id"] for d in done] == ["vendor"] and h.provider.calls == 0
+    assert h.failed() == [], "budget exhaustion is not a per-message failure"
+
+
+def test_conflict_from_a_concurrent_runtime_is_skipped(env, tmp_path):
+    class StaleView(Controller):
+        """A second runtime that has not seen the first runtime's records yet."""
+
+        def persona_generations(self, run_id):
+            return []
+
+    h = Harness(env, tmp_path, controller=StaleView)
+    h.send("vendor@example.test", "Invoice", "payment due?")
+    h.ctl.advance(h.run, 60)
+    assert len(h.rt.step(h.run)) == 1
+    assert h.rt.step(h.run) == [], "engine-side dedupe raised Conflict, treated as answered"
+    assert len(h.generated()) == 1
+
+
+def test_scripted_delivery_failure_is_recorded_with_rule_index(env, tmp_path):
+    class Rejecting(Controller):
+        def persona_reply(self, run_id, *a, **kw):
+            raise InvalidRequest("recipient rejected")
+
+    h = Harness(env, tmp_path, controller=Rejecting)
+    h.send("vendor@example.test", "Invoice", "payment due?")
+    h.ctl.advance(h.run, 60)
+    assert h.rt.step(h.run) == []
+    [f] = h.failed()
+    assert f["generation"] == {"mode": "scripted", "rule_index": 0}
+    assert f["reason"] == "INVALID_REQUEST: recipient rejected"
+    assert h.rt.step(h.run) == []
+
+
+def test_run_ending_mid_step_stops_quietly(env, tmp_path):
+    class Ending(Controller):
+        def persona_reply(self, run_id, *a, **kw):
+            self.cancel_run(run_id)
+            return super().persona_reply(run_id, *a, **kw)
+
+    h = Harness(env, tmp_path, controller=Ending, cfo={"mode": "llm"})
+    h.send("cfo@example.test", "Q", "?")
+    h.send("vendor@example.test", "Invoice", "payment due?")
+    h.ctl.advance(h.run, 60)
+    assert h.rt.step(h.run) == [] and h.generated() == [] and h.failed() == []
+
+
+def test_thread_depth_limit(env, tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime_mod, "MAX_THREAD_DEPTH", 2)
+    h = Harness(env, tmp_path, cfo={"mode": "llm"})
+    h.send("cfo@example.test", "Topic", "one")
+    [first] = h.rt.step(h.run)
+    reply = next(x for x in h.inbox() if x["subject"] == "Re: Topic")
+    h.agent.reply(reply["id"], text="two")
+    assert h.rt.step(h.run) == [], "thread of 3 messages exceeds the depth limit of 2"
+    assert first["mode"] == "llm"
+
+
+def test_threads_made_only_of_persona_output_are_not_answered(env, tmp_path):
+    """A persona never answers a thread no agent/scenario message started."""
+    h = Harness(env, tmp_path, vendor={"mode": "scripted", "script": [
+        {"on": {"from": "cfo"}, "reply": {"body": "ack"}, "once": False}]},
+        cfo={"mode": "scripted", "script": [
+            {"on": {"from": "vendor"}, "reply": {"body": "ack"}, "once": False}]})  # fmt: skip
+    mbx = h.ctl.mailbox_id_for(h.run, "cfo")
+    h.ctl.inject(h.run, mbx, {"from": "vendor@example.test", "to": ["cfo@example.test"],
+                              "subject": "Ping", "text": "scenario-injected"})  # fmt: skip
+    h.ctl.advance(h.run, 60)
+    rounds = [h.rt.step(h.run) for _ in range(4)]
+    assert [len(r) for r in rounds[:1]] == [1], "cfo answers the injected (scenario) mail"
+    # the vendor's copy of cfo's reply sits in a thread with no scenario/agent message
+    assert sum(len(r) for r in rounds) == 1
 
 
 def test_stub_provider_end_to_end(env, tmp_path):
