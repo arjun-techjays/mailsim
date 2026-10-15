@@ -69,6 +69,7 @@ class EvaluationService:
         blobs: BlobStore,
         *,
         judge: Judge | None = None,
+        judge_factory: Callable[[str], Judge | None] | None = None,
         max_completion_attempts: int = 3,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
@@ -76,6 +77,9 @@ class EvaluationService:
         self._sf = session_factory
         self._blobs = blobs
         self._judge = judge
+        # run-bound judges (e.g. an LLM judge that records usage against the run): built
+        # outside this package, called with the evaluated run's id; wins over `judge`
+        self._judge_factory = judge_factory
         self._attempts = max(1, max_completion_attempts)
         self._clock = clock or (lambda: datetime.now(UTC))
 
@@ -96,7 +100,8 @@ class EvaluationService:
             raise InvalidRequest("checks must be 'on', 'off' or omitted")
         view = self._view(scope)
         # retries re-grade new events only: an unchanged judgement is never paid for twice
-        judge = _CachingJudge(self._judge) if self._judge is not None else None
+        base = self._judge_factory(run_id) if self._judge_factory else self._judge
+        judge = _CachingJudge(base) if base is not None else None
         report: EvaluationReport | None = None
         for attempt in range(1, self._attempts + 1):
             report = evaluate_run(view, run_id, answer_key_version=answer_key_version,

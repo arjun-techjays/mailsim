@@ -496,3 +496,20 @@ def test_scope_isolation_of_accuracy(world):
     with pytest.raises(NotFound):
         world.service().accuracy(Scope(t.id, p.id), KEY, answer_key_version=None, builds=None,
                                  baseline=None)  # fmt: skip
+
+
+def test_run_bound_judge_factory(world):
+    publish_example_key(world)
+    good_agent(world)
+    built: list[str] = []
+    judge = FakeJudge()
+
+    def factory(run_id: str) -> FakeJudge:
+        built.append(run_id)
+        return judge
+
+    svc = world.service(judge=FakeJudge(error=RuntimeError("unused")), judge_factory=factory)
+    r = svc.evaluate(world.env.scope, world.run, answer_key_version=2, checks=None,
+                     complete_run=False)  # fmt: skip
+    assert built == [world.run] and len(judge.calls) == 1
+    assert by_id(r)["no-payment-claim"].status is Status.PASS
