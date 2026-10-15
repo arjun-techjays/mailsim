@@ -49,6 +49,7 @@ LIST_OPTIONS = frozenset(
      "$expand"}
 )  # fmt: skip
 GET_OPTIONS = frozenset({"$select", "$expand"})
+COUNT_OPTIONS = frozenset({"$filter", "$search"})
 DELTA_OPTIONS = frozenset({"$select", "$deltatoken", "$skiptoken", "$top"})
 _PREFER_BODY = re.compile(r'outlook\.body-content-type\s*=\s*"?(text|html)"?', re.IGNORECASE)
 _PREFER_PAGE = re.compile(r"odata\.maxpagesize\s*=\s*(\d+)", re.IGNORECASE)
@@ -377,6 +378,16 @@ class Draft:
         return str(out["message_id"])
 
 
+# Action parameters are case-insensitive in Graph (the SDK sends `Message`, `Comment`,
+# `DestinationId`, `SaveToSentItems`, `ToRecipients`): normalise them to camelCase.
+ACTION_KEYS = {k.casefold(): k for k in ("message", "saveToSentItems", "comment", "toRecipients",
+                                         "destinationId")}  # fmt: skip
+
+
+def _args(payload: Mapping[str, Any] | None) -> dict[str, Any]:
+    return {ACTION_KEYS.get(k.casefold(), k): v for k, v in (payload or {}).items()}
+
+
 def _object(payload: Mapping[str, Any], name: str) -> dict[str, Any]:
     value = payload.get(name)
     if value is None:
@@ -461,6 +472,23 @@ def child_folders(folder_id: str, ctx: Context) -> JSONResponse:
 # ---------------------------------------------------------------------------- messages
 
 
+def matching(ctx: Ctx, folder: FolderRef | None) -> list[tuple[CanonicalMessage, dict[str, Any]]]:
+    """Messages selected by $search / $filter (unordered). The query is validated before
+    the mailbox is read."""
+    q = ctx.request.query_params
+    search = odata.parse_search(q["$search"]) if "$search" in q else None
+    if search is not None and ("$filter" in q or "$orderby" in q):
+        raise odata.QueryNotSupported("$search cannot be combined with $filter or $orderby")
+    predicate = odata.compile_filter(q["$filter"]) if "$filter" in q else None
+    if search is not None:
+        hits = ctx.mb.search_messages(search)
+        msgs = [m for m in hits if folder is None or res.folder_key(m.folder) == folder.key]
+    else:
+        msgs = all_messages(ctx.mb, folder.engine_ref if folder else None)
+    docs = [(m, res.filter_view(m)) for m in msgs]
+    return [d for d in docs if predicate(d[1])] if predicate else docs
+
+
 def list_messages(ctx: Ctx, folder: FolderRef | None) -> JSONResponse:
     request, q = ctx.request, ctx.request.query_params
     check_options(request, LIST_OPTIONS)
@@ -474,19 +502,8 @@ def list_messages(ctx: Ctx, folder: FolderRef | None) -> JSONResponse:
     count = q.get("$count", "false").lower()
     if count not in ("true", "false"):
         raise odata.QueryError("$count must be true or false")
-    if "$search" in q:
-        if "$filter" in q or "$orderby" in q:
-            raise odata.QueryNotSupported("$search cannot be combined with $filter or $orderby")
-        hits = ctx.mb.search_messages(odata.parse_search(q["$search"]))
-        msgs = [m for m in hits if folder is None or res.folder_key(m.folder) == folder.key]
-    else:
-        msgs = all_messages(ctx.mb, folder.engine_ref if folder else None)
-    docs = [(m, res.filter_view(m)) for m in msgs]
-    if "$filter" in q:
-        predicate = odata.compile_filter(q["$filter"])
-        docs = [d for d in docs if predicate(d[1])]
     order = odata.parse_orderby(q["$orderby"]) if "$orderby" in q else [("receivedDateTime", True)]
-    docs = ordered(docs, order)
+    docs = ordered(matching(ctx, folder), order)
     page = docs[skip : skip + top]
     body: dict[str, Any] = {
         "@odata.context": context_url(request, "users('me')/messages"),
@@ -497,6 +514,21 @@ def list_messages(ctx: Ctx, folder: FolderRef | None) -> JSONResponse:
     if skip + top < len(docs):
         body["@odata.nextLink"] = link(request, {"$skip": str(skip + top)}, ("$skiptoken",))
     return ok(body, headers=prefer.applied())
+
+
+def count_messages(ctx: Ctx, folder: FolderRef | None) -> Response:
+    check_options(ctx.request, COUNT_OPTIONS)
+    return Response(str(len(matching(ctx, folder))), media_type="text/plain")
+
+
+@route("GET", "/messages/$count")
+def count_all_messages(ctx: Context) -> Response:
+    return count_messages(ctx, None)
+
+
+@route("GET", "/mailFolders/{folder_id}/messages/$count")
+def count_folder_messages(folder_id: str, ctx: Context) -> Response:
+    return count_messages(ctx, resolve_folder(ctx, folder_id))
 
 
 @route("GET", "/messages")
@@ -567,11 +599,13 @@ def _delta(ctx: Ctx, folder: FolderRef | None) -> JSONResponse:
     return ok(body, headers=prefer.applied())
 
 
+@route("GET", "/messages/delta()")  # the SDK calls the function form
 @route("GET", "/messages/delta")
 def messages_delta(ctx: Context) -> JSONResponse:
     return _delta(ctx, None)
 
 
+@route("GET", "/mailFolders/{folder_id}/messages/delta()")
 @route("GET", "/mailFolders/{folder_id}/messages/delta")
 def folder_messages_delta(folder_id: str, ctx: Context) -> JSONResponse:
     return _delta(ctx, resolve_folder(ctx, folder_id))
@@ -599,7 +633,7 @@ def get_mime(message_id: str, ctx: Context) -> Response:
 
 @route("POST", "/messages", 201)
 def create_message(ctx: Context, payload: Payload = None) -> JSONResponse:
-    data = payload or {}
+    data = _args(payload)
     check_writable(ctx, data)
     mid = Draft().apply(data).create(ctx.mb)
     return ok(render(ctx.request, ctx.mb.get_message(mid)), 201)
@@ -636,7 +670,7 @@ def _flag_changes(data: Mapping[str, Any]) -> tuple[list[str], list[str]]:
 def update_message(message_id: str, ctx: Context, payload: Payload = None) -> JSONResponse:
     """Applies, in order: draft content, flags (isRead/flag/replied marker), categories. Each
     is a separate engine write; on a failure the earlier ones stay applied (re-GET)."""
-    data = payload or {}
+    data = _args(payload)
     mid = resolve_message(ctx, message_id)
     m = ctx.mb.get_message(mid)
     check_writable(ctx, {k: v for k, v in data.items() if k != "singleValueExtendedProperties"})
@@ -694,14 +728,14 @@ def _destination(ctx: Ctx, data: Mapping[str, Any]) -> str:
 @route("POST", "/messages/{message_id}/move", 201)
 def move_message(message_id: str, ctx: Context, payload: Payload = None) -> JSONResponse:
     mid = resolve_message(ctx, message_id)
-    ctx.mb.move(mid, _destination(ctx, payload or {}))
+    ctx.mb.move(mid, _destination(ctx, _args(payload)))
     return ok(render(ctx.request, ctx.mb.get_message(mid)), 201)
 
 
 @route("POST", "/messages/{message_id}/copy", 201)
 def copy_message(message_id: str, ctx: Context, payload: Payload = None) -> JSONResponse:
     mid = resolve_message(ctx, message_id)
-    out = ctx.mb.copy(mid, _destination(ctx, payload or {}))
+    out = ctx.mb.copy(mid, _destination(ctx, _args(payload)))
     return ok(render(ctx.request, ctx.mb.get_message(str(out["message_id"]))), 201)
 
 
@@ -711,7 +745,7 @@ def copy_message(message_id: str, ctx: Context, payload: Payload = None) -> JSON
 @route("POST", "/sendMail", 202)
 def send_mail(ctx: Context, payload: Payload = None) -> Response:
     """`saveToSentItems` is accepted but a Sent Items copy is always kept (documented)."""
-    data = payload or {}
+    data = _args(payload)
     message = _object(data, "message")
     if not message:
         raise InvalidRequest("message is required")
@@ -747,7 +781,7 @@ def create_reply_all(message_id: str, ctx: Context, payload: Payload = None) -> 
 
 def _create_reply(message_id: str, ctx: Ctx, payload: dict[str, Any] | None, *,
                   reply_all: bool) -> JSONResponse:  # fmt: skip
-    data = payload or {}
+    data = _args(payload)
     message = _object(data, "message")
     check_writable(ctx, message)
     orig = ctx.mb.get_message(resolve_message(ctx, message_id))
@@ -757,7 +791,7 @@ def _create_reply(message_id: str, ctx: Ctx, payload: dict[str, Any] | None, *,
 
 @route("POST", "/messages/{message_id}/createForward", 201)
 def create_forward(message_id: str, ctx: Context, payload: Payload = None) -> JSONResponse:
-    data = payload or {}
+    data = _args(payload)
     message = _object(data, "message")
     check_writable(ctx, message)
     orig = ctx.mb.get_message(resolve_message(ctx, message_id))
@@ -768,7 +802,7 @@ def create_forward(message_id: str, ctx: Context, payload: Payload = None) -> JS
 def _reply(
     message_id: str, ctx: Ctx, payload: dict[str, Any] | None, *, reply_all: bool
 ) -> Response:
-    data = payload or {}
+    data = _args(payload)
     message = _object(data, "message")
     check_writable(ctx, message)
     comment = _comment(data)
@@ -795,7 +829,7 @@ def reply_all(message_id: str, ctx: Context, payload: Payload = None) -> Respons
 
 @route("POST", "/messages/{message_id}/forward", 202)
 def forward(message_id: str, ctx: Context, payload: Payload = None) -> Response:
-    data = payload or {}
+    data = _args(payload)
     message = _object(data, "message")
     check_writable(ctx, message)
     to = _addresses(data, "toRecipients") or _addresses(message, "toRecipients") or []

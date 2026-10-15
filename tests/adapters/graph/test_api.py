@@ -1,0 +1,500 @@
+"""Graph v1.0 profile over raw HTTP (httpx via the FastAPI TestClient): every route, the
+OData subset, Graph ids, error shapes and the security boundary."""
+
+from __future__ import annotations
+
+import base64
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from starlette.requests import Request
+
+from mailsim.adapters.graph import api as graph_api
+from mailsim.adapters.graph import errors as graph_errors
+from mailsim.adapters.graph import resources as res
+from mailsim.domain.errors import RateLimited, UpstreamUnavailable
+from mailsim.domain.models import CanonicalMessage
+from tests.adapters.graph.conftest import BASE, make_app, open_agent
+from tests.scenarios import write_variant
+
+pytestmark = pytest.mark.db
+ANSWERED = "singleValueExtendedProperties($filter=id eq 'Integer 0x1081')"
+
+
+def err(r, status, code):
+    assert r.status_code == status, (r.status_code, r.text)
+    body = r.json()["error"]
+    assert body["code"] == code
+    assert {"request-id", "client-request-id", "date"} <= set(body["innerError"])
+    return body
+
+
+def invoice(w):
+    return w.by_subject("Invoice INV-001")
+
+
+# ------------------------------------------------------------------------- auth & identity
+
+
+def test_authentication_is_always_an_agent_key(world, monkeypatch):
+    monkeypatch.setenv("MAILSIM_LOCAL_NO_AUTH", "1")  # never honoured by the Graph adapter
+    anon = TestClient(world.app, raise_server_exceptions=False)
+    r = anon.get(f"{BASE}/me/messages")
+    err(r, 401, "InvalidAuthenticationToken")
+    assert r.headers["WWW-Authenticate"].startswith("Bearer")
+    err(anon.get(f"{BASE}/me/messages", headers={"Authorization": "Basic abc"}), 401,
+        "InvalidAuthenticationToken")  # fmt: skip
+    err(anon.get(f"{BASE}/me/messages", headers={"Authorization": "Bearer msk_bad"}), 401,
+        "InvalidAuthenticationToken")  # fmt: skip
+    err(anon.post(f"{BASE}/me/anything"), 401, "InvalidAuthenticationToken")
+    for role in ("controller", "evaluator"):
+        hdr = {"Authorization": f"Bearer {world.issue(role)}"}
+        err(anon.get(f"{BASE}/me/messages", headers=hdr), 403, "ErrorAccessDenied")
+
+
+def test_users_path_must_be_the_credentials_mailbox(world):
+    me = world.get("/me")
+    assert me["mail"] == "finance@example.test" and me["id"] == res.user_id(world.mailbox)
+    for ident in ("finance@example.test", "FINANCE@example.test", world.mailbox, me["id"]):
+        assert len(world.get(f"/users/{ident}/messages")["value"]) == 2
+    err(world.call("GET", "/users/vendor@example.test/messages"), 403, "ErrorAccessDenied")
+    err(world.call("GET", f"/users/{world.vendor}/mailFolders"), 403, "ErrorAccessDenied")
+    vendor_key = world.issue(mailbox=world.vendor)  # a key bound to a non-agent mailbox
+    r = world.call("GET", "/me/messages", headers={"Authorization": f"Bearer {vendor_key}"})
+    err(r, 403, "ErrorAccessDenied")
+
+
+def test_error_shape_and_request_ids(world):
+    r = world.call("GET", "/me/messages/AAMknope", headers={"client-request-id": "abc-123",
+                                                              "x-request-id": "rid-1"})  # fmt: skip
+    body = err(r, 404, "ErrorItemNotFound")
+    assert body["innerError"]["client-request-id"] == "abc-123" == r.headers["client-request-id"]
+    assert body["innerError"]["request-id"] == "rid-1" == r.headers["request-id"]
+    r = world.call("GET", "/me/messages/AAMknope", headers={"client-request-id": "bad id!"})
+    assert r.json()["error"]["innerError"]["client-request-id"] != "bad id!"
+    r = world.call("POST", "/me/messages", content=b"{not json",
+                   headers={"Content-Type": "application/json"})  # fmt: skip
+    err(r, 400, "ErrorInvalidRequest")
+
+
+def test_unconfigured_server_and_unexpected_errors(world, monkeypatch):
+    bare = FastAPI()
+    bare.include_router(graph_api.router)
+    client = TestClient(bare, raise_server_exceptions=False)
+    r = client.get(f"{BASE}/me", headers={"Authorization": f"Bearer {world.key}"})
+    err(r, 501, "ErrorNotSupported")
+
+    def boom(*a, **k):
+        raise ValueError("kaboom")
+
+    monkeypatch.setattr(graph_api, "all_messages", boom)
+    body = err(world.call("GET", "/me/messages"), 500, "generalException")
+    assert "kaboom" not in body["message"]
+
+
+def test_error_mapping_for_engine_codes():
+    req = Request({"type": "http", "headers": [], "method": "GET", "path": "/"})
+    r = graph_errors.error_response(req, RateLimited("slow down"))
+    assert (r.status_code, r.headers["Retry-After"]) == (429, "1")
+    r = graph_errors.error_response(req, UpstreamUnavailable("llm down"))
+    assert r.status_code == 503 and b"ErrorServiceUnavailable" in r.body
+    from starlette.exceptions import HTTPException
+
+    for status, code in ((404, b"ErrorItemNotFound"), (405, b"ErrorNotSupported"),
+                         (418, b"ErrorInvalidRequest")):  # fmt: skip
+        r = graph_errors.error_response(req, HTTPException(status, "x"))
+        assert r.status_code == status and code in r.body
+
+
+def test_run_state_and_budget_errors(env, tmp_path, world):
+    world.ctl.reset_run(world.run)  # not RUNNING until started again
+    err(world.call("GET", "/me/messages"), 412, "ErrorPreconditionFailed")
+    world.ctl.start_run(world.run)
+
+    def tight(s):
+        open_agent(s)
+        s["version"] = 2
+        s["evaluation"]["limits"]["max_agent_actions"] = 1
+
+    run = world.ctl.create_run(env.version(write_variant(tmp_path, tight, "tight.yaml")))
+    world.ctl.start_run(run)
+    with env.session_factory.begin() as s:
+        from mailsim.api.auth import issue_key
+
+        key = issue_key(s, tenant_id=env.scope.tenant_id, project_id=env.scope.project_id,
+                        role="agent", run_id=run,
+                        mailbox_id=world.ctl.mailbox_id_for(run, "finance_manager")).api_key  # fmt: skip
+    hdr = {"Authorization": f"Bearer {key}"}
+    first = world.get("/me/messages", headers=hdr)["value"][0]["id"]
+    world.patch(f"/me/messages/{first}", {"isRead": True}, headers=hdr)
+    err(world.call("PATCH", f"/me/messages/{first}", json={"isRead": False}, headers=hdr), 429,
+        "ErrorQuotaExceeded")  # fmt: skip
+
+
+def test_unsupported_paths_fail_explicitly(world):
+    mid = invoice(world)["id"]
+    err(world.call("POST", f"/me/messages/{mid}/attachments", json={}), 501, "ErrorNotSupported")
+    err(world.call("POST", "/me/mailFolders", json={"displayName": "x"}), 501, "ErrorNotSupported")
+    err(world.call("PUT", f"/me/messages/{mid}", json={}), 501, "ErrorNotSupported")
+    err(world.call("GET", "/me/events"), 501, "ErrorNotSupported")
+
+
+# --------------------------------------------------------------------------- listing
+
+
+def test_list_order_paging_select_count(world):
+    for i in range(3):
+        world.inject(f"page-{i}")
+    everything = world.messages()
+    assert len(everything) == 5
+    stamps = [m["receivedDateTime"] for m in everything]
+    assert stamps == sorted(stamps, reverse=True), "default order: receivedDateTime desc"
+    asc = world.messages(**{"$orderby": "receivedDateTime asc"})
+    assert [m["subject"] for m in asc][:2] == ["Invoice INV-001", "Re: Invoice INV-001"]
+    assert [m["subject"] for m in asc][2:] == ["page-0", "page-1", "page-2"]  # ties: stable
+    by_subject = world.messages(**{"$orderby": "subject desc,receivedDateTime"})
+    assert [m["subject"] for m in by_subject][:2] == ["Re: Invoice INV-001", "page-2"]
+    page = world.get("/me/messages", params={"$top": 2, "$count": "true", "$select": "subject"})
+    assert page["@odata.count"] == 5 and len(page["value"]) == 2
+    assert set(page["value"][0]) == {"@odata.etag", "id", "subject"}
+    seen = [m["id"] for m in page["value"]]
+    while "@odata.nextLink" in page:
+        assert "%24select=subject" in page["@odata.nextLink"] or "$select=subject" in page[
+            "@odata.nextLink"]  # fmt: skip
+        page = world.client.get(page["@odata.nextLink"]).json()
+        seen += [m["id"] for m in page["value"]]
+    assert seen == [m["id"] for m in everything]
+    token = graph_api.odata.encode_token({"o": 4})
+    assert len(world.get("/me/messages", params={"$skiptoken": token})["value"]) == 1
+    assert len(world.get("/me/messages", params={"$skip": 3})["value"]) == 2
+    r = world.call("GET", "/me/messages", headers={"Prefer": "odata.maxpagesize=1"})
+    assert len(r.json()["value"]) == 1 and r.headers["Preference-Applied"] == "odata.maxpagesize=1"
+    err(world.call("GET", "/me/messages", params={"$count": "maybe"}), 400, "ErrorInvalidRequest")
+    err(world.call("GET", "/me/messages", params={"$top": 0}), 400, "ErrorInvalidRequest")
+    err(world.call("GET", "/me/messages", params={"$select": "nope"}), 400, "ErrorInvalidRequest")
+    err(world.call("GET", "/me/messages", params={"$apply": "x"}), 400, "ErrorNotSupported")
+    err(world.call("GET", "/me/messages", headers={"Prefer": "odata.maxpagesize=0"}), 400,
+        "ErrorInvalidRequest")  # fmt: skip
+    assert world.call("GET", "/me/messages/$count", expect=200).text == "5"
+    assert world.call("GET", "/me/mailFolders/inbox/messages/$count", expect=200,
+                      params={"$filter": "startswith(subject,'page')"}).text == "3"  # fmt: skip
+    err(world.call("GET", "/me/messages/$count", params={"$top": 1}), 400, "ErrorNotSupported")
+
+
+def test_filter_and_search(world):
+    world.inject("filter-me", text="needle in body")
+    unread = world.messages(**{"$filter": "isRead eq false and hasAttachments eq false"})
+    assert {m["subject"] for m in unread} == {"Re: Invoice INV-001", "filter-me"}
+    when = world.messages(**{"$filter": "receivedDateTime ge 2026-10-15T08:40:00Z and "
+                                        "receivedDateTime le 2026-10-15T08:50:00Z"})  # fmt: skip
+    assert [m["subject"] for m in when] == ["Re: Invoice INV-001"]
+    sender = world.messages(**{"$filter": "from/emailAddress/address eq 'VENDOR@example.test'"})
+    assert {m["subject"] for m in sender} == {"Invoice INV-001", "filter-me"}
+    conv = invoice(world)["conversationId"]
+    thread = world.messages(**{"$filter": f"conversationId eq '{conv}'"})
+    assert {m["subject"] for m in thread} == {"Invoice INV-001", "Re: Invoice INV-001"}
+    either = world.messages(**{"$filter": "subject eq 'filter-me' or hasAttachments eq true"})
+    assert len(either) == 2
+    hits = world.messages(**{"$search": '"needle"'})
+    assert [m["subject"] for m in hits] == ["filter-me"]
+    assert world.messages("sentitems", **{"$search": "needle"}) == []
+    err(world.call("GET", "/me/messages", params={"$search": "x", "$filter": "isRead eq true"}),
+        400, "ErrorNotSupported")  # fmt: skip
+    err(world.call("GET", "/me/messages", params={"$filter": "isRead eq"}), 400,
+        "ErrorInvalidRequest")  # fmt: skip
+    err(world.call("GET", "/me/messages", params={"$filter": "bodyPreview eq 'x'"}), 400,
+        "ErrorNotSupported")  # fmt: skip
+
+
+def test_get_select_expand_prefer_and_mime(world):
+    m = invoice(world)
+    assert m["hasAttachments"] and m["internetMessageId"] == "<invoice-001@example.test>"
+    assert m["parentFolderId"] == world.get("/me/mailFolders/inbox")["id"]
+    one = world.get(f"/me/messages/{m['id']}",
+                    params={"$select": "subject,internetMessageHeaders"})  # fmt: skip
+    names = {h["name"] for h in one["internetMessageHeaders"]}
+    assert {"Message-ID", "Subject", "From"} <= names and "body" not in one
+    exp = world.get(f"/me/messages/{m['id']}", params={"$expand": f"attachments,{ANSWERED}"})
+    assert exp["singleValueExtendedProperties"] == []
+    assert exp["attachments"][0]["name"] == "INV-001.pdf"
+    assert base64.b64decode(exp["attachments"][0]["contentBytes"]).startswith(b"%PDF")
+    r = world.call("GET", f"/me/messages/{m['id']}", 200,
+                   headers={"Prefer": 'outlook.body-content-type="html"'})  # fmt: skip
+    assert r.json()["body"]["contentType"] == "html" and "<pre>" in r.json()["body"]["content"]
+    assert r.headers["Preference-Applied"] == 'outlook.body-content-type="html"'
+    mime = world.call("GET", f"/me/messages/{m['id']}/$value", 200)
+    assert b"Subject: Invoice INV-001" in mime.content
+    err(world.call("GET", f"/me/messages/{m['id']}", params={"$top": 1}), 400, "ErrorNotSupported")
+    err(world.call("GET", "/me/messages/msg_internal_ids_are_not_graph_ids"), 404,
+        "ErrorItemNotFound")  # fmt: skip
+
+
+def test_attachments(world):
+    m = invoice(world)
+    atts = world.get(f"/me/messages/{m['id']}/attachments")["value"]
+    (att,) = atts
+    assert att["@odata.type"] == "#microsoft.graph.fileAttachment"
+    assert (att["contentType"], att["isInline"], att["contentId"]) == ("application/pdf", False,
+                                                                       None)  # fmt: skip
+    one = world.get(f"/me/messages/{m['id']}/attachments/{att['id']}")
+    assert one["contentBytes"] == att["contentBytes"] and one["size"] == att["size"]
+    raw = world.call("GET", f"/me/messages/{m['id']}/attachments/{att['id']}/$value", 200)
+    assert raw.headers["content-type"] == "application/pdf" and raw.content.startswith(b"%PDF")
+    err(world.call("GET", f"/me/messages/{m['id']}/attachments/AAMknope"), 404,
+        "ErrorItemNotFound")  # fmt: skip
+
+
+def test_attachment_metadata_without_a_blob_store(env, world):
+    app = make_app(env)
+    app.state.blobs = None
+    client = TestClient(app, raise_server_exceptions=False)
+    client.headers["Authorization"] = f"Bearer {world.key}"
+    m = invoice(world)
+    (att,) = client.get(f"{BASE}/me/messages/{m['id']}/attachments").json()["value"]
+    assert "contentBytes" not in att and att["size"] > 0
+
+
+# --------------------------------------------------------------------------- folders
+
+
+def test_mail_folders(world):
+    folders = world.get("/me/mailFolders")["value"]
+    by_name = {f["displayName"]: f for f in folders}
+    assert by_name["Inbox"]["totalItemCount"] == 2 and by_name["Inbox"]["childFolderCount"] == 0
+    for wk, name in (("inbox", "Inbox"), ("SentItems", "Sent Items"), ("drafts", "Drafts"),
+                     ("deleteditems", "Deleted Items"), ("archive", "Archive")):  # fmt: skip
+        assert world.get(f"/me/mailFolders/{wk}")["id"] == by_name[name]["id"]
+    sent_id = by_name["Sent Items"]["id"]
+    assert world.get(f"/me/mailFolders/{sent_id}")["displayName"] == "Sent Items"
+    assert world.get(f"/me/mailFolders/{sent_id}/childFolders")["value"] == []
+    assert world.get(f"/me/mailFolders/{by_name['Inbox']['id']}/messages")["value"]
+    err(world.call("GET", "/me/mailFolders/junkemail"), 404, "ErrorItemNotFound")
+    err(world.call("GET", "/me/mailFolders/nope/childFolders"), 404, "ErrorItemNotFound")
+    err(world.call("GET", "/me/mailFolders/nope/messages"), 404, "ErrorItemNotFound")
+
+
+def test_folder_lookup_reports_missing_folders(world, monkeypatch):
+    ctx = graph_api.Ctx(None, None, world.mb())  # type: ignore[arg-type]
+    ref = graph_api.FolderRef("custom", "name:custom")
+    with pytest.raises(graph_api.NotFound):
+        graph_api.folder_record(ctx, ref)
+    monkeypatch.setattr(graph_api, "_folders", lambda ctx: [])
+    err(world.call("GET", "/me/mailFolders/inbox"), 404, "ErrorItemNotFound")
+
+
+# ----------------------------------------------------------------------- mutations
+
+
+def test_patch_flags_categories_and_replied_marker(world):
+    mid = invoice(world)["id"]
+    out = world.patch(f"/me/messages/{mid}", {"isRead": True, "categories": ["A", "B", "A"],
+                                              "flag": {"flagStatus": "flagged"}})  # fmt: skip
+    assert out["isRead"] and out["categories"] == ["A", "B"] and out["id"] == mid
+    assert out["flag"]["flagStatus"] == "flagged"
+    out = world.patch(f"/me/messages/{mid}", {"categories": ["B", "C"],
+                                              "flag": {"flagStatus": "complete"}})  # fmt: skip
+    assert out["categories"] == ["B", "C"] and out["flag"]["flagStatus"] == "notFlagged"
+    prop = {"id": "Integer 0x1081", "value": "102"}
+    world.patch(f"/me/messages/{mid}", {"singleValueExtendedProperties": [prop]})
+    got = world.get(f"/me/messages/{mid}", params={"$expand": ANSWERED})
+    assert got["singleValueExtendedProperties"] == [prop]
+    assert "ANSWERED" in world.mb().get_message(world.mb().resolve_external_id(
+        "graph", "message", mid)).flags  # fmt: skip
+    world.patch(f"/me/messages/{mid}", {"singleValueExtendedProperties": [
+        {"id": "integer 0x1081", "value": "0"}], "isRead": False})  # fmt: skip
+    got = world.get(f"/me/messages/{mid}", params={"$expand": ANSWERED})
+    assert got["singleValueExtendedProperties"] == [] and got["isRead"] is False
+    unchanged = world.patch(f"/me/messages/{mid}", {"categories": ["B", "C"]})
+    assert unchanged["categories"] == ["B", "C"]
+    for bad in ({"isRead": "yes"}, {"flag": {"flagStatus": "maybe"}}, {"categories": "x"},
+                {"categories": [1]}, {"subject": "not a draft"},
+                {"singleValueExtendedProperties": "x"}):  # fmt: skip
+        err(world.call("PATCH", f"/me/messages/{mid}", json=bad), 400, "ErrorInvalidRequest")
+    for bad in ({"singleValueExtendedProperties": [{"id": "String 0x0037", "value": "x"}]},
+                {"importance": "high"}, {"replyTo": [{"emailAddress": {"address": "a@b.c"}}]}):  # fmt: skip
+        err(world.call("PATCH", f"/me/messages/{mid}", json=bad), 501, "ErrorNotSupported")
+    assert world.patch(f"/me/messages/{mid}", None)["id"] == mid  # empty PATCH: no-op
+
+
+def test_delete_move_copy(world):
+    mid = invoice(world)["id"]
+    archive = world.get("/me/mailFolders/archive")["id"]
+    moved = world.post(f"/me/messages/{mid}/move", {"DestinationId": archive})
+    assert moved["parentFolderId"] == archive and moved["id"] == mid
+    copy = world.post(f"/me/messages/{mid}/copy", {"destinationId": "inbox"})
+    assert copy["id"] != mid and copy["parentFolderId"] == world.get("/me/mailFolders/inbox")["id"]
+    world.call("DELETE", f"/me/messages/{copy['id']}", 204)
+    trashed = world.get(f"/me/messages/{copy['id']}")
+    assert trashed["parentFolderId"] == world.get("/me/mailFolders/deleteditems")["id"]
+    world.call("DELETE", f"/me/messages/{copy['id']}", 204)
+    err(world.call("GET", f"/me/messages/{copy['id']}"), 404, "ErrorItemNotFound")
+    err(world.call("POST", f"/me/messages/{mid}/move", json={}), 400, "ErrorInvalidRequest")
+    err(world.call("POST", f"/me/messages/{mid}/move", json={"destinationId": "nope"}), 404,
+        "ErrorItemNotFound")  # fmt: skip
+    world.call("POST", f"/me/messages/{mid}/permanentDelete", 204)
+    err(world.call("POST", f"/me/messages/{mid}/permanentDelete"), 404, "ErrorItemNotFound")
+
+
+def test_send_mail_and_its_errors(world):
+    msg = {"subject": "hello", "body": {"contentType": "HTML", "content": "<b>hi</b> &amp; bye"},
+           "toRecipients": [{"emailAddress": {"address": "vendor@example.test"}}],
+           "ccRecipients": [{"emailAddress": {"address": "procurement@example.test",
+                                              "name": "P"}}],
+           "bccRecipients": [], "from": {"emailAddress": {"address": "Finance@example.test"}}}  # fmt: skip
+    err(
+        world.call("POST", "/me/sendMail", json={"message": msg}),
+        403,
+        "ErrorMessageSubmissionBlocked",
+    )  # procurement@ is not a simulated mailbox
+    msg["ccRecipients"] = []
+    assert world.post("/me/sendMail", {"Message": msg, "SaveToSentItems": False}, 202) is None
+    (sent,) = world.messages("sentitems")
+    assert sent["body"] == {"contentType": "html", "content": "<b>hi</b> &amp; bye"}
+    assert sent["bodyPreview"] == "hi & bye" and sent["isRead"] and not sent["isDraft"]
+    text = world.get(f"/me/messages/{sent['id']}",
+                     headers={"Prefer": "outlook.body-content-type=text"})  # fmt: skip
+    assert text["body"]["contentType"] == "text" and "hi" in text["body"]["content"]
+    for bad in ({}, {"message": "x"}, {"message": msg, "saveToSentItems": "yes"},
+                {"message": {**msg, "toRecipients": "x"}},
+                {"message": {**msg, "toRecipients": [{"emailAddress": {}}]}},
+                {"message": {**msg, "body": "x"}},
+                {"message": {**msg, "body": {"contentType": "rtf", "content": "x"}}},
+                {"message": {**msg, "subject": 5}}):  # fmt: skip
+        err(world.call("POST", "/me/sendMail", json=bad), 400, "ErrorInvalidRequest")
+    attach = {**msg, "attachments": [{"@odata.type": "#microsoft.graph.fileAttachment",
+                                      "name": "a.txt", "contentBytes": "eA=="}]}  # fmt: skip
+    err(world.call("POST", "/me/sendMail", json={"message": attach}), 501, "ErrorNotSupported")
+    spoof = {**msg, "from": {"emailAddress": {"address": "ceo@example.test"}}}
+    err(world.call("POST", "/me/sendMail", json={"message": spoof}), 403, "ErrorAccessDenied")
+
+
+def test_drafts_lifecycle(world):
+    draft = world.post("/me/messages", {"subject": "d1", "toRecipients": [
+        {"emailAddress": {"address": "vendor@example.test"}}]})  # fmt: skip
+    assert draft["isDraft"] and draft["sentDateTime"] is None
+    drafts_id = world.get("/me/mailFolders/drafts")["id"]
+    assert draft["parentFolderId"] == drafts_id
+    upd = world.patch(f"/me/messages/{draft['id']}", {
+        "subject": "d2", "body": {"contentType": "text", "content": "body"},
+        "ccRecipients": [{"emailAddress": {"address": "finance@example.test"}}],
+        "categories": ["Draft"], "isRead": True})  # fmt: skip
+    assert upd["id"] == draft["id"] and upd["subject"] == "d2" and upd["categories"] == ["Draft"]
+    assert [r["emailAddress"]["address"] for r in upd["ccRecipients"]] == ["finance@example.test"]
+    assert world.get(f"/me/messages/{draft['id']}")["subject"] == "d2"
+    world.post(f"/me/messages/{draft['id']}/send", None, 202)
+    err(world.call("GET", f"/me/messages/{draft['id']}"), 404, "ErrorItemNotFound")
+    assert [m["subject"] for m in world.messages("sentitems")] == ["d2"]
+    assert world.messages("drafts") == []
+    mid = invoice(world)["id"]
+    err(world.call("POST", f"/me/messages/{mid}/send"), 409, "ErrorIrresolvableConflict")
+    empty = world.post("/me/messages", None)
+    assert empty["isDraft"] and empty["toRecipients"] == []
+    err(world.call("POST", f"/me/messages/{empty['id']}/send"), 400, "ErrorInvalidRequest")
+
+
+def test_reply_family(world):
+    inv = invoice(world)
+    mid = inv["id"]
+    r = world.post(f"/me/messages/{mid}/createReply", {"Comment": "c1",
+                   "Message": {"ccRecipients": [{"emailAddress": {"address": "finance@example.test"}}]}})  # fmt: skip
+    assert r["subject"] == "RE: Invoice INV-001" and r["isDraft"]
+    assert r["conversationId"] == inv["conversationId"] and r["body"]["content"] == "c1"
+    assert [x["emailAddress"]["address"] for x in r["ccRecipients"]] == ["finance@example.test"]
+    world.inject("group", cc=["finance@example.test"], to=["finance@example.test",
+                                                          "vendor@example.test"])  # fmt: skip
+    group = world.by_subject("group")
+    ra = world.post(f"/me/messages/{group['id']}/createReplyAll", {})
+    assert [x["emailAddress"]["address"] for x in ra["toRecipients"]] == ["vendor@example.test"]
+    assert ra["ccRecipients"] == []
+    fw = world.post(f"/me/messages/{mid}/createForward", {"comment": "see below",
+                    "toRecipients": [{"emailAddress": {"address": "vendor@example.test"}}]})  # fmt: skip
+    assert fw["subject"] == "FW: Invoice INV-001" and "Forwarded message" in fw["body"]["content"]
+    world.post(f"/me/messages/{mid}/reply", {"comment": "direct"}, 202)
+    world.post(f"/me/messages/{group['id']}/replyAll", {"comment": "all"}, 202)
+    world.post(f"/me/messages/{mid}/forward", {"comment": "fwd", "toRecipients": [
+        {"emailAddress": {"address": "vendor@example.test"}}]}, 202)  # fmt: skip
+    world.post(f"/me/messages/{mid}/forward", {"comment": "fwd2", "message": {
+        "toRecipients": [{"emailAddress": {"address": "vendor@example.test"}}],
+        "subject": "custom forward"}}, 202)  # fmt: skip
+    world.post(f"/me/messages/{mid}/reply", {"comment": "x", "message": {
+        "subject": "custom reply"}}, 202)  # fmt: skip
+    sent = {m["subject"]: m for m in world.messages("sentitems", **{"$expand": "attachments"})}
+    assert {"Re: Invoice INV-001", "Re: group", "Fwd: Invoice INV-001", "custom forward",
+            "custom reply"} <= set(sent)  # fmt: skip
+    assert sent["Fwd: Invoice INV-001"]["attachments"], "direct forward keeps attachments"
+    got = world.get(f"/me/messages/{mid}", params={"$expand": ANSWERED})
+    assert got["singleValueExtendedProperties"][0]["value"] == "102"
+    own = world.post(f"/me/messages/{sent['custom reply']['id']}/createReply", {})
+    assert [x["emailAddress"]["address"] for x in own["toRecipients"]] == ["vendor@example.test"]
+    err(world.call("POST", f"/me/messages/{mid}/forward", json={"comment": "x"}), 400,
+        "ErrorInvalidRequest")  # fmt: skip
+    err(world.call("POST", f"/me/messages/{mid}/reply", json={"comment": 5}), 400,
+        "ErrorInvalidRequest")  # fmt: skip
+    err(world.call("POST", f"/me/messages/{mid}/reply", json={"message": "x"}), 400,
+        "ErrorInvalidRequest")  # fmt: skip
+    err(world.call("POST", "/me/messages/AAMknope/createReply", json={}), 404, "ErrorItemNotFound")
+
+
+# ----------------------------------------------------------------------------- delta
+
+
+def test_delta_paging_changes_and_reset(world, monkeypatch):
+    page = world.get("/me/messages/delta", params={"$top": 1, "$select": "subject"})
+    seen = [m["id"] for m in page["value"]]
+    assert set(page["value"][0]) == {"@odata.etag", "id", "subject"}
+    while "@odata.nextLink" in page:
+        page = world.client.get(page["@odata.nextLink"]).json()
+        seen += [m["id"] for m in page["value"]]
+    assert len(seen) == 2 and "@odata.deltaLink" in page
+    delta = page["@odata.deltaLink"]
+    empty = world.client.get(delta).json()
+    assert empty["value"] == [] and empty["@odata.deltaLink"]
+    world.inject("delta-new")
+    world.patch(f"/me/messages/{seen[0]}", {"isRead": True})
+    monkeypatch.setattr(graph_api, "ENGINE_PAGE", 1)  # force a paged change round
+    page = world.client.get(delta).json()
+    changed = [m.get("subject") for m in page["value"]]
+    while "@odata.nextLink" in page:
+        page = world.client.get(page["@odata.nextLink"]).json()
+        changed += [m.get("subject") for m in page["value"]]
+    assert "delta-new" in changed and len(changed) >= 2
+    monkeypatch.setattr(graph_api, "ENGINE_PAGE", 500)
+    sent_delta = world.get("/me/mailFolders/sentitems/messages/delta")
+    assert sent_delta["value"] == []
+    world.post(f"/me/messages/{seen[0]}/reply", {"comment": "r"}, 202)
+    sent_changes = world.client.get(sent_delta["@odata.deltaLink"]).json()["value"]
+    removed = [m for m in sent_changes if "@removed" in m]
+    kept = [m for m in sent_changes if "@removed" not in m]
+    assert [m["subject"] for m in kept] == ["Re: Invoice INV-001"] and removed  # inbox side
+    world.ctl.reset_run(world.run)
+    world.ctl.start_run(world.run)
+    err(world.client.get(delta), 410, "SyncStateNotFound")
+    for bad in ({"$deltatoken": "!!"}, {"$skiptoken": graph_api.odata.encode_token({"m": "z"})},
+                {"$skiptoken": graph_api.odata.encode_token({"m": "i", "o": 0})},
+                {"$filter": "isRead eq true"}):  # fmt: skip
+        r = world.call("GET", "/me/messages/delta", params=bad)
+        assert r.status_code == 400, (bad, r.text)
+
+
+def test_resource_helpers():
+    from datetime import datetime
+
+    assert res.iso(None) is None
+    assert res.iso(datetime(2026, 1, 2, 3, 4, 5)) == "2026-01-02T03:04:05Z"  # naive -> UTC
+    m = CanonicalMessage(id="msg_1", mailbox_id="mbx", message_id_header="<a@b>",
+                         thread_id="thr_1", folder="INBOX", **{"from": {"email": "a@b.c"}},
+                         body_html="<p>x</p>\n", created_at=datetime(2026, 1, 1),
+                         labels=["INBOX", "Keep", "UNREAD"], headers={"X-One": "single"})  # fmt: skip
+    assert res.user_categories(m) == ["Keep"]
+    assert res.body(m, "text")["content"].strip() == "x"
+    assert res.body(m, None) == {"contentType": "html", "content": "<p>x</p>"}
+    assert res.headers(m) == [{"name": "X-One", "value": "single"}]
+    plain = m.model_copy(update={"body_html": None, "body_text": None})
+    assert res.body(plain, None) == {"contentType": "text", "content": ""}
+    assert res.preview(plain) == ""
+    assert res.message_graph_id(m) == res.graph_id("msg_1")
+    assert res.conversation_id(m) == res.graph_id("thr_1")
+    assert res.folder_key("Custom") == "name:Custom"
+    custom = {"id": "fld", "name": "Custom", "system_type": None}
+    assert res.mail_folder("mbx", custom, {})["displayName"] == "Custom"

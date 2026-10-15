@@ -108,16 +108,24 @@ def recipient(a: Address) -> dict[str, Any]:
     return {"emailAddress": {"name": a.name or a.email, "address": a.email}}
 
 
+def _unwire(content: str) -> str:
+    """MIME serialisation terminates a body part with a newline; Graph returns the body as
+    written, so one trailing newline is dropped."""
+    return content[:-1] if content.endswith("\n") else content
+
+
 def body(m: CanonicalMessage, prefer: str | None) -> dict[str, str]:
     """Graph returns HTML when the message has an HTML part, unless the client asked for
     `Prefer: outlook.body-content-type="text"` (and vice versa)."""
+    text = _unwire(m.body_text) if m.body_text is not None else None
+    markup = _unwire(m.body_html) if m.body_html is not None else None
     if prefer == "text":
         return {"contentType": "text",
-                "content": m.body_text if m.body_text is not None else html_to_text(m.body_html or "")}  # fmt: skip
-    if prefer == "html" or m.body_html is not None:
+                "content": text if text is not None else html_to_text(markup or "")}  # fmt: skip
+    if prefer == "html" or markup is not None:
         return {"contentType": "html",
-                "content": m.body_html if m.body_html is not None else text_to_html(m.body_text or "")}  # fmt: skip
-    return {"contentType": "text", "content": m.body_text or ""}
+                "content": markup if markup is not None else text_to_html(text or "")}  # fmt: skip
+    return {"contentType": "text", "content": text or ""}
 
 
 def preview(m: CanonicalMessage) -> str:
