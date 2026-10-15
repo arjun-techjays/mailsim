@@ -71,6 +71,16 @@ describe('ReadingPane', () => {
     await user.click(screen.getAllByRole('button', { name: /Open \(no subject\)/ })[0] as HTMLElement);
     expect(onOpen).toHaveBeenCalledWith('m0');
   });
+
+  it('makes the (often long) raw header block a keyboard-focusable, labelled region', async () => {
+    const m: CanonicalMessage = { ...base, headers: { 'X-Long': 'v'.repeat(400) } };
+    const { user } = show(m, [m]);
+    await user.click(screen.getByRole('button', { name: 'Show headers' }));
+    const region = screen.getByRole('region', { name: 'All headers' });
+    expect(region.tagName).toBe('PRE');
+    expect(region).toHaveAttribute('tabindex', '0');
+    expect(region).toHaveTextContent('X-Long');
+  });
 });
 
 describe('small helpers', () => {

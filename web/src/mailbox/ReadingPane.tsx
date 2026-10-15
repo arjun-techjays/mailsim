@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { CanonicalMessage } from '../api/types';
 import { address, addresses, bytes } from '../components/format';
@@ -8,6 +8,7 @@ import { VirtualTime } from './VirtualTime';
 
 
 function Headers({ m, rawMimeHref }: { m: CanonicalMessage; rawMimeHref?: (ref: string) => string }) {
+  const headersId = useId();
   return (
     <div className="mb-headers" data-testid="message-headers">
       <dl className="kv">
@@ -50,11 +51,14 @@ function Headers({ m, rawMimeHref }: { m: CanonicalMessage; rawMimeHref?: (ref: 
           )}
         </dd>
       </dl>
-      <h5>All headers</h5>
+      <h5 id={headersId}>All headers</h5>
       {Object.keys(m.headers ?? {}).length === 0 ? (
         <p className="muted">No other headers recorded.</p>
       ) : (
-        <pre className="json">{JSON.stringify(m.headers, null, 2)}</pre>
+        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- scrollable region must be keyboard-reachable (axe scrollable-region-focusable)
+        <pre className="json" tabIndex={0} role="region" aria-labelledby={headersId}>
+          {JSON.stringify(m.headers, null, 2)}
+        </pre>
       )}
     </div>
   );

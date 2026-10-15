@@ -49,6 +49,9 @@ describe('small components', () => {
     const { container, rerender } = render(<JsonBlock value={{ a: 1 }} label="Payload" />);
     expect(screen.getByText('Payload')).toBeInTheDocument();
     expect(container.querySelector('pre')).toHaveTextContent('"a": 1');
+    const region = screen.getByRole('region', { name: 'Payload' });
+    expect(region).toBe(container.querySelector('pre'));
+    expect(region).toHaveAttribute('tabindex', '0');
     rerender(<JsonBlock value={{}} label="Payload" />);
     expect(screen.getByText('—')).toBeInTheDocument();
     rerender(<JsonBlock value={null} label="Payload" />);

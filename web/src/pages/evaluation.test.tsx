@@ -16,6 +16,8 @@ describe('Evaluation page', () => {
     expect(report).toHaveTextContent('5120 / 840');
     expect(report).toHaveTextContent('on (source: request)');
     expect(report).toHaveTextContent('sha256:ak2');
+    const repro = within(report).getByRole('region', { name: 'Reproducibility details', hidden: true });
+    expect(repro).toHaveAttribute('tabindex', '0');
 
     const failing = screen.getByTestId('assertion-no-unverified-approval');
     const diff = within(failing).getByTestId('assertion-diff');

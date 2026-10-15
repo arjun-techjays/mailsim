@@ -192,7 +192,10 @@ export function EvaluationReportView({ report }: { report: EvaluationReport }) {
       {outcomes.length === 0 && <p className="muted">No assertions with this status.</p>}
       <details>
         <summary>Reproducibility</summary>
-        <pre className="json">{JSON.stringify(report.reproducibility ?? {}, null, 2)}</pre>
+        {/* eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- scrollable region must be keyboard-reachable (axe scrollable-region-focusable) */}
+        <pre className="json" tabIndex={0} role="region" aria-label="Reproducibility details">
+          {JSON.stringify(report.reproducibility ?? {}, null, 2)}
+        </pre>
       </details>
     </section>
   );
