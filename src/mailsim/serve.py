@@ -33,6 +33,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI
 from sqlalchemy import select
@@ -40,7 +41,7 @@ from sqlalchemy import select
 from mailsim.api.app import create_app
 from mailsim.api.auth import bootstrap
 from mailsim.api.idempotency import SWEEP_BATCH, sweep_expired
-from mailsim.api.local_mode import LocalAccess, new_token
+from mailsim.api.local_mode import LocalAccess, is_loopback, new_token
 from mailsim.auth.principal import Principal, Role
 from mailsim.domain.errors import SimError
 from mailsim.engine.core import SimEngine
@@ -146,6 +147,9 @@ def build_state(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
         )
         log.warning("!" * 20 + " " + warning + " " + "!" * 20)
         dashboard = env.get("MAILSIM_DASHBOARD_URL", DEFAULT_DASHBOARD_URL).rstrip("/")
+        if not is_loopback(urlsplit(dashboard).hostname):
+            print("WARNING: MAILSIM_DASHBOARD_URL is not a loopback URL; the launch token in the "
+                  "link below is readable by that site", file=sys.stderr)  # fmt: skip
         # the launch token goes to the terminal only (never to the log): it is what separates
         # the developer's browser from other local processes, such as the agent under test
         print(f"WARNING: {warning}\nOpen the dashboard: {dashboard}/#local_token={access.token}",

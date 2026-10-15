@@ -20,7 +20,7 @@ from __future__ import annotations
 import hmac
 import ipaddress
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -37,7 +37,7 @@ LOOPBACK_NAMES = frozenset({"localhost"})
 @dataclass(frozen=True)
 class LocalAccess:
     operator: Principal
-    token: str
+    token: str = field(repr=False)  # never in reprs / logs
 
     def admits(self, token: str | None) -> bool:
         return bool(token) and hmac.compare_digest(str(token).encode(), self.token.encode())

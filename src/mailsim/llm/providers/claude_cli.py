@@ -149,6 +149,8 @@ class ClaudeCliProvider:
             raise provider_error("claude_cli", "timeout",
                                  f"no answer within {self.timeout_seconds:g}s",
                                  retryable=True) from None  # fmt: skip
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(proc.pid, signal.SIGKILL)  # nothing the CLI spawned outlives the call
         return _Result(proc.returncode, out, err)
 
     @staticmethod

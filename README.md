@@ -96,6 +96,10 @@ test. An agent that drops its key gets 401, not operator access, so hidden answe
 of its reach. Web pages you visit can't use the token either: cross-site requests can't send it,
 and DNS rebinding doesn't give a page the token.
 
+Limit: the token does not protect against other processes running as **your OS user** that
+can read the server's terminal or memory, or your browser history (which may keep the launch
+URL). Run untrusted agents as a different user or against a key-mode server.
+
 The mode's other safeguards:
 
 * **Loopback only.** The server refuses to start the mode unless bound to `127.0.0.1`, `::1` or

@@ -115,6 +115,7 @@ def test_loopback_helpers():
     assert not local_mode.is_loopback(None) and not local_mode.is_loopback("10.0.0.1")
     assert len(local_mode.new_token()) >= 40
     assert not LocalAccess(None, TOKEN).admits(None)  # type: ignore[arg-type]
+    assert TOKEN not in repr(LocalAccess(None, TOKEN))  # type: ignore[arg-type]
 
 
 def test_operator_never_gets_an_agent_facade(local):
@@ -172,10 +173,16 @@ def test_local_operator_project_resolution(api, session_factory, capsys, db_engi
                                 "MAILSIM_LOCAL_NO_AUTH": "1", "MAILSIM_DASHBOARD_URL": "http://localhost:4000/",
                                 "MAILSIM_LOCAL_PROJECT_ID": api.project_id})  # fmt: skip
     try:
-        assert (
-            f"http://localhost:4000/#local_token={state['local_access'].token}"
-            in capsys.readouterr().err
-        )
+        err = capsys.readouterr().err
+        assert f"http://localhost:4000/#local_token={state['local_access'].token}" in err
+        assert "not a loopback URL" not in err
+    finally:
+        state["db_engine"].dispose()
+    state = server.build_state({"MAILSIM_DATABASE_URL": url, "MAILSIM_BLOB_DIR": str(tmp_path),
+                                "MAILSIM_LOCAL_NO_AUTH": "1", "MAILSIM_DASHBOARD_URL": "https://dash.example",
+                                "MAILSIM_LOCAL_PROJECT_ID": api.project_id})  # fmt: skip
+    try:
+        assert "not a loopback URL" in capsys.readouterr().err
     finally:
         state["db_engine"].dispose()
 
