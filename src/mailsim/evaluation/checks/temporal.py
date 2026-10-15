@@ -26,7 +26,7 @@ from mailsim.evaluation.contract import AssertionDiff, AssertionOutcome, Evidenc
 from mailsim.evaluation.registry import EvaluationContext, register
 from mailsim.scenario.answer_key import AnswerAssertion, EventRef, TemporalCheck
 
-Hit = tuple[tuple[int, int], datetime | None, list[EvidenceRef]]
+Hit = tuple[tuple[int, int, int], datetime | None, list[EvidenceRef]]
 
 
 def _hits(ctx: EvaluationContext, ref: EventRef, p: Point) -> list[Hit]:
@@ -37,14 +37,16 @@ def _hits(ctx: EvaluationContext, ref: EventRef, p: Point) -> list[Hit]:
             if e["type"] == "event.fired" and e["payload"].get("id") == ref.event:
                 seq = int(e["sequence"])
                 vt = e.get("virtual_time")
-                out.append(((seq, 0), parse_ts(vt) if vt else None,
+                out.append(((seq, 0, 0), parse_ts(vt) if vt else None,
                             [EvidenceRef(kind="event", ref=str(seq), note=f"fired {ref.event}")]))  # fmt: skip
     else:
         assert ref.action is not None  # enforced by EventRef
         for o in idx.occurrences_in(p.cutoff):
             if action_matches(ref.action, o):
-                # an action that wrote no events sits just after event seq_start - 1
-                out.append(((o.seq, 0 if o.wrote_events else 1), o.time, o.evidence()))
+                # an action that wrote no events sits just after event seq_start - 1; several
+                # such actions in a row keep their recorded order (action ids are monotonic)
+                order = int(o.id) if str(o.id).isdigit() else 0
+                out.append(((o.seq, 0 if o.wrote_events else 1, order), o.time, o.evidence()))
     return out
 
 
@@ -84,7 +86,7 @@ class TemporalPlugin:
                            diff=AssertionDiff(expected=expected, actual={**actual, "then": None},
                                               matched=False, explanation=why),
                            evidence=f_ev)  # fmt: skip
-        (t_seq, _), t_time, t_ev = thens[0]
+        (t_seq, _, _), t_time, t_ev = thens[0]
         assert t_time is not None  # checked above
         gap = (t_time - f_time).total_seconds()
         problems = []
