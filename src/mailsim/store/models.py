@@ -142,7 +142,11 @@ class ActionRow(Base):
     # seq_end < seq_start). Lets evaluators place every action exactly in the log.
     seq_start: Mapped[int | None] = mapped_column(BigInteger)
     seq_end: Mapped[int | None] = mapped_column(BigInteger)
+    # Interface the command came through (rest, gmail, graph, mcp_http, mcp_stdio, imap, smtp,
+    # api, cli); None for engine-internal callers and rows written before migration 0009.
+    interface: Mapped[str | None] = mapped_column(String(16))
     created_at: Mapped[datetime] = _created()
+    __table_args__ = (Index("ix_actions_run_id_id", "run_id", "id"),)  # activity polling
 
 
 class AnswerKey(Base):

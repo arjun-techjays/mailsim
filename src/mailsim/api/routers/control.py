@@ -6,24 +6,30 @@ WS-B). Without one, they answer 501 UNSUPPORTED_OPERATION.
 
 from __future__ import annotations
 
-import base64
-import binascii
-import json
-import tempfile
 from pathlib import Path
 from typing import Annotated, Any, Literal, Protocol
 
 from fastapi import APIRouter, Header, Query, Request, Response
+from pydantic import ValidationError
 from sqlalchemy import Select, select, tuple_
 from sqlalchemy.orm import Session
 
+from mailsim.api import authoring
 from mailsim.api import schemas as s
 from mailsim.api.auth import issue_key, project_keys, revoke_agent_keys, revoke_scoped_key
 from mailsim.api.deps import Authenticated, Controller, Evaluator, Inspector, not_implemented
 from mailsim.api.errors import ErrorEnvelope
 from mailsim.api.idempotency import idempotent
 from mailsim.api.pagination import decode_sequence_cursor, encode_sequence_cursor
-from mailsim.api.routers._common import blobs, controller, inspector, run_out, scope, sessions
+from mailsim.api.routers._common import (
+    blobs,
+    controller,
+    inspector,
+    run_out,
+    scenario_version,
+    scope,
+    sessions,
+)
 from mailsim.auth.principal import Principal, Role
 from mailsim.domain.clock import iso, parse_ts
 from mailsim.domain.errors import Conflict, InvalidRequest, NotFound
@@ -32,17 +38,14 @@ from mailsim.engine.facades import EvaluatorView
 from mailsim.engine.pagination import decode_cursor, encode_cursor
 from mailsim.evaluation.contract import BuildComparison, EvaluationReport
 from mailsim.scenario import answer_keys as keys_service
-from mailsim.scenario import validator
 from mailsim.scenario.answer_key import AnswerKeyDoc
-from mailsim.scenario.loader import load_scenario, parse_source
+from mailsim.scenario.loader import load_scenario
 from mailsim.scenario.service import create_scenario_version
 from mailsim.store import models as m
 from mailsim.store import repos
 
 router = APIRouter(prefix="/v1", tags=["control"], responses={"default": {"model": ErrorEnvelope}})
 Idem = Annotated[str | None, Header(alias="Idempotency-Key", max_length=200)]
-MAX_FIXTURES = 200
-MAX_FIXTURE_TOTAL_BYTES = 25 * 1024 * 1024
 REPORT_TYPES = {"json": "application/json", "junit": "application/xml",
                 "markdown": "text/markdown; charset=utf-8"}  # fmt: skip
 
@@ -113,53 +116,6 @@ def revoke_api_key(request: Request, key_id: str, principal: Controller) -> Resp
 
 
 # ---- scenarios -------------------------------------------------------------------------
-def _materialize(body: s.ScenarioCreate, directory: Path) -> Path:
-    """Write the submitted document (+ fixtures) into a fresh temp dir; never outside it."""
-    if (body.source is None) == (body.document is None):
-        raise InvalidRequest("provide exactly one of `source` or `document`")
-    if body.document is not None:
-        target, data = directory / "scenario.json", json.dumps(body.document).encode()
-    else:
-        assert body.source is not None
-        is_json = body.source.lstrip().startswith("{")
-        target = directory / ("scenario.json" if is_json else "scenario.yaml")
-        data = body.source.encode()
-    if len(body.fixtures) > MAX_FIXTURES:
-        raise InvalidRequest(f"at most {MAX_FIXTURES} fixtures per request")
-    decoded: dict[str, bytes] = {}
-    total = 0
-    for rel, encoded in body.fixtures.items():
-        if any(part in ("", ".", "..") for part in rel.split("/")):
-            raise InvalidRequest(f"fixture path must not contain empty, '.' or '..' parts: {rel!r}")
-        if rel.split("/")[0] in ("scenario.json", "scenario.yaml"):
-            raise InvalidRequest(f"fixture path collides with the scenario document: {rel!r}")
-        if len(encoded) > s.MAX_FIXTURE_B64_CHARS:  # checked before decoding
-            raise InvalidRequest(f"fixture too large: {rel}")
-        try:
-            content = base64.b64decode(encoded, validate=True)
-        except (binascii.Error, ValueError):
-            raise InvalidRequest(f"fixture {rel!r} is not valid base64") from None
-        if len(content) > validator.MAX_FIXTURE_BYTES:
-            raise InvalidRequest(f"fixture too large: {rel}")
-        total += len(content)
-        if total > MAX_FIXTURE_TOTAL_BYTES:
-            raise InvalidRequest(f"fixtures exceed {MAX_FIXTURE_TOTAL_BYTES} bytes in total")
-        decoded[rel] = content
-    target.write_bytes(data)
-    for rel, content in decoded.items():
-        path = validator.resolve_fixture(directory, rel)  # rejects absolute paths, traversal
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(content)
-        except OSError:  # e.g. both "a" and "a/b": one path is a file, the other needs a dir
-            raise InvalidRequest(f"fixture paths overlap: {rel!r}") from None
-    return target
-
-
-def _tmpdir() -> tempfile.TemporaryDirectory[str]:
-    return tempfile.TemporaryDirectory(prefix="mailsim-scn-")
-
-
 def _version_out(row: m.ScenarioVersion, key: str) -> s.ScenarioVersionOut:
     return s.ScenarioVersionOut(id=row.id, scenario_key=key, version=row.version,
                                 spec_hash=row.spec_hash, created_at=row.created_at)  # fmt: skip
@@ -173,8 +129,8 @@ def create_scenario(
     fixtures. Inline evaluation assertions are split off into an evaluator-only answer key."""
 
     def publish() -> s.ScenarioVersionOut:
-        with _tmpdir() as tmp:
-            loaded = load_scenario(_materialize(body, Path(tmp).resolve()))
+        with authoring.tmpdir() as tmp:
+            loaded = load_scenario(authoring.materialize(body, Path(tmp).resolve()))
         with sessions(request).begin() as session:
             row = create_scenario_version(session, scope(principal), loaded, blobs(request))
             return _version_out(row, loaded.key)
@@ -242,21 +198,13 @@ def validate_scenario(
     scenario_key: str, body: s.ScenarioCreate, principal: Controller
 ) -> s.ValidationResult:
     """Validate schema, references, fixtures and assertions without storing anything."""
-    with _tmpdir() as tmp:
-        path = _materialize(body, Path(tmp).resolve())
-        try:
-            data = parse_source(path.read_bytes(), is_json=path.suffix == ".json")
-        except InvalidRequest as exc:
-            issue = s.ValidationIssue(path="<source>", message=exc.message)
-            return s.ValidationResult(ok=False, errors=[issue], warnings=[])
-        report = validator.validate_scenario(data, path.parent)
-    errors = [s.ValidationIssue(path=i.path, message=i.message) for i in report.errors]
-    if report.doc is not None and report.doc.scenario.id != scenario_key:
+    report = authoring.validate_draft(body)
+    errors = report.errors
+    if report.scenario_id is not None and report.scenario_id != scenario_key:
         errors.append(s.ValidationIssue(
             path="scenario.id",
-            message=f"scenario id {report.doc.scenario.id!r} does not match {scenario_key!r}"))  # fmt: skip
-    warnings = [s.ValidationIssue(path=i.path, message=i.message) for i in report.warnings]
-    return s.ValidationResult(ok=not errors, errors=errors, warnings=warnings)
+            message=f"scenario id {report.scenario_id!r} does not match {scenario_key!r}"))  # fmt: skip
+    return s.ValidationResult(ok=not errors, errors=errors, warnings=report.warnings)
 
 
 # ---- answer keys (evaluator-only content) ----------------------------------------------
@@ -272,20 +220,19 @@ def _answer_key_out(row: m.AnswerKey, key: str) -> s.AnswerKeyOut:
     "/scenarios/{scenario_key}/answer-keys", response_model=s.AnswerKeyOut, status_code=201
 )
 def create_answer_key(
-    request: Request, scenario_key: str, body: s.AnswerKeyCreate, principal: Controller
+    request: Request, scenario_key: str, body: s.AnswerKeyCreate, principal: Inspector
 ) -> s.AnswerKeyOut:
-    """Publish a hidden answer-key version. The response is metadata only."""
-    if body.document is not None and body.source is None:
-        data: object = body.document
-    elif body.source is not None and body.document is None:
-        data = parse_source(body.source.encode(), is_json=body.source.lstrip().startswith("{"))
-    else:
-        raise InvalidRequest("provide exactly one of `source` or `document`")
+    """Publish a hidden answer-key version (controller or evaluator). The response is
+    metadata only."""
+    data = authoring.answer_key_data(body.source, body.document)
     try:
         doc = AnswerKeyDoc.model_validate(data)
-    except ValueError as exc:
-        raise InvalidRequest("answer key validation failed",
-                             details={"errors": str(exc)[:2000]}) from None  # fmt: skip
+    except ValidationError as exc:
+        found = authoring.answer_key_errors(exc, data)
+        raise InvalidRequest("answer key validation failed", details={
+            "errors": [{"loc": e.loc, "msg": e.message} for e in found],
+            "issues": [{"path": e.path, "message": e.message} for e in found],
+        }) from None  # fmt: skip
     if doc.answer_key.scenario != scenario_key:
         raise InvalidRequest(f"answer key is for {doc.answer_key.scenario!r}, not {scenario_key!r}")
     with sessions(request).begin() as session:
@@ -304,29 +251,6 @@ def list_answer_keys(
 
 
 # ---- runs ------------------------------------------------------------------------------
-def _scenario_version(
-    session: Session, principal: Principal, key: str, version: int | None
-) -> m.ScenarioVersion:
-    stmt = (
-        select(m.ScenarioVersion)
-        .join(m.Scenario, m.Scenario.id == m.ScenarioVersion.scenario_id)
-        .where(
-            m.Scenario.tenant_id == principal.tenant_id,
-            m.Scenario.project_id == principal.project_id,
-            m.Scenario.key == key,
-        )  # fmt: skip
-    )
-    if version is not None:
-        stmt = stmt.where(m.ScenarioVersion.version == version)
-    row = session.execute(
-        stmt.order_by(m.ScenarioVersion.version.desc()).limit(1)
-    ).scalar_one_or_none()
-    if row is None:
-        suffix = f" version {version}" if version is not None else ""
-        raise NotFound(f"scenario {key}{suffix} not found")
-    return row
-
-
 def _revoke_agent_keys(request: Request, principal: Principal, run_id: str) -> None:
     with sessions(request).begin() as session:
         revoke_agent_keys(session, principal.tenant_id, principal.project_id, run_id)
@@ -372,7 +296,7 @@ def create_run(
     def create() -> s.RunCreated:
         ctl = controller(request, principal)
         with sessions(request)() as session:
-            sv_id = _scenario_version(session, principal, scenario_key, body.scenario_version).id
+            sv_id = scenario_version(session, principal, scenario_key, body.scenario_version).id
         run_id = ctl.create_run(sv_id, checks=body.checks, agent_build=body.agent_build)
         if body.start:
             ctl.start_run(run_id)

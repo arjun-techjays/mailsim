@@ -25,6 +25,7 @@ from typing import Any
 
 from mailsim.domain.errors import SimError
 from mailsim.domain.models import CanonicalMessage
+from mailsim.engine.context import use_interface
 from mailsim.mime.build import build_mime
 from mailsim.protocols import imapmime
 from mailsim.protocols.auth import AgentSession, Authenticator, AuthFailed
@@ -1164,6 +1165,10 @@ class ImapConnection:
         return bytes(buf)
 
     async def run(self) -> None:
+        with use_interface("imap"):  # worker threads (asyncio.to_thread) inherit it
+            await self._run()
+
+    async def _run(self) -> None:
         try:
             await self._send([self.session.greeting()])
             await self._loop()

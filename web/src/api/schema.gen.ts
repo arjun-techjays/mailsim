@@ -436,6 +436,26 @@ export interface paths {
         /**
          * Connection Test
          * @description Make a real call through the chosen interface with the given agent key, server-side.
+         *
+         *     Always 200 with `ok` and a summary (400 only for a malformed request, 404 for a run outside
+         *     the caller's project). A key that is not a live agent key of this run is not tried at all:
+         *     ok=false with `details.reason` invalid_key (error_code UNAUTHENTICATED: unknown, revoked,
+         *     expired), not_agent_key or other_run (PERMISSION_DENIED; which run is never said). A probe
+         *     that is made is recorded in the run's activity like any agent call of that interface. The request body
+         *     (and so the key) is never logged, and the key never appears in the result.
+         *
+         *     `error_code` when `ok` is false:
+         *     - REST, MCP (HTTP): the /v1 envelope code (UNAUTHENTICATED, RUN_NOT_ACTIVE,
+         *       PERMISSION_DENIED, ...)
+         *     - Gmail: the neutral code in `error.details[0].reason` (UNAUTHENTICATED, RUN_NOT_ACTIVE,
+         *       ...), else `error.status`
+         *     - Graph: Graph's own code (InvalidAuthenticationToken; ErrorPreconditionFailed for a run
+         *       that is not running; ErrorAccessDenied ...)
+         *     - IMAP: AUTHENTICATIONFAILED; SMTP: AUTHENTICATION_FAILED (credentials refused), or the
+         *       engine's code when it refused a valid key (RUN_NOT_ACTIVE, PERMISSION_DENIED)
+         *     - IMAP/SMTP listener not running: LISTENER_DOWN
+         *     - gmail / graph / mcp_http not mounted: null (summary "... is not served by this server")
+         *     - unexpected failure: INTERNAL
          */
         post: operations["connection_test_v1_runs__run_id__connection_tests_post"];
         delete?: never;
@@ -688,6 +708,8 @@ export interface paths {
         /**
          * Compose Eml
          * @description Build an .eml fixture from a composed message (threading headers, attachments).
+         *     `date` defaults to the current UTC time, `message_id` to `<uuid@domain of from>`, the path
+         *     to `fixtures/<subject slug>-<id prefix>.eml`. CR/LF in any header field: 400.
          */
         post: operations["compose_eml_v1_scenario_drafts_compose_eml_post"];
         delete?: never;
@@ -728,6 +750,10 @@ export interface paths {
         /**
          * Validate Draft
          * @description Validate an unsaved scenario (schema, references, fixtures). Stores nothing.
+         *
+         *     Issues carry dotted paths (`scenario.personas.1.email`; `<source>` for text that does not
+         *     parse). Malformed requests (both or neither of source/document, bad fixture base64 or
+         *     paths) answer 400 INVALID_REQUEST.
          */
         post: operations["validate_draft_v1_scenario_drafts_validate_post"];
         delete?: never;
@@ -808,7 +834,8 @@ export interface paths {
         put?: never;
         /**
          * Create Answer Key
-         * @description Publish a hidden answer-key version. The response is metadata only.
+         * @description Publish a hidden answer-key version (controller or evaluator). The response is
+         *     metadata only.
          */
         post: operations["create_answer_key_v1_scenarios__scenario_key__answer_keys_post"];
         delete?: never;
@@ -829,6 +856,11 @@ export interface paths {
         /**
          * Validate Answer Key
          * @description Schema + leak guard for an unsaved answer key. Stores nothing.
+         *
+         *     Errors: dotted schema paths (`answer_key.assertions.0.check`), `answer_key.scenario` for a
+         *     key of another scenario, `answer_key.scenario_versions` for unknown versions, and
+         *     `leak:<scenario version>` when grading prose appears in content the agent can read (the
+         *     leaked text is cut to 60 characters). 404 when the scenario does not exist.
          */
         post: operations["validate_answer_key_v1_scenarios__scenario_key__answer_keys_validate_post"];
         delete?: never;
@@ -970,7 +1002,9 @@ export interface paths {
         put?: never;
         /**
          * Yaml To Json
-         * @description Parse YAML/JSON text (safe loader, same limits as publishing).
+         * @description Parse YAML/JSON text (safe loader, same limits as publishing). Problems are reported in
+         *     `error` (path "line N", 1-based, when the parser knows the line, else "<source>"; the
+         *     message has the details), never as HTTP errors.
          */
         post: operations["yaml_to_json_v1_tools_yaml_to_json_post"];
         delete?: never;
@@ -1500,12 +1534,12 @@ export interface components {
             cc?: string[];
             /**
              * Date
-             * @description ISO 8601; default: scenario clock start
+             * @description ISO 8601; default: current UTC time; clients should send the scenario clock start
              */
             date?: string | null;
             /**
              * Fixture Path
-             * @description default: fixtures/<slug>.eml
+             * @description default: fixtures/<subject slug>-<id>.eml
              */
             fixture_path?: string | null;
             /** From */
@@ -1555,7 +1589,12 @@ export interface components {
              */
             interface: "rest" | "gmail" | "graph" | "mcp_http" | "mcp_stdio" | "imap" | "smtp";
         };
-        /** ConnectionTestResult */
+        /**
+         * ConnectionTestResult
+         * @description Always HTTP 200. A key that is not a live agent key of the run gives ok=false with
+         *     error_code UNAUTHENTICATED (details.reason invalid_key) or PERMISSION_DENIED (not_agent_key,
+         *     other_run). Listener not running: LISTENER_DOWN. The key is never echoed.
+         */
         ConnectionTestResult: {
             /** Details */
             details?: {
@@ -1654,6 +1693,11 @@ export interface components {
             in_reply_to: string | null;
             /** Message Id */
             message_id: string | null;
+            /**
+             * References
+             * @description Message-IDs, oldest first
+             */
+            references?: string[];
             /** Subject */
             subject: string;
             /** Text Preview */
@@ -1787,6 +1831,26 @@ export interface components {
             /** Ref */
             ref: string;
         };
+        /** FolderCountOut */
+        FolderCountOut: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** System Type */
+            system_type: string | null;
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
+            /**
+             * Unread
+             * @description messages without the SEEN flag
+             * @default 0
+             */
+            unread: number;
+        };
         /** FolderOut */
         FolderOut: {
             /** Id */
@@ -1851,7 +1915,7 @@ export interface components {
             available: boolean;
             /**
              * Base Url
-             * @description absolute URL for HTTP interfaces
+             * @description service base URL for HTTP interfaces: <origin>/v1, <origin>/gmail/v1, <origin>/graph/v1.0, <origin>/mcp
              */
             base_url?: string | null;
             /**
@@ -1909,6 +1973,11 @@ export interface components {
             /** Key Id */
             key_id: string;
             /**
+             * Prefix
+             * @description the <prefix> of msk_<prefix>_... (not secret)
+             */
+            prefix: string;
+            /**
              * Revoked
              * @default false
              */
@@ -1933,10 +2002,26 @@ export interface components {
         MailboxOut: {
             /** Email */
             email: string;
+            /** Folders */
+            folders?: components["schemas"]["FolderCountOut"][];
             /** Id */
             id: string;
+            /**
+             * Is Agent
+             * @default false
+             */
+            is_agent: boolean;
+            /**
+             * Name
+             * @description persona display name
+             */
+            name?: string | null;
             /** Owner Id */
             owner_id: string;
+            /** Persona Id */
+            persona_id?: string | null;
+            /** Role */
+            role?: string | null;
         };
         /**
          * MeOut

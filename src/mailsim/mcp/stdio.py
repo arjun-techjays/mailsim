@@ -60,7 +60,8 @@ def run_stdio(
         ) from None
     server = build_server(engine, key_resolver(sf, key), session_factory=sf,
                           evaluation_service=evaluation_service,
-                          persona_runtime_factory=persona_runtime_factory)  # fmt: skip
+                          persona_runtime_factory=persona_runtime_factory,
+                          interface="mcp_stdio")  # fmt: skip
     anyio.run(serve_stdio, server, stdin, stdout)
 
 

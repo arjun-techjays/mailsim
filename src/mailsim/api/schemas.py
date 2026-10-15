@@ -250,16 +250,26 @@ class SendResult(_M):
     external_mode: str
 
 
-class MailboxOut(_M):
-    id: str
-    owner_id: str
-    email: str
-
-
 class FolderOut(_M):
     id: str
     name: str
     system_type: str | None
+
+
+class FolderCountOut(FolderOut):
+    total: int = 0
+    unread: int = Field(default=0, description="messages without the SEEN flag")
+
+
+class MailboxOut(_M):
+    id: str
+    owner_id: str
+    email: str
+    persona_id: str | None = None
+    name: str | None = Field(default=None, description="persona display name")
+    role: str | None = None
+    is_agent: bool = False
+    folders: list[FolderCountOut] = Field(default_factory=list)
 
 
 # ---- additive (Wave 1, WS-A) -------------------------------------------------------------

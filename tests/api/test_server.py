@@ -69,8 +69,19 @@ def test_bootstrap_cli_reports_errors(env, capsys):
 
 def test_serve_command_uses_the_injected_runner():
     seen = []
-    assert server.main(["serve", "--port", "9999"], serve=lambda h, p: seen.append((h, p))) == 0
-    assert seen == [("127.0.0.1", 9999)]
+    assert (
+        server.main(["serve", "--port", "9999"], serve=lambda h, p, *o: seen.append((h, p, *o)))
+        == 0
+    )
+    assert seen == [("127.0.0.1", 9999, server.ProtocolOptions())]  # listeners start by default
+    assert server.main(["serve", "--no-protocols"], serve=lambda h, p: seen.append((h, p))) == 0
+    assert seen[-1] == ("127.0.0.1", 8000)
+    argv = ["serve", "--host", "::1", "--imap-port", "2143", "--smtp-port", "2587",
+            "--tls-self-signed", "--allow-insecure-remote"]  # fmt: skip
+    assert server.main(argv, serve=lambda h, p, *o: seen.append((h, p, *o))) == 0
+    assert seen[-1][2] == server.ProtocolOptions(host="::1", imap_port=2143, smtp_port=2587,
+                                                 tls_self_signed=True,
+                                                 allow_insecure_remote=True)  # fmt: skip
 
 
 def test_evaluation_service_wiring(monkeypatch):
