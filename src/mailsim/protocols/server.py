@@ -137,6 +137,9 @@ class ProtocolServers:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(server.wait_closed(), 2)
         self._servers = []
+        if self._executor is not None:
+            self._executor.shutdown(wait=False, cancel_futures=True)
+            self._executor = None
 
     async def serve_forever(self) -> None:
         await self.start_async()
