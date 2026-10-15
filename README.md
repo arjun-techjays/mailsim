@@ -4,9 +4,28 @@ Deterministic, provider-neutral email simulation engine for testing AI agents.
 Implements **Phase 1 (core simulation engine)** of
 [`email-agent-testing-simulator-spec.md`](email-agent-testing-simulator-spec.md).
 
-> Status: Phase 1 only. There is **no** REST API, dashboard, evaluator, Gmail/Graph/IMAP/SMTP
-> adapter, MCP server or LLM integration yet (spec Phases 2-5). The scenario schema and the
-> compatibility contracts are proposals from the spec, not a claim of provider fidelity.
+> Status: Phase 1 engine + Wave 1 of Phases 2-5: REST API `/v1`, hidden answer keys and the
+> post-run evaluator, LLM gateway (stub / Claude / Ollama) with persona runtime and judge, and
+> the operator dashboard (`web/`). Not yet built: Gmail/Graph adapters, IMAP/SMTP listeners,
+> MCP server, CI/benchmark command, hosted controls (Waves 2-3).
+
+## Run the API and dashboard locally
+
+```bash
+uv sync && docker compose up -d postgres
+export MAILSIM_DATABASE_URL=postgresql+psycopg://mailsim:mailsim@localhost:54329/mailsim
+export MAILSIM_BLOB_DIR=var/blobs
+uv run python -m mailsim.serve bootstrap --migrate --output var/keys.json   # controller + evaluator keys (0600)
+uv run python -m mailsim.serve serve --port 8000                            # REST API on :8000
+# optional LLM: MAILSIM_LLM_PROVIDER=anthropic (+ANTHROPIC_API_KEY) or openai_compatible (+MAILSIM_LLM_BASE_URL)
+cd web && npm ci && MAILSIM_API_URL=http://127.0.0.1:8000 npm run dev       # dashboard on :5173 (proxies /v1)
+```
+
+Typical flow: publish a scenario (`POST /v1/scenarios`), publish its hidden answer key
+(`POST /v1/scenarios/{key}/answer-keys`), create a run (returns an agent key bound to one mailbox;
+give only that to the agent under test), drive time (`/clock/advance`, personas reply on each
+step), then evaluate after the run (`POST /v1/runs/{id}/evaluations`, evaluator key) and compare
+builds (`GET /v1/scenarios/{key}/accuracy`). The OpenAPI document is `openapi/openapi.json`.
 
 ## Quick start
 
