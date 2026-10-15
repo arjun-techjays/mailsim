@@ -43,6 +43,19 @@ from mailsim.store.db import make_engine, make_session_factory, run_migrations
 
 DEFAULT_BLOB_DIR = "var/blobs"
 EVALUATION_SERVICE = "mailsim.evaluation.service"
+# Provider-compatible HTTP adapters mounted next to /v1 when installed (module exposes `router`).
+ADAPTER_ROUTERS = ("mailsim.adapters.gmail.api", "mailsim.adapters.graph.api", "mailsim.mcp.http")
+
+
+def mount_adapters(app: FastAPI, modules: Sequence[str] = ADAPTER_ROUTERS) -> list[str]:
+    """Include each installed adapter's APIRouter; missing modules are skipped."""
+    mounted = []
+    for name in modules:
+        if importlib.util.find_spec(name) is None:
+            continue
+        app.include_router(importlib.import_module(name).router)
+        mounted.append(name)
+    return mounted
 
 
 def evaluation_service(**deps: Any) -> Any | None:
@@ -79,7 +92,9 @@ def build_state(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
 
 
 def app_from_env(environ: Mapping[str, str] | None = None) -> FastAPI:
-    return create_app(**build_state(environ))
+    app = create_app(**build_state(environ))
+    mount_adapters(app)
+    return app
 
 
 def _parser() -> argparse.ArgumentParser:
