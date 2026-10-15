@@ -132,3 +132,24 @@ def test_persona_failure_is_recorded_and_listed(env, tmp_path):
     with pytest.raises(NotFound):
         ctl.persona_failed(run, "vendor", in_reply_to_message_id="msg_nope", reason="x")
     assert ctl.replay_run(run).matches
+
+
+def test_persona_cannot_answer_the_same_message_twice(env, tmp_path):
+    from mailsim.domain.errors import Conflict
+
+    ctl, ev, run = setup(env, tmp_path)
+    msg = next(m for m in ev.state(run)["messages"] if m["subject"] == "Invoice INV-001")
+    ctl.persona_reply(run, "cfo", to=["finance@example.test"], subject="Re", text="a",
+                      generation=GEN, in_reply_to_message_id=msg["id"])  # fmt: skip
+    with pytest.raises(Conflict):
+        ctl.persona_reply(run, "cfo", to=["finance@example.test"], subject="Re", text="b",
+                          generation=GEN, in_reply_to_message_id=msg["id"])  # fmt: skip
+    ctl.persona_failed(run, "vendor", in_reply_to_message_id=msg["id"], reason="refused")
+    with pytest.raises(Conflict):
+        ctl.persona_reply(run, "vendor", to=["finance@example.test"], subject="Re", text="c",
+                          generation=GEN, in_reply_to_message_id=msg["id"])  # fmt: skip
+    ctl.reset_run(run)
+    ctl.start_run(run)  # a new epoch may answer again
+    msg2 = next(m for m in ev.state(run)["messages"] if m["subject"] == "Invoice INV-001")
+    ctl.persona_reply(run, "cfo", to=["finance@example.test"], subject="Re", text="d",
+                      generation=GEN, in_reply_to_message_id=msg2["id"])  # fmt: skip
