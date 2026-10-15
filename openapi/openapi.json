@@ -77,6 +77,18 @@
             "title": "Input",
             "type": "object"
           },
+          "interface": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "interface the action came through",
+            "title": "Interface"
+          },
           "operation": {
             "title": "Operation",
             "type": "string"
@@ -134,6 +146,102 @@
           "outcome"
         ],
         "title": "ActionOut",
+        "type": "object"
+      },
+      "ActivityItem": {
+        "additionalProperties": false,
+        "properties": {
+          "actor": {
+            "title": "Actor",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "input": {
+            "additionalProperties": true,
+            "title": "Input",
+            "type": "object"
+          },
+          "interface": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "rest|gmail|graph|mcp_http|mcp_stdio|imap|smtp|dashboard|cli, or None for older rows",
+            "title": "Interface"
+          },
+          "operation": {
+            "title": "Operation",
+            "type": "string"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "result": {
+            "additionalProperties": true,
+            "title": "Result",
+            "type": "object"
+          },
+          "virtual_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Virtual Time"
+          }
+        },
+        "required": [
+          "id",
+          "actor",
+          "operation",
+          "outcome",
+          "interface",
+          "virtual_time",
+          "input",
+          "result"
+        ],
+        "title": "ActivityItem",
+        "type": "object"
+      },
+      "ActivityPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_after_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "poll again with after_id=<this>",
+            "title": "Next After Id"
+          }
+        },
+        "required": [
+          "items",
+          "next_after_id"
+        ],
+        "title": "ActivityPage",
         "type": "object"
       },
       "Address": {
@@ -236,6 +344,68 @@
         "title": "AnswerKeyCreate",
         "type": "object"
       },
+      "AnswerKeyDocument": {
+        "additionalProperties": false,
+        "description": "Evaluator-only: the full answer key (assertions included).",
+        "properties": {
+          "document": {
+            "additionalProperties": true,
+            "title": "Document",
+            "type": "object"
+          },
+          "scenario_key": {
+            "title": "Scenario Key",
+            "type": "string"
+          },
+          "spec_hash": {
+            "title": "Spec Hash",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scenario_key",
+          "version",
+          "spec_hash",
+          "document"
+        ],
+        "title": "AnswerKeyDocument",
+        "type": "object"
+      },
+      "AnswerKeyDraft": {
+        "additionalProperties": false,
+        "properties": {
+          "document": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "maxLength": 2097152,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          }
+        },
+        "title": "AnswerKeyDraft",
+        "type": "object"
+      },
       "AnswerKeyOut": {
         "additionalProperties": false,
         "properties": {
@@ -293,6 +463,49 @@
           "created_at"
         ],
         "title": "AnswerKeyOut",
+        "type": "object"
+      },
+      "AnswerKeyValidation": {
+        "additionalProperties": false,
+        "description": "Schema errors (with paths) and leak-guard findings (path \"leak:<scenario version>\").",
+        "properties": {
+          "document": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationIssue"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationIssue"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ok",
+          "errors",
+          "warnings"
+        ],
+        "title": "AnswerKeyValidation",
         "type": "object"
       },
       "ArtifactOut": {
@@ -442,6 +655,39 @@
         "title": "AssertionOutcome",
         "type": "object"
       },
+      "AssertionTypeInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "check_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "JSON Schema of this type's `check:` block (None: rubric only)",
+            "title": "Check Schema"
+          },
+          "default_category": {
+            "title": "Default Category",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "default_category",
+          "check_schema"
+        ],
+        "title": "AssertionTypeInfo",
+        "type": "object"
+      },
       "AttachmentRef": {
         "properties": {
           "blob_ref": {
@@ -494,6 +740,128 @@
           "blob_ref"
         ],
         "title": "AttachmentRef",
+        "type": "object"
+      },
+      "AuthoringMeta": {
+        "additionalProperties": false,
+        "description": "Everything a form-based editor needs to offer choices instead of free text.",
+        "properties": {
+          "agent_operations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Agent Operations",
+            "type": "array"
+          },
+          "answer_key_schema": {
+            "additionalProperties": true,
+            "description": "JSON Schema of an answer key",
+            "title": "Answer Key Schema",
+            "type": "object"
+          },
+          "assertion_types": {
+            "items": {
+              "$ref": "#/components/schemas/AssertionTypeInfo"
+            },
+            "title": "Assertion Types",
+            "type": "array"
+          },
+          "behavior_modes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Behavior Modes",
+            "type": "array"
+          },
+          "categories": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Categories",
+            "type": "array"
+          },
+          "external_delivery_modes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "External Delivery Modes",
+            "type": "array"
+          },
+          "flags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Flags",
+            "type": "array"
+          },
+          "folders": {
+            "description": "system folder types usable in checks",
+            "items": {
+              "type": "string"
+            },
+            "title": "Folders",
+            "type": "array"
+          },
+          "invariants": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Invariants",
+            "type": "array"
+          },
+          "scenario_schema": {
+            "additionalProperties": true,
+            "description": "JSON Schema of a scenario document",
+            "title": "Scenario Schema",
+            "type": "object"
+          },
+          "schema_versions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Schema Versions",
+            "type": "array"
+          },
+          "severities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Severities",
+            "type": "array"
+          },
+          "trigger_actions": {
+            "description": "values for after_agent_action triggers",
+            "items": {
+              "type": "string"
+            },
+            "title": "Trigger Actions",
+            "type": "array"
+          },
+          "trigger_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Trigger Types",
+            "type": "array"
+          }
+        },
+        "required": [
+          "scenario_schema",
+          "answer_key_schema",
+          "schema_versions",
+          "agent_operations",
+          "trigger_types",
+          "trigger_actions",
+          "external_delivery_modes",
+          "behavior_modes",
+          "assertion_types",
+          "severities",
+          "categories",
+          "invariants",
+          "folders",
+          "flags"
+        ],
+        "title": "AuthoringMeta",
         "type": "object"
       },
       "BuildComparison": {
@@ -869,6 +1237,333 @@
         "title": "ClockResult",
         "type": "object"
       },
+      "ComposeAttachment": {
+        "additionalProperties": false,
+        "properties": {
+          "content_b64": {
+            "maxLength": 6990511,
+            "title": "Content B64",
+            "type": "string"
+          },
+          "content_type": {
+            "default": "application/octet-stream",
+            "maxLength": 255,
+            "title": "Content Type",
+            "type": "string"
+          },
+          "filename": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Filename",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename",
+          "content_b64"
+        ],
+        "title": "ComposeAttachment",
+        "type": "object"
+      },
+      "ComposeMessage": {
+        "additionalProperties": false,
+        "description": "A message composed in a form, built into an RFC 5322 .eml fixture by the server.",
+        "properties": {
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/ComposeAttachment"
+            },
+            "maxItems": 20,
+            "title": "Attachments",
+            "type": "array"
+          },
+          "cc": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Cc",
+            "type": "array"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "ISO 8601; default: scenario clock start",
+            "title": "Date"
+          },
+          "fixture_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "default: fixtures/<slug>.eml",
+            "title": "Fixture Path"
+          },
+          "from": {
+            "title": "From",
+            "type": "string"
+          },
+          "html": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Html"
+          },
+          "in_reply_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Message-ID of an earlier message",
+            "title": "In Reply To"
+          },
+          "message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "default: generated <...@domain>",
+            "title": "Message Id"
+          },
+          "references": {
+            "items": {
+              "type": "string"
+            },
+            "title": "References",
+            "type": "array"
+          },
+          "subject": {
+            "default": "",
+            "maxLength": 998,
+            "title": "Subject",
+            "type": "string"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "to": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "To",
+            "type": "array"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "title": "ComposeMessage",
+        "type": "object"
+      },
+      "ComposedFixture": {
+        "additionalProperties": false,
+        "properties": {
+          "content_b64": {
+            "title": "Content B64",
+            "type": "string"
+          },
+          "message_id": {
+            "title": "Message Id",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "content_b64",
+          "message_id",
+          "size"
+        ],
+        "title": "ComposedFixture",
+        "type": "object"
+      },
+      "ConnectionTestRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "api_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Api Key",
+            "type": "string"
+          },
+          "interface": {
+            "enum": [
+              "rest",
+              "gmail",
+              "graph",
+              "mcp_http",
+              "mcp_stdio",
+              "imap",
+              "smtp"
+            ],
+            "title": "Interface",
+            "type": "string"
+          }
+        },
+        "required": [
+          "interface",
+          "api_key"
+        ],
+        "title": "ConnectionTestRequest",
+        "type": "object"
+      },
+      "ConnectionTestResult": {
+        "additionalProperties": false,
+        "properties": {
+          "details": {
+            "additionalProperties": true,
+            "title": "Details",
+            "type": "object"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "interface": {
+            "enum": [
+              "rest",
+              "gmail",
+              "graph",
+              "mcp_http",
+              "mcp_stdio",
+              "imap",
+              "smtp"
+            ],
+            "title": "Interface",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "status_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "HTTP/IMAP/SMTP status if any",
+            "title": "Status Code"
+          },
+          "summary": {
+            "description": "human-readable outcome",
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "interface",
+          "ok",
+          "summary"
+        ],
+        "title": "ConnectionTestResult",
+        "type": "object"
+      },
+      "DraftValidation": {
+        "additionalProperties": false,
+        "description": "Live validation: never stores anything. `document` is the parsed document (if any).",
+        "properties": {
+          "document": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationIssue"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationIssue"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ok",
+          "errors",
+          "warnings"
+        ],
+        "title": "DraftValidation",
+        "type": "object"
+      },
       "Efficiency": {
         "additionalProperties": false,
         "properties": {
@@ -904,6 +1599,113 @@
           }
         },
         "title": "Efficiency",
+        "type": "object"
+      },
+      "EmlInspect": {
+        "additionalProperties": false,
+        "properties": {
+          "content_b64": {
+            "maxLength": 6990511,
+            "title": "Content B64",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content_b64"
+        ],
+        "title": "EmlInspect",
+        "type": "object"
+      },
+      "EmlSummary": {
+        "additionalProperties": false,
+        "description": "What an uploaded .eml contains (to show it in the form).",
+        "properties": {
+          "attachments": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Attachments",
+            "type": "array"
+          },
+          "cc": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Cc",
+            "type": "array"
+          },
+          "date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Date"
+          },
+          "from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From"
+          },
+          "in_reply_to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "In Reply To"
+          },
+          "message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Id"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "text_preview": {
+            "title": "Text Preview",
+            "type": "string"
+          },
+          "to": {
+            "items": {
+              "type": "string"
+            },
+            "title": "To",
+            "type": "array"
+          }
+        },
+        "required": [
+          "message_id",
+          "from",
+          "to",
+          "cc",
+          "subject",
+          "date",
+          "in_reply_to",
+          "attachments",
+          "text_preview"
+        ],
+        "title": "EmlSummary",
         "type": "object"
       },
       "ErrorBody": {
@@ -1427,6 +2229,122 @@
         "title": "InjectResult",
         "type": "object"
       },
+      "InterfaceEndpoint": {
+        "additionalProperties": false,
+        "properties": {
+          "available": {
+            "description": "served by this server / listener running",
+            "title": "Available",
+            "type": "boolean"
+          },
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "absolute URL for HTTP interfaces",
+            "title": "Base Url"
+          },
+          "command": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "mcp_stdio argv",
+            "title": "Command"
+          },
+          "host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host"
+          },
+          "interface": {
+            "enum": [
+              "rest",
+              "gmail",
+              "graph",
+              "mcp_http",
+              "mcp_stdio",
+              "imap",
+              "smtp"
+            ],
+            "title": "Interface",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "tls": {
+            "anyOf": [
+              {
+                "enum": [
+                  "none",
+                  "starttls"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tls"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "IMAP/SMTP login (mailbox address)",
+            "title": "Username"
+          }
+        },
+        "required": [
+          "interface",
+          "available"
+        ],
+        "title": "InterfaceEndpoint",
+        "type": "object"
+      },
       "IssuedCredential": {
         "additionalProperties": false,
         "description": "A newly issued sandbox API key. `api_key` is shown once and never stored in clear.",
@@ -1455,6 +2373,101 @@
           "role"
         ],
         "title": "IssuedCredential",
+        "type": "object"
+      },
+      "JsonToYaml": {
+        "additionalProperties": false,
+        "properties": {
+          "document": {
+            "additionalProperties": true,
+            "title": "Document",
+            "type": "object"
+          }
+        },
+        "required": [
+          "document"
+        ],
+        "title": "JsonToYaml",
+        "type": "object"
+      },
+      "KeyInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "key_id": {
+            "title": "Key Id",
+            "type": "string"
+          },
+          "revoked": {
+            "default": false,
+            "title": "Revoked",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key_id",
+          "created_at"
+        ],
+        "title": "KeyInfo",
+        "type": "object"
+      },
+      "ListenerStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host"
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "running": {
+            "title": "Running",
+            "type": "boolean"
+          },
+          "tls": {
+            "default": "none",
+            "enum": [
+              "none",
+              "starttls"
+            ],
+            "title": "Tls",
+            "type": "string"
+          }
+        },
+        "required": [
+          "running"
+        ],
+        "title": "ListenerStatus",
         "type": "object"
       },
       "MailboxOut": {
@@ -1628,6 +2641,36 @@
         "title": "MessagePatch",
         "type": "object"
       },
+      "ParsedDocument": {
+        "additionalProperties": false,
+        "description": "`document` is None when the text does not parse; `error` then says where.",
+        "properties": {
+          "document": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ValidationIssue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "ParsedDocument",
+        "type": "object"
+      },
       "ProjectCreate": {
         "additionalProperties": false,
         "properties": {
@@ -1713,6 +2756,20 @@
         "title": "ProjectOut",
         "type": "object"
       },
+      "RenderedYaml": {
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "RenderedYaml",
+        "type": "object"
+      },
       "ReplayOut": {
         "additionalProperties": false,
         "properties": {
@@ -1772,6 +2829,58 @@
           "text"
         ],
         "title": "ReplyRequest",
+        "type": "object"
+      },
+      "RunConnection": {
+        "additionalProperties": false,
+        "description": "How an agent connects to this run. Never contains a key (keys are shown once).",
+        "properties": {
+          "agent_keys": {
+            "description": "this run's agent keys (no secrets)",
+            "items": {
+              "$ref": "#/components/schemas/KeyInfo"
+            },
+            "title": "Agent Keys",
+            "type": "array"
+          },
+          "interfaces": {
+            "items": {
+              "$ref": "#/components/schemas/InterfaceEndpoint"
+            },
+            "title": "Interfaces",
+            "type": "array"
+          },
+          "mailbox_address": {
+            "title": "Mailbox Address",
+            "type": "string"
+          },
+          "mailbox_id": {
+            "title": "Mailbox Id",
+            "type": "string"
+          },
+          "persona_id": {
+            "title": "Persona Id",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "run_status": {
+            "title": "Run Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "run_status",
+          "mailbox_id",
+          "mailbox_address",
+          "persona_id",
+          "interfaces",
+          "agent_keys"
+        ],
+        "title": "RunConnection",
         "type": "object"
       },
       "RunCreate": {
@@ -2004,6 +3113,46 @@
         "title": "ScenarioCreate",
         "type": "object"
       },
+      "ScenarioDraft": {
+        "additionalProperties": false,
+        "description": "A scenario being edited: YAML/JSON text OR a document, plus fixtures (path -> base64).",
+        "properties": {
+          "document": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document"
+          },
+          "fixtures": {
+            "additionalProperties": {
+              "maxLength": 6990511,
+              "type": "string"
+            },
+            "title": "Fixtures",
+            "type": "object"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "maxLength": 2097152,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          }
+        },
+        "title": "ScenarioDraft",
+        "type": "object"
+      },
       "ScenarioOut": {
         "additionalProperties": false,
         "properties": {
@@ -2040,6 +3189,46 @@
           "versions"
         ],
         "title": "ScenarioOut",
+        "type": "object"
+      },
+      "ScenarioVersionDocument": {
+        "additionalProperties": false,
+        "description": "A published version for editing/cloning: the stored (agent-facing) document, which never\ncontains answer-key assertions, plus its fixtures.",
+        "properties": {
+          "document": {
+            "additionalProperties": true,
+            "title": "Document",
+            "type": "object"
+          },
+          "fixtures": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "relative path -> base64 bytes",
+            "title": "Fixtures",
+            "type": "object"
+          },
+          "scenario_key": {
+            "title": "Scenario Key",
+            "type": "string"
+          },
+          "spec_hash": {
+            "title": "Spec Hash",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scenario_key",
+          "version",
+          "spec_hash",
+          "document",
+          "fixtures"
+        ],
+        "title": "ScenarioVersionDocument",
         "type": "object"
       },
       "ScenarioVersionOut": {
@@ -2176,6 +3365,73 @@
         "title": "Status",
         "type": "string"
       },
+      "SystemStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "interfaces": {
+            "description": "interfaces this server serves",
+            "items": {
+              "enum": [
+                "rest",
+                "gmail",
+                "graph",
+                "mcp_http",
+                "mcp_stdio",
+                "imap",
+                "smtp"
+              ],
+              "type": "string"
+            },
+            "title": "Interfaces",
+            "type": "array"
+          },
+          "listeners": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ListenerStatus"
+            },
+            "propertyNames": {
+              "enum": [
+                "imap",
+                "smtp"
+              ]
+            },
+            "title": "Listeners",
+            "type": "object"
+          },
+          "llm_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Model"
+          },
+          "llm_provider": {
+            "title": "Llm Provider",
+            "type": "string"
+          },
+          "local_no_auth": {
+            "title": "Local No Auth",
+            "type": "boolean"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "local_no_auth",
+          "llm_provider",
+          "interfaces",
+          "listeners"
+        ],
+        "title": "SystemStatus",
+        "type": "object"
+      },
       "TrialStats": {
         "additionalProperties": false,
         "properties": {
@@ -2309,6 +3565,21 @@
         ],
         "title": "Verdict",
         "type": "string"
+      },
+      "YamlToJson": {
+        "additionalProperties": false,
+        "properties": {
+          "source": {
+            "maxLength": 2097152,
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "YamlToJson",
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -3011,6 +4282,43 @@
         ]
       }
     },
+    "/v1/meta/authoring": {
+      "get": {
+        "description": "Schemas and enumerations for the scenario builder and the answer-key editor.",
+        "operationId": "authoring_meta_v1_meta_authoring_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthoringMeta"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Authoring Meta",
+        "tags": [
+          "authoring"
+        ]
+      }
+    },
     "/v1/projects": {
       "post": {
         "description": "Create a project in the caller's TENANT (tenant-wide: any controller key of the tenant\nmay do this). The response carries the new project's first controller and evaluator keys\n(shown once); the caller's own key stays bound to its own project. The very first\ntenant/project/keys come from `python -m mailsim.serve bootstrap`.",
@@ -3303,6 +4611,77 @@
         ]
       }
     },
+    "/v1/runs/{run_id}/activity": {
+      "get": {
+        "description": "Recorded actions (newest last) with the interface each came through, for polling.",
+        "operationId": "run_activity_v1_runs__run_id__activity_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_id",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Run Activity",
+        "tags": [
+          "authoring"
+        ]
+      }
+    },
     "/v1/runs/{run_id}/agent-credentials": {
       "post": {
         "description": "Issue a new agent key for a run (e.g. after a lost or redacted response). Earlier agent\nkeys of the run are revoked.",
@@ -3538,6 +4917,112 @@
         "summary": "Advance",
         "tags": [
           "simulator"
+        ]
+      }
+    },
+    "/v1/runs/{run_id}/connection": {
+      "get": {
+        "description": "How an agent connects to this run (endpoints, mailbox, key ids; never key secrets).",
+        "operationId": "run_connection_v1_runs__run_id__connection_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunConnection"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Run Connection",
+        "tags": [
+          "authoring"
+        ]
+      }
+    },
+    "/v1/runs/{run_id}/connection-tests": {
+      "post": {
+        "description": "Make a real call through the chosen interface with the given agent key, server-side.",
+        "operationId": "connection_test_v1_runs__run_id__connection_tests_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectionTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionTestResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Connection Test",
+        "tags": [
+          "authoring"
         ]
       }
     },
@@ -4447,6 +5932,147 @@
         ]
       }
     },
+    "/v1/scenario-drafts/compose-eml": {
+      "post": {
+        "description": "Build an .eml fixture from a composed message (threading headers, attachments).",
+        "operationId": "compose_eml_v1_scenario_drafts_compose_eml_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComposeMessage"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposedFixture"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Compose Eml",
+        "tags": [
+          "authoring"
+        ]
+      }
+    },
+    "/v1/scenario-drafts/inspect-eml": {
+      "post": {
+        "description": "Summarise an uploaded .eml for display in the form.",
+        "operationId": "inspect_eml_v1_scenario_drafts_inspect_eml_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmlInspect"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmlSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Inspect Eml",
+        "tags": [
+          "authoring"
+        ]
+      }
+    },
+    "/v1/scenario-drafts/validate": {
+      "post": {
+        "description": "Validate an unsaved scenario (schema, references, fixtures). Stores nothing.",
+        "operationId": "validate_draft_v1_scenario_drafts_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScenarioDraft"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftValidation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Validate Draft",
+        "tags": [
+          "authoring"
+        ]
+      }
+    },
     "/v1/scenarios": {
       "get": {
         "description": "Scenarios in the caller's project; `tag` matches the latest version's tags, `q` is a\ncase-insensitive substring of the key or the latest title.",
@@ -4838,6 +6464,121 @@
         ]
       }
     },
+    "/v1/scenarios/{scenario_key}/answer-keys/validate": {
+      "post": {
+        "description": "Schema + leak guard for an unsaved answer key. Stores nothing.",
+        "operationId": "validate_answer_key_v1_scenarios__scenario_key__answer_keys_validate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scenario_key",
+            "required": true,
+            "schema": {
+              "title": "Scenario Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerKeyDraft"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnswerKeyValidation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Validate Answer Key",
+        "tags": [
+          "authoring"
+        ]
+      }
+    },
+    "/v1/scenarios/{scenario_key}/answer-keys/{version}/document": {
+      "get": {
+        "description": "Evaluator-only: the full answer key, for editing.",
+        "operationId": "answer_key_document_v1_scenarios__scenario_key__answer_keys__version__document_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scenario_key",
+            "required": true,
+            "schema": {
+              "title": "Scenario Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnswerKeyDocument"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Answer Key Document",
+        "tags": [
+          "authoring"
+        ]
+      }
+    },
     "/v1/scenarios/{scenario_key}/runs": {
       "post": {
         "description": "Create (and by default start) an isolated run. The agent's key is returned ONCE here;\nan idempotent replay returns it redacted (mint another with\n`POST /v1/runs/{run_id}/agent-credentials`).",
@@ -4968,6 +6709,194 @@
         "summary": "Validate Scenario",
         "tags": [
           "control"
+        ]
+      }
+    },
+    "/v1/scenarios/{scenario_key}/versions/{version}/document": {
+      "get": {
+        "description": "A published version's (agent-facing) document and fixtures, for editing or cloning.",
+        "operationId": "scenario_version_document_v1_scenarios__scenario_key__versions__version__document_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "scenario_key",
+            "required": true,
+            "schema": {
+              "title": "Scenario Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScenarioVersionDocument"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Scenario Version Document",
+        "tags": [
+          "authoring"
+        ]
+      }
+    },
+    "/v1/system/status": {
+      "get": {
+        "description": "Server mode, LLM provider and which interfaces/listeners are up.",
+        "operationId": "system_status_v1_system_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "System Status",
+        "tags": [
+          "authoring"
+        ]
+      }
+    },
+    "/v1/tools/json-to-yaml": {
+      "post": {
+        "description": "Render a document as YAML (stable key order: the form's order).",
+        "operationId": "json_to_yaml_v1_tools_json_to_yaml_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JsonToYaml"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RenderedYaml"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Json To Yaml",
+        "tags": [
+          "authoring"
+        ]
+      }
+    },
+    "/v1/tools/yaml-to-json": {
+      "post": {
+        "description": "Parse YAML/JSON text (safe loader, same limits as publishing).",
+        "operationId": "yaml_to_json_v1_tools_yaml_to_json_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/YamlToJson"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParsedDocument"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Yaml To Json",
+        "tags": [
+          "authoring"
         ]
       }
     }

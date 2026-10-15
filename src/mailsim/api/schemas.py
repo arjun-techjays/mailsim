@@ -142,6 +142,7 @@ class ActionOut(_M):
     id: int | None = None
     virtual_time: str | None = None
     seq_start: int | None = Field(default=None, description="first event sequence it caused")
+    interface: str | None = Field(default=None, description="interface the action came through")
     seq_end: int | None = Field(default=None, description="last event sequence it caused")
 
 
