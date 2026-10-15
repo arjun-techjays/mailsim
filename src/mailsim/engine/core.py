@@ -1117,27 +1117,48 @@ class SimEngine:
         *,
         text: str,
         reply_all: bool = False,
+        to: list[str] | None = None,
+        cc: list[str] | None = None,
+        bcc: list[str] | None = None,
+        subject: str | None = None,
+        html: str | None = None,
         actor: str = AGENT,
     ) -> dict[str, Any]:
+        """Reply to a message: ONE `reply` operation (policy, budget, triggers, ANSWERED flag).
+
+        Recipients and subject default to the usual reply / reply-all derivation; `to`, `cc`,
+        `bcc` and `subject` override them (adapters whose wire protocol lets a client compose
+        the reply, e.g. Gmail `messages.send` with In-Reply-To, or Graph reply with a message).
+        Threading headers always come from the original message.
+        """
+        overrides = sorted(k for k, v in (("to", to), ("cc", cc), ("bcc", bcc),
+                                          ("subject", subject), ("html", html)) if v is not None)  # fmt: skip
+
         def fn(c: Ctx) -> dict[str, Any]:
             mb = self._mailbox(c, mailbox_id)
             orig = self._message(c, mailbox_id, message_id)
             me = mb.email
-            to = (
-                [orig.from_["email"]]
-                if orig.from_["email"] != me
-                else [a["email"] for a in orig.to]
-            )
-            cc: list[str] = []
-            if reply_all:
-                to += [a["email"] for a in orig.to if a["email"] != me]
-                cc = [a["email"] for a in orig.cc if a["email"] != me]
-            to = [a for a in dict.fromkeys(to) if a != me] or [orig.from_["email"]]
-            if not to:
+            if to is not None:
+                rcpt_to = list(to)
+            else:
+                rcpt_to = (
+                    [orig.from_["email"]]
+                    if orig.from_["email"] != me
+                    else [a["email"] for a in orig.to]
+                )
+                if reply_all:
+                    rcpt_to += [a["email"] for a in orig.to if a["email"] != me]
+                rcpt_to = [a for a in dict.fromkeys(rcpt_to) if a != me] or [orig.from_["email"]]
+            rcpt_cc: list[str] = list(cc) if cc is not None else []
+            if cc is None and reply_all:
+                rcpt_cc = [a["email"] for a in orig.cc if a["email"] != me]
+            if not (rcpt_to or rcpt_cc or bcc):
                 raise InvalidRequest("no recipients to reply to")
-            subj = orig.subject if orig.subject.lower().startswith("re:") else f"Re: {orig.subject}"
+            subj = subject if subject is not None else (
+                orig.subject if orig.subject.lower().startswith("re:") else f"Re: {orig.subject}"
+            )  # fmt: skip
             refs = [*orig.references, orig.message_id_header]
-            result = self._send(c, mailbox_id, to, cc, [], subj, text, None,
+            result = self._send(c, mailbox_id, rcpt_to, rcpt_cc, list(bcc or []), subj, text, html,
                                 orig.message_id_header, refs, actor, "reply")  # fmt: skip
             c.emit("message.flags_changed", {"mailbox_id": mailbox_id, "message_id": orig.id, "add": ["ANSWERED"], "remove": []},
                    actor=actor, operation="reply")  # fmt: skip
@@ -1145,7 +1166,8 @@ class SimEngine:
 
         return self._command(
             scope, run_id, actor, "reply",
-            {"message_id": message_id, "reply_all": reply_all, "body_chars": len(text)},
+            {"message_id": message_id, "reply_all": reply_all, "body_chars": len(text),
+             "overrides": overrides},
             fn, mailbox_id=mailbox_id,
         )  # fmt: skip
 
@@ -1854,6 +1876,18 @@ class SimEngine:
             ordered = sorted(rows, key=lambda f: (order.get(f.system_type or "", 99), f.name))
             return [{"id": f.id, "name": f.name, "system_type": f.system_type,
                      "uid_validity": f.uid_validity, "uid_next": f.uid_next} for f in ordered]  # fmt: skip
+
+        return self._read(scope, run_id, actor, "read", {}, fn, mailbox_id)
+
+    def mailbox_info(
+        self, scope: Scope, run_id: str, mailbox_id: str, *, actor: str = AGENT
+    ) -> dict[str, Any]:
+        """The mailbox's own identity and the run's virtual time (adapters: /me, profile)."""
+
+        def fn(c: Ctx) -> dict[str, Any]:
+            mb = self._mailbox(c, mailbox_id)
+            return {"mailbox_id": mb.id, "email": mb.email, "run_id": c.run.id,
+                    "virtual_time": iso(c.now) if c.run.virtual_time is not None else None}  # fmt: skip
 
         return self._read(scope, run_id, actor, "read", {}, fn, mailbox_id)
 
