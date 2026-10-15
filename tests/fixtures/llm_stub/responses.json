@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "responses": {
+    "f7aa484af833e0aa5315c0b81b8e70b8aef273f6c6fea2bbb235ae52b27dc472": {
+      "text": "Hello from the stub fixture table.",
+      "stop_reason": "end_turn"
+    },
+    "63a508dc38f74d53428e0323ae4a997632e1a409543d5cc7607843e585e51a1e": {
+      "text": "{\"passed\": true, \"score\": 0.9, \"explanation\": \"Polite and clear.\"}"
+    }
+  }
+}
