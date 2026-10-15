@@ -305,15 +305,15 @@ function Builder({ mode, scenarioKey, initial, storageKey, restored, metaQ }: {
                   type="button"
                   className="b-nav-item"
                   aria-current={section === s.id ? 'step' : undefined}
+                  aria-label={`${i + 1}. ${s.label}${counts(s.id) > 0 ? `, ${counts(s.id)} ${counts(s.id) === 1 ? 'problem' : 'problems'}` : ''}`}
                   onClick={() => openSection(s.id)}
                 >
                   <span>
                     {i + 1}. {s.label}
                   </span>
                   {counts(s.id) > 0 && (
-                    <span className="badge badge-fail">
+                    <span className="badge badge-fail" aria-hidden="true">
                       {counts(s.id)}
-                      <span className="visually-hidden"> {counts(s.id) === 1 ? 'problem' : 'problems'}</span>
                     </span>
                   )}
                 </button>

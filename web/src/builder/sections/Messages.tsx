@@ -74,7 +74,7 @@ function MessageItem({ mailboxIndex, index, path, owner }: { mailboxIndex: numbe
         </p>
       )}
       <button type="button" onClick={() => removeMessage(owner, path)}>
-        Remove message “{info?.subject || path}”
+        Remove message {index + 1}: “{info?.subject || path}”
       </button>
     </li>
   );
@@ -109,7 +109,7 @@ function ComposeForm({ owner, onClose }: { owner: string; onClose: () => void })
   const earlier = Object.entries(draft.info).filter(([, i]) => i.message_id);
 
   const onFiles = async (e: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
+    const files = Array.from(e.target.files as FileList);
     e.target.value = '';
     const added: Attachment[] = [];
     for (const file of files) {
@@ -143,6 +143,7 @@ function ComposeForm({ owner, onClose }: { owner: string; onClose: () => void })
     setProblem(null);
     setError(null);
     const parent = replyTo ? draft.info[replyTo] : undefined;
+    const inReplyTo = parent?.message_id ?? null;
     const body: ComposeMessage = {
       from,
       to: toAll,
@@ -151,8 +152,8 @@ function ComposeForm({ owner, onClose }: { owner: string; onClose: () => void })
       text: text || null,
       html: html || null,
       date: fromIsoInput(date) || null,
-      in_reply_to: parent?.message_id ?? null,
-      references: parent?.message_id ? [...(parent.in_reply_to ? [parent.in_reply_to] : []), parent.message_id] : [],
+      in_reply_to: inReplyTo,
+      references: parent && inReplyTo ? [...(parent.in_reply_to ? [parent.in_reply_to] : []), inReplyTo] : [],
       attachments: attachments.map(({ filename, content_type, content_b64 }) => ({ filename, content_type, content_b64 })),
       fixture_path: uniqueFixturePath(`${owner}-${slugId(subject) || 'message'}.eml`, Object.keys(draft.fixtures)),
     };
@@ -162,7 +163,7 @@ function ComposeForm({ owner, onClose }: { owner: string; onClose: () => void })
       const info: FixtureInfo = {
         source: 'composed',
         message_id: res.message_id,
-        in_reply_to: body.in_reply_to ?? null,
+        in_reply_to: inReplyTo,
         from,
         to: toAll,
         subject,
@@ -286,7 +287,7 @@ function MailboxMessages({ mailboxIndex }: { mailboxIndex: number }) {
   const who = persona ? personaLabel(persona) : mailbox.owner;
 
   const onUpload = async (e: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
+    const files = Array.from(e.target.files as FileList);
     e.target.value = '';
     setUploadError(null);
     setBusy(true);

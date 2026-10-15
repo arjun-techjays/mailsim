@@ -20,7 +20,7 @@ export function StatusBadge({ state, count }: { state: ValidationState; count: n
   );
 }
 
-const sectionLabel = (id: string) => SECTIONS.find((s) => s.id === id)?.label ?? id;
+const LABELS: Record<string, string> = Object.fromEntries(SECTIONS.map((s) => [s.id, s.label]));
 
 export function ErrorSummary({ issues, onGoTo }: { issues: IndexedIssue[]; onGoTo: (issue: IndexedIssue) => void }) {
   // Which issues have a field of their own (the others are only listed here). The DOM holds
@@ -42,7 +42,7 @@ export function ErrorSummary({ issues, onGoTo }: { issues: IndexedIssue[]; onGoT
         {issues.map((issue, i) => (
           <li key={`${issue.key}-${i}`}>
             <button type="button" className="link" onClick={() => onGoTo(issue)}>
-              {sectionLabel(issue.section)}: {issue.message}
+              {LABELS[issue.section]}: {issue.message}
             </button>{' '}
             <code className="muted">{issue.key}</code>
             {!exact.has(issue.key) && <span className="muted"> (not tied to a single field)</span>}

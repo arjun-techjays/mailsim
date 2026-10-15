@@ -27,11 +27,10 @@ export function YamlPanel({ onApply }: { onApply: (imported: Imported) => void }
   const text = edited ?? rendered.data?.source ?? '';
 
   const apply = async () => {
-    if (edited === null) return;
     setBusy(true);
     setApplyError(null);
     try {
-      const res = await api.builder.yamlToJson(edited);
+      const res = await api.builder.yamlToJson(text);
       if (res.error || !res.document) {
         setParseError(res.error ?? { path: '<root>', message: 'The text is not a scenario document.' });
       } else {

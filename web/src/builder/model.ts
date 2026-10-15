@@ -31,6 +31,8 @@ export interface PersonaForm {
   id: string;
   /** The id was typed by hand (stop deriving it from the name). */
   idTouched: boolean;
+  /** While the id field is empty: the id that references still use. */
+  lastId?: string;
   name: string;
   email: string;
   /** The email was typed by hand (stop deriving it from id + domain). */
@@ -440,7 +442,13 @@ export function renamePersonaRefs(f: ScenarioForm, from: string, to: string): vo
 /** Sets a persona's id, keeping references and the derived email in sync. */
 export function setPersonaId(f: ScenarioForm, index: number, id: string, touched: boolean): void {
   const p = f.personas[index] as PersonaForm;
-  renamePersonaRefs(f, p.id, id);
+  const current = p.id || p.lastId || '';
+  if (id) {
+    renamePersonaRefs(f, current, id);
+    delete p.lastId;
+  } else {
+    p.lastId = current; // keep references until a new id is typed
+  }
   p.id = id;
   p.idTouched = p.idTouched || touched;
   if (!p.emailTouched) p.email = defaultEmail(id, f.orgDomain);

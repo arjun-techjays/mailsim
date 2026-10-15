@@ -50,7 +50,3 @@ export const MODE_HELP: Record<string, string> = {
   scripted: 'Replies with fixed text when an incoming message matches a rule. Deterministic.',
   llm: 'Replies using the configured language model, in the given style. Outputs are recorded so runs can be replayed.',
 };
-
-export function label(map: Record<string, string>, value: string): string {
-  return map[value] ?? '';
-}

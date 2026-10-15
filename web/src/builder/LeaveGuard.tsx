@@ -15,13 +15,12 @@ export function LeaveGuard({ dirty, allowRef, onDiscard }: { dirty: boolean; all
   useEffect(() => {
     if (!dirty) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (allowRef.current) return;
       e.preventDefault();
       e.returnValue = '';
     };
     window.addEventListener('beforeunload', onBeforeUnload);
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, [dirty, allowRef]);
+  }, [dirty]);
 
   if (blocker.state !== 'blocked') return null;
   return (

@@ -14,8 +14,13 @@ export function textToBase64(text: string): string {
   return bytesToBase64(new TextEncoder().encode(text));
 }
 
-export async function fileToBase64(file: Blob): Promise<string> {
-  return bytesToBase64(new Uint8Array(await file.arrayBuffer()));
+export function fileToBase64(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(bytesToBase64(new Uint8Array(reader.result as ArrayBuffer)));
+    reader.onerror = () => reject(new Error('Could not read the file.'));
+    reader.readAsArrayBuffer(file);
+  });
 }
 
 /** Decoded size of a base64 string, in bytes. */
