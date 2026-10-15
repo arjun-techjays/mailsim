@@ -252,7 +252,7 @@ describe('scenario builder page', () => {
       http.get('*/v1/scenarios/:key', () => HttpResponse.json({ id: 's', key: 'empty.one', latest_version: null, versions: [] })),
     );
     renderApp('/scenarios/empty.one', sessionFor('controller'));
-    expect(await screen.findByText('No published version.')).toBeInTheDocument();
+    expect(await screen.findByText(/^No published version\./)).toBeInTheDocument(); // the empty state now adds a next step
     expect(screen.queryByRole('link', { name: 'Clone' })).toBeNull();
   });
 

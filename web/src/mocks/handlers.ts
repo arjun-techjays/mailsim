@@ -34,6 +34,8 @@ import {
 } from './db';
 import { createConnectHandlers } from './connect'; // connect & status (UX-F3)
 import { builderHandlers } from './builder'; // builder (UX-F1)
+import { createAkeyHandlers } from './akey'; // UX-F2
+import { createAuthoringHandlers } from './authoring'; // shared authoring mocks (UX-F2; single registration)
 
 type Guard = 'controller' | 'evaluator' | 'inspector' | 'agent';
 const ALLOWED: Record<Guard, Role[]> = {
@@ -176,6 +178,8 @@ export function createHandlers(db: MockDb = createMockDb()) {
 
   return [
     ...builderHandlers(db, { ok, fail, auth }), // builder (UX-F1)
+    ...createAkeyHandlers(db, { auth, fail, ok, findRun, snapshot }), // UX-F2: answer keys, mailbox browser, activity
+    ...createAuthoringHandlers({ auth, fail, ok }), // meta + YAML tools (shared)
     http.get('*/v1/health', () => ok({ status: 'ok', version: 'mock' })),
     // Additive endpoint planned by WS-A; shape beyond `role` is not relied upon.
     http.get('*/v1/me', ({ request }) => {

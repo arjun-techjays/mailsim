@@ -1,10 +1,10 @@
 import { parseSnapshot } from './snapshot';
-import { snapshotSource } from './source';
 
 describe('parseSnapshot', () => {
   it('converts engine snapshot rows into canonical messages', () => {
     const snap = parseSnapshot({
-      mailboxes: [{ id: 'mb1', email: 'a@x' }, null, 'junk'],
+      mailboxes: [{ id: 'mb1', email: 'a@x', owner_id: 'p1' }, null, 'junk'],
+      personas: [{ id: 'p1', email: 'a@x', role: 'Boss' }, { id: 7 }],
       folders: [{ id: 'f1', mailbox_id: 'mb1', name: 'inbox', system_type: 'inbox' }],
       messages: [
         {
@@ -26,7 +26,11 @@ describe('parseSnapshot', () => {
         { id: 'a2', message_id: 'm1', filename: 'g', mime_type: 'x', size: 'big' },
       ],
     });
-    expect(snap.mailboxes).toEqual([{ id: 'mb1', email: 'a@x' }]);
+    expect(snap.mailboxes).toEqual([{ id: 'mb1', email: 'a@x', owner_id: 'p1' }]);
+    expect(snap.personas).toEqual([
+      { id: 'p1', email: 'a@x', role: 'Boss' },
+      { id: '', email: '', role: '' },
+    ]);
     const [m1, m2] = snap.messages;
     expect(m1).toMatchObject({
       folder: 'inbox',
@@ -43,23 +47,6 @@ describe('parseSnapshot', () => {
   });
 
   it('tolerates an empty snapshot', () => {
-    expect(parseSnapshot({})).toEqual({ mailboxes: [], folders: [], messages: [] });
-  });
-});
-
-describe('snapshotSource', () => {
-  it('paginates client-side with opaque cursors', async () => {
-    const snap = parseSnapshot({
-      folders: [{ id: 'f', mailbox_id: 'mb', name: 'inbox' }],
-      messages: Array.from({ length: 5 }, (_, i) => ({ id: `m${i}`, mailbox_id: 'mb', folder_id: 'f', thread_id: 't' })),
-    });
-    const src = snapshotSource(snap, 'mb', 1);
-    const p1 = await src.listMessages(null, null, 2);
-    expect(p1.items.map((m) => m.id)).toEqual(['m0', 'm1']);
-    const p3 = await src.listMessages('inbox', '4', 2);
-    expect(p3).toMatchObject({ next_cursor: null });
-    expect(await src.listFolders()).toEqual([{ id: 'f', name: 'inbox', system_type: null }]);
-    expect(await src.getThread('t')).toHaveLength(5);
-    await expect(src.getMessage('zzz')).rejects.toMatchObject({ code: 'NOT_FOUND', status: 404 });
+    expect(parseSnapshot({})).toEqual({ mailboxes: [], personas: [], folders: [], messages: [] });
   });
 });

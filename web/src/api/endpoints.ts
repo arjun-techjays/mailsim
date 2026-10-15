@@ -1,45 +1,51 @@
 import { apiRequest, apiText, type ApiConfig, type RequestOptions } from './client';
 import type {
+  // connect & status (UX-F3)
+  AgentCredential,
   ActionOut,
-  MeOut,
-  ReportFormat,
-  RunPage,
+  ActivityPage,
+  AnswerKeyDocument,
   AnswerKeyOut,
+  AnswerKeyValidation,
   ArtifactOut,
+  AuthoringMeta,
   BuildComparison,
   ClockResult,
+  ComposedFixture,
+  ComposeMessage,
+  ConnectionTestRequest,
+  ConnectionTestResult,
+  DraftValidation,
+  EmlSummary,
   EvaluationReport,
   EvaluationRequest,
   EventPage,
   InjectRequest,
   InjectResult,
+  MailboxOut,
+  MeOut,
+  MessagePage,
+  ParsedDocument,
+  RenderedYaml,
   ReplayOut,
+  ReportFormat,
+  RunConnection,
   RunCreate,
   RunCreated,
   RunOut,
+  RunPage,
+  ScenarioCreate,
+  ScenarioDraft,
   ScenarioOut,
-  // connect & status (UX-F3)
-  AgentCredential,
-  ConnectionTestRequest,
-  ConnectionTestResult,
-  RunConnection,
+  ScenarioVersionDocument,
+  ScenarioVersionOut,
   SystemStatus,
 } from './types';
 // ---- builder (UX-F1)
-import type {
-  AuthoringMeta,
-  ComposedFixture,
-  ComposeMessage,
-  DraftValidation,
-  EmlSummary,
-  ParsedDocument,
-  RenderedYaml,
-  ScenarioCreate,
-  ScenarioDraft,
-  ScenarioVersionDocument,
-  ScenarioVersionOut,
-} from './types';
+
 // ---- end builder (UX-F1)
+// ---- answer keys & mailbox browser (UX-F2)
+
 
 const seg = encodeURIComponent;
 
@@ -133,6 +139,38 @@ export function createApi(cfg: ApiConfig) {
       publish: (body: ScenarioCreate) => post<ScenarioVersionOut>('/v1/scenarios', body, true),
     },
     // ---- end builder (UX-F1)
+    // ---- answer keys & mailbox browser (UX-F2)
+    authoringMeta: () => get<AuthoringMeta>('/v1/meta/authoring'),
+    /** Controller only: the published (agent-facing) scenario document, for pickers. */
+    scenarioVersionDocument: (key: string, version: number) =>
+      get<ScenarioVersionDocument>(`/v1/scenarios/${seg(key)}/versions/${version}/document`),
+    /** Evaluator only: the full answer key (never call with a controller-only session). */
+    answerKeyDocument: (key: string, version: number) =>
+      get<AnswerKeyDocument>(`/v1/scenarios/${seg(key)}/answer-keys/${version}/document`),
+    validateAnswerKey: (
+      key: string,
+      body: { document?: Record<string, unknown>; source?: string },
+      signal?: AbortSignal,
+    ) => apiRequest<AnswerKeyValidation>(cfg, 'POST', `/v1/scenarios/${seg(key)}/answer-keys/validate`, { body, signal }),
+    createAnswerKey: (key: string, body: { document?: Record<string, unknown>; source?: string }) =>
+      post<AnswerKeyOut>(`/v1/scenarios/${seg(key)}/answer-keys`, body, true),
+    jsonToYaml: (document: Record<string, unknown>) => post<RenderedYaml>('/v1/tools/json-to-yaml', { document }),
+    yamlToJson: (source: string) => post<ParsedDocument>('/v1/tools/yaml-to-json', { source }),
+    runMailboxes: (id: string) => get<MailboxOut[]>(`${run(id)}/mailboxes`),
+    inspectMessages: (
+      id: string,
+      mailboxId: string,
+      params: { folder?: string | null; cursor?: string | null; pageSize?: number; order?: 'asc' | 'desc' },
+    ) =>
+      get<MessagePage>(`${run(id)}/mailboxes/${seg(mailboxId)}/messages`, {
+        folder: params.folder,
+        cursor: params.cursor,
+        page_size: params.pageSize,
+        order: params.order,
+      }),
+    activity: (id: string, afterId: number, limit = 100) =>
+      get<ActivityPage>(`${run(id)}/activity`, { after_id: afterId, limit }),
+    // ---- end answer keys & mailbox browser (UX-F2)
   };
 }
 

@@ -72,3 +72,11 @@ export type ScenarioVersionDocument = S['ScenarioVersionDocument'];
 export type ParsedDocument = S['ParsedDocument'];
 export type RenderedYaml = S['RenderedYaml'];
 // ---- end builder (UX-F1)
+// ---- answer keys & mailbox browser (UX-F2) ----------------------------------------------
+export type AssertionTypeInfo = S['AssertionTypeInfo'];
+export type AnswerKeyValidation = S['AnswerKeyValidation'];
+export type AnswerKeyDocument = S['AnswerKeyDocument'];
+export type ActivityItem = S['ActivityItem'];
+export type ActivityPage = S['ActivityPage'];
+export type MailboxOut = S['MailboxOut'];
+// ---- end answer keys & mailbox browser (UX-F2) ------------------------------------------

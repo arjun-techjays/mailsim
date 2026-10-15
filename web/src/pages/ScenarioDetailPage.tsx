@@ -8,6 +8,7 @@ import { WhatIsThis } from '../guide/Concepts';
 import { Empty, Loading } from '../components/Status';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { PublishedNotice } from '../builder/PublishedNotice'; // builder (UX-F1)
+import { AnswerKeySavedNotice, EditAnswerKeyLink, NewAnswerKeyLink } from '../answerkey/AnswerKeyLinks'; // UX-F2
 
 function AnswerKeys({ scenarioKey }: { scenarioKey: string }) {
   const api = useApi();
@@ -17,6 +18,7 @@ function AnswerKeys({ scenarioKey }: { scenarioKey: string }) {
       <h2 id="ak-h">Answer-key versions</h2>
       <p className="hint">Evaluator only. Metadata only: grading content is never shown here or to agents.</p>
       <WhatIsThis term="answer-key" />
+      <NewAnswerKeyLink scenarioKey={scenarioKey} />
       {q.isPending ? (
         <Loading />
       ) : q.isError ? (
@@ -35,6 +37,7 @@ function AnswerKeys({ scenarioKey }: { scenarioKey: string }) {
               <th scope="col">Compatible scenario versions</th>
               <th scope="col">Spec hash</th>
               <th scope="col">Created</th>
+              <th scope="col">Edit</th>
             </tr>
           </thead>
           <tbody>
@@ -47,6 +50,9 @@ function AnswerKeys({ scenarioKey }: { scenarioKey: string }) {
                   <code>{k.spec_hash}</code>
                 </td>
                 <td>{k.created_at}</td>
+                <td>
+                  <EditAnswerKeyLink scenarioKey={scenarioKey} version={k.version} />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -82,6 +88,7 @@ export function ScenarioDetailPage() {
         </p>
       </PageIntro>
       <PublishedNotice scenarioKey={key} /> {/* builder (UX-F1) */}
+      <AnswerKeySavedNotice scenarioKey={key} />
       {q.isPending ? (
         <Loading />
       ) : q.isError ? (

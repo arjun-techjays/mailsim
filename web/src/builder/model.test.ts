@@ -1,4 +1,4 @@
-import { dumpYaml, parseYaml } from '../mocks/builder';
+import { dumpYaml, parseYaml } from '../mocks/yaml';
 import {
   blankEvent,
   blankForm,

@@ -19,6 +19,8 @@ import { HomePage } from './pages/HomePage';
 // ---- builder (UX-F1)
 import { ScenarioBuilderPage } from './builder/ScenarioBuilderPage';
 // ---- end builder (UX-F1)
+// ---- answer keys & mailbox browser (UX-F2)
+import { AnswerKeyEditorPage } from './answerkey/AnswerKeyEditorPage';
 
 const guarded = (el: ReactNode) => <RequireSession>{el}</RequireSession>;
 
@@ -37,6 +39,8 @@ export const routes: RouteObject[] = [
       { path: 'scenarios/:key', element: guarded(<ScenarioDetailPage />) },
       { path: 'scenarios/:key/start', element: guarded(<StartRunPage />) },
       { path: 'scenarios/:key/compare', element: guarded(<ComparePage />) },
+      // ---- answer keys & mailbox browser (UX-F2)
+      { path: 'scenarios/:key/answer-key', element: guarded(<AnswerKeyEditorPage />) },
       { path: 'runs', element: guarded(<RunsPage />) },
       { path: 'runs/:runId', element: guarded(<RunDetailPage />) },
       { path: 'runs/:runId/evaluations', element: guarded(<EvaluationPage />) },

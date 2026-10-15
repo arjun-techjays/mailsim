@@ -5,6 +5,7 @@ import type { ClockResult, ReplayOut, RunOut } from '../api/types';
 import { useApi } from '../auth/session';
 import { ErrorDisplay } from '../components/ErrorDisplay';
 import { runKeys } from './keys';
+import { clockCall } from './simActions';
 
 type Outcome =
   | { kind: 'run'; label: string; run: RunOut }
@@ -77,9 +78,13 @@ export function RunControls({ run }: { run: RunOut }) {
         case 'replay':
           return { kind: 'replay', result: await api.replayRun(run.id) };
         case 'tick':
-          return { kind: 'clock', label: 'Scheduler tick', result: await api.tick(run.id) };
+          return { kind: 'clock', label: 'Scheduler tick', result: await clockCall(api, run.id, { kind: 'tick' }) };
         default:
-          return { kind: 'clock', label: 'Clock advanced', result: await api.advance(run.id, Number(seconds)) };
+          return {
+            kind: 'clock',
+            label: 'Clock advanced',
+            result: await clockCall(api, run.id, { kind: 'advance', seconds: Number(seconds) }),
+          };
       }
     },
     onMutate: () => setOutcome(null),
