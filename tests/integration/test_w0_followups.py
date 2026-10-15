@@ -22,12 +22,12 @@ def test_replay_reproduces_engine_side_counters(env):
     fm = env.mbx(run, "finance_manager")
     first = env.engine.list_messages(env.scope, run, fm)[0]
     env.engine.reply(env.scope, run, fm, first.id, text="checking")
-    with pytest.raises(NotFound):  # a failed agent call still consumes budget
-        env.engine.get_message(env.scope, run, fm, "msg_nope")
+    with pytest.raises(NotFound):  # a failed agent WRITE still consumes budget
+        env.engine.move(env.scope, run, fm, "msg_nope", "archive")
     env.engine.inject(env.scope, run, fm, MAIL)
     env.engine.advance(env.scope, run, 700)
     live = env.engine.state(env.scope, run)
-    assert live["run"]["agent_actions"] == 3 and live["run"]["id_counter"] > 0
+    assert live["run"]["agent_actions"] == 2 and live["run"]["id_counter"] > 0  # reply + move
     result = env.engine.replay_run(env.scope, run)
     assert result.matches
     replayed = env.engine.state(env.scope, result.replay_run_id)

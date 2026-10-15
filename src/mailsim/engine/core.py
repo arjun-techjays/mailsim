@@ -62,6 +62,13 @@ AGENT = "agent"
 CONTROLLER = "controller"
 SIMULATOR = "simulator"
 EVALUATOR = "evaluator"
+# Budget rule (user decision): only WRITES consume the agent action budget. Reads and polling
+# are free but still recorded as actions (efficiency metrics).
+READ_OPERATIONS = frozenset({"read", "search"})
+
+
+def counts_against_budget(operation: str) -> bool:
+    return operation not in READ_OPERATIONS
 
 
 @dataclass
@@ -174,12 +181,13 @@ class SimEngine:
                     # untyped failures (e.g. header injection) become audited INVALID_REQUESTs
                     raise InvalidRequest(f"invalid input: {exc}"[:300]) from exc
                 if actor == AGENT:
-                    ctx.emit(
-                        "agent.action_counted",
-                        {"operation": operation, "outcome": "ok"},
-                        actor=AGENT,
-                        operation=operation,
-                    )
+                    if counts_against_budget(operation):
+                        ctx.emit(
+                            "agent.action_counted",
+                            {"operation": operation, "outcome": "ok"},
+                            actor=AGENT,
+                            operation=operation,
+                        )
                     self._arm_triggers(ctx, operation)
                 if ctx.gen.counter != run.id_counter:
                     # ids were drawn after the last event: record it so replay stays exact
@@ -201,7 +209,13 @@ class SimEngine:
             # Budget rule: every agent command that passed the permission/mailbox/limit guard
             # consumes budget, whether it then succeeds or fails.
             self._record_denied(
-                scope, run_id, actor, operation, input_, exc, count=guarded and actor == AGENT
+                scope,
+                run_id,
+                actor,
+                operation,
+                input_,
+                exc,
+                count=guarded and actor == AGENT and counts_against_budget(operation),
             )
             raise
 
@@ -264,7 +278,7 @@ class SimEngine:
             if mb.owner_id != agent["mailbox_owner"]:
                 raise PermissionDenied("agent may only access its assigned mailbox")
         limit = ctx.config["limits"]["max_agent_actions"]
-        if run.agent_actions >= limit:
+        if counts_against_budget(operation) and run.agent_actions >= limit:
             raise SimulationLimitExceeded(
                 f"agent action limit of {limit} reached", details={"limit": limit}
             )
@@ -921,6 +935,76 @@ class SimEngine:
                 received_at=c.now, operation="email.receive",
             )  # fmt: skip
         c.emit("event.fired", {"id": row.id}, operation="fire")
+
+    def persona_reply(
+        self,
+        scope: Scope,
+        run_id: str,
+        persona_id: str,
+        *,
+        to: list[str],
+        subject: str,
+        text: str,
+        generation: dict[str, Any],
+        in_reply_to_message_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Deliver a persona-authored message (scripted or LLM) and RECORD its generation.
+
+        `generation` is the provenance (mode scripted|llm, provider, model, prompt_hash, token
+        counts). The full output is stored in a `persona.generated` event, so replay consumes
+        the recording and never calls a model (spec 6.3). Delivery follows the same isolation
+        rules as any send: simulated mailboxes only; outsiders per the external mode.
+        """
+        allowed_meta = {"mode", "provider", "model", "prompt_hash", "input_tokens",
+                        "output_tokens", "rule_index", "llm_call_id"}  # fmt: skip
+        if generation.get("mode") not in ("scripted", "llm"):
+            raise InvalidRequest("generation.mode must be 'scripted' or 'llm'")
+        unknown = set(generation) - allowed_meta
+        if unknown:
+            raise InvalidRequest(f"unknown generation fields: {sorted(unknown)}")
+
+        def fn(c: Ctx) -> dict[str, Any]:
+            persona = c.session.get(m.Persona, (persona_id, c.run.id))
+            if persona is None:
+                raise NotFound(f"persona {persona_id} not found")
+            irt: str | None = None
+            refs: list[str] = []
+            if in_reply_to_message_id is not None:
+                orig = c.session.get(m.Message, (in_reply_to_message_id, c.run.id))
+                if orig is None:
+                    raise NotFound(f"message {in_reply_to_message_id} not found")
+                irt, refs = orig.message_id_header, [*orig.references, orig.message_id_header]
+            c.emit("persona.generated",
+                   {"persona_id": persona_id, "generation": generation, "subject": subject,
+                    "text": text, "to": to, "in_reply_to": irt},
+                   operation="persona.reply")  # fmt: skip
+            own = c.session.execute(
+                select(m.Mailbox).where(m.Mailbox.run_id == c.run.id, m.Mailbox.owner_id == persona_id)
+            ).scalar_one_or_none()  # fmt: skip
+            if own is not None:  # persona has a mailbox: a normal send (Sent copy + deliveries)
+                return self._send(c, own.id, to, [], [], subject, text, None, irt, refs or None,
+                                  SIMULATOR, "persona.reply")  # fmt: skip
+            rcpts = [_addr(a) for a in to]
+            if not rcpts:
+                raise InvalidRequest("at least one recipient is required")
+            policy = DeliveryPolicy(c.config["external_delivery"])
+            plan = policy.plan([a.email for a in rcpts], self._emails(c))
+            raw = build_mime(message_id=c.gen.message_id_header(c.config["domain"]),
+                             from_=Address(email=persona.email), to=rcpts, subject=subject,
+                             date=c.now, text=text, in_reply_to=irt, references=refs or None)  # fmt: skip
+            delivered = [
+                self._insert_raw(c, mbid, raw, event_type="message.delivered", folder_type="inbox",
+                                 received_at=c.now, operation="persona.reply")
+                for _email, mbid in plan.internal
+            ]  # fmt: skip
+            for ext in plan.external:  # sink/event modes only (deny raised in plan())
+                c.emit("delivery.external_attempt",
+                       {"recipient": ext, "handled": "event_only"}, operation="persona.reply")  # fmt: skip
+            return {"delivered_message_ids": delivered, "external_recipients": plan.external}
+
+        return self._command(scope, run_id, SIMULATOR, "persona.reply",
+                             {"persona_id": persona_id, "to": to, "mode": generation.get("mode"),
+                              "subject_chars": len(subject), "body_chars": len(text)}, fn)  # fmt: skip
 
     # ------------------------------------------------------------- mailbox: mutations
 

@@ -163,6 +163,14 @@ class Controller:
     def tick(self, run_id: str) -> dict[str, Any]:
         return self._e.tick(self.scope, run_id)
 
+    def persona_reply(self, run_id: str, persona_id: str, *, to: list[str], subject: str,
+                      text: str, generation: dict[str, Any],
+                      in_reply_to_message_id: str | None = None) -> dict[str, Any]:  # fmt: skip
+        """Persona runtime entry point (WS-G): deliver + record a scripted/LLM reply."""
+        return self._e.persona_reply(self.scope, run_id, persona_id, to=to, subject=subject,
+                                     text=text, generation=generation,
+                                     in_reply_to_message_id=in_reply_to_message_id)  # fmt: skip
+
     def mailbox_id_for(self, run_id: str, persona_id: str) -> str:
         return self._e.mailbox_id_for(self.scope, run_id, persona_id)
 

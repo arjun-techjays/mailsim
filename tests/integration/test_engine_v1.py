@@ -210,7 +210,7 @@ def test_evaluator_view_and_complete_run(world):
     seq = ev.events(run)[-1]["sequence"]
     with pytest.raises(InvalidRequest):
         ev.complete_run(run, "MAYBE", evaluation_id="ev_1", evaluated_through_sequence=seq)
-    agent.list_folders()  # the agent acts after the evaluator's snapshot ...
+    agent.set_flags(agent.list_messages().items[0].id, add=["SEEN"])  # agent acts after snapshot
     with pytest.raises(Conflict, match="changed after it was evaluated"):
         ev.complete_run(run, "PASSED", evaluation_id="ev_1", evaluated_through_sequence=seq)
     seq = ev.events(run)[-1]["sequence"]  # ... so re-evaluate, then complete
@@ -268,7 +268,7 @@ def test_change_feed_pages_without_losing_changes(world):
 def test_denied_agent_action_is_logged_with_its_error_code(world):
     env, ctl, ev, run, agent, *_ = world
     with pytest.raises(NotFound):
-        agent.get_message("msg_nope")
+        agent.move("msg_nope", "archive")
     counted = [e for e in ev.events(run) if e["type"] == "agent.action_counted"][-1]
     assert counted["outcome"] == "NOT_FOUND" and counted["payload"]["outcome"] == "NOT_FOUND"
 

@@ -20,7 +20,8 @@ from tests.scenarios import EXAMPLE
 ADMIN_URL = os.environ.get(
     "MAILSIM_TEST_ADMIN_URL", "postgresql+psycopg://mailsim:mailsim@localhost:54329/postgres"
 )
-TEST_DB = "mailsim_test"
+# Each parallel workstream sets MAILSIM_TEST_DB so suites never drop each other's database.
+TEST_DB = os.environ.get("MAILSIM_TEST_DB", "mailsim_test")
 
 
 def _url(db: str) -> str:
