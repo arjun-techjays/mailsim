@@ -226,6 +226,7 @@ class Message(_RunScoped, Base):
     message_id_header: Mapped[str] = mapped_column(String, nullable=False)
     thread_id: Mapped[str] = mapped_column(String, nullable=False)
     folder_id: Mapped[str] = mapped_column(String, nullable=False)
+    previous_folder_id: Mapped[str | None] = mapped_column(String)
     from_: Mapped[dict[str, Any]] = mapped_column("from", JSONB, nullable=False)
     to: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
     cc: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)

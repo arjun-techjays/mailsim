@@ -91,7 +91,7 @@ def _insert_message(session: Session, run: m.Run, p: dict[str, Any]) -> None:
             received_at=parse_ts(msg["received_at"]) if msg["received_at"] else None,
             labels=msg["labels"], flags=msg["flags"], headers=msg["headers"],
             is_draft=msg["is_draft"], raw_blob_ref=msg["raw_blob_ref"],
-            provider_ids={},
+            provider_ids=msg.get("provider_ids") or {},
         )
     )  # fmt: skip
     session.flush()
@@ -103,7 +103,13 @@ def _insert_message(session: Session, run: m.Run, p: dict[str, Any]) -> None:
         )  # fmt: skip
 
 
-for _t in ("message.delivered", "message.sent", "draft.created"):
+for _t in (
+    "message.delivered",
+    "message.sent",
+    "draft.created",
+    "message.inserted",
+    "message.copied",
+):
     projector(_t)(_insert_message)
 
 
@@ -115,7 +121,9 @@ def _msg(session: Session, run: m.Run, message_id: str) -> m.Message:
 
 @projector("message.moved")
 def _moved(session: Session, run: m.Run, p: dict[str, Any]) -> None:
-    _msg(session, run, p["message_id"]).folder_id = p["folder_id"]
+    row = _msg(session, run, p["message_id"])
+    row.previous_folder_id = row.folder_id
+    row.folder_id = p["folder_id"]
 
 
 @projector("message.labels_changed")

@@ -13,7 +13,10 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 SCHEMA_VERSION = "1.0"
-AGENT_OPERATIONS = ("read", "search", "reply", "send", "move", "label", "flag", "draft", "delete")
+AGENT_OPERATIONS = (
+    "read", "search", "reply", "send", "forward", "insert", "move", "copy", "label", "flag",
+    "draft", "delete",
+)  # fmt: skip
 TRIGGER_ACTIONS = {
     "send_reply": "reply",
     "reply": "reply",
@@ -26,6 +29,9 @@ TRIGGER_ACTIONS = {
     "flag": "flag",
     "draft": "draft",
     "delete": "delete",
+    "forward": "forward",
+    "insert": "insert",
+    "copy": "copy",
 }
 ASSERTION_TYPES = (
     "state", "action", "content", "policy", "safety", "temporal", "protocol", "semantic",
