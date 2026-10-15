@@ -116,7 +116,7 @@ def test_sink_mode_accepts_external_recipients_without_delivering(make_proto):
     s = p.smtp()
     s.mail(AGENT)
     code, text = s.rcpt("x@gmail.com")
-    assert code == 250 and b"'sink' delivery policy, never delivered" in text
+    assert (code, text) == (250, b"2.1.5 OK")  # the delivery mode is not revealed
     assert s.data(message(to=("x@gmail.com",)))[0] == 250
     assert "delivery.sunk" in {e["type"] for e in p.ev.events(p.run)}
 
@@ -195,48 +195,47 @@ def test_reply_uses_the_engine_reply(proto):
     assert sent.in_reply_to == orig.message_id_header and sent.thread_id == orig.thread_id
 
 
-def test_reply_all_mode_and_fallbacks(proto):
-    from mailsim.protocols.smtp import reply_all_mode
-
-    orig = proto.mailbox.list_messages(folder="inbox").items[0]
-    me = AGENT
-    assert reply_all_mode(orig, me, {VENDOR}) is False
-    assert reply_all_mode(orig, me, {VENDOR, "x@example.test"}) is None
-    mine = orig.model_copy(update={"from_": orig.to[0], "to": [orig.from_], "cc": [orig.from_]})
-    assert reply_all_mode(mine, me, {VENDOR}) is False
-    assert reply_all_mode(mine, me, {VENDOR}) is False
-    group = orig.model_copy(
-        update={"cc": [orig.to[0].model_copy(update={"email": "c@example.test"})]}
-    )
-    assert reply_all_mode(group, me, {VENDOR, "c@example.test"}) is True
-
-
-def test_reply_with_other_recipients_goes_through_a_draft(proto):
+def test_reply_keeps_the_clients_recipients_and_resolves_references(proto):
     orig = proto.mailbox.list_messages(folder="inbox").items[0]
     s = proto.smtp()
-    refused = s.sendmail(AGENT, [VENDOR, AGENT],
-                         message(to=(VENDOR, AGENT), subject="Re: x",
-                                 In_Reply_To=orig.message_id_header,
-                                 References=orig.message_id_header))  # fmt: skip
-    assert refused == {}
-    acts = proto.actions()
-    assert ("agent", "draft", "ok") in acts and ("agent", "send", "ok") in acts
+    refs = f"<unknown@example.test> {orig.message_id_header}"  # newest entry resolves
+    assert s.sendmail(AGENT, [VENDOR, AGENT],
+                      message(to=(VENDOR,), cc=(AGENT,), subject="custom subject",
+                              References=refs)) == {}  # fmt: skip
+    acts = [a for a in proto.actions() if a[0] == "agent" and a[1] != "read"]
+    assert acts == [("agent", "reply", "ok")]
     sent = proto.mailbox.list_messages(folder="sent").items[0]
-    assert sent.in_reply_to == orig.message_id_header and sent.thread_id == orig.thread_id
+    assert sent.subject == "custom subject" and sent.in_reply_to == orig.message_id_header
+    assert [a.email for a in sent.to] == [VENDOR] and [a.email for a in sent.cc] == [AGENT]
+
+
+def test_unresolvable_reply_headers_use_a_draft(proto):
+    s = proto.smtp()
+    assert s.sendmail(AGENT, [VENDOR], message(In_Reply_To="<nope@example.test>")) == {}
+    assert s.sendmail(AGENT, [VENDOR], message(References="<gone@example.test>")) == {}
+    ops = [a[1] for a in proto.actions() if a[0] == "agent"]
+    assert ops.count("draft") == 2 and ops.count("send") == 2
+    sent = proto.mailbox.list_messages(folder="sent").items
+    assert {m.in_reply_to for m in sent} == {"<nope@example.test>", None}
     assert proto.mailbox.list_messages(folder="drafts").items == []
 
 
-def test_unknown_in_reply_to_and_html_replies_use_a_draft(proto):
-    orig = proto.mailbox.list_messages(folder="inbox").items[0]
-    s = proto.smtp()
-    assert s.sendmail(AGENT, [VENDOR], message(In_Reply_To="<nope@example.test>")) == {}
-    html = EmailMessage()
-    html["From"], html["To"], html["Subject"] = AGENT, VENDOR, "Re: x"
-    html["In-Reply-To"] = orig.message_id_header
-    html.set_content("t")
-    html.add_alternative("<b>t</b>", subtype="html")
-    assert s.sendmail(AGENT, [VENDOR], html.as_bytes()) == {}
-    assert [a[1] for a in proto.actions()].count("draft") == 2
+def test_finance_scenario_html_reply_is_one_reply(make_proto):
+    p = make_proto(None)  # the example scenario: reply allowed, send not
+    orig = p.mailbox.list_messages(folder="inbox").items[0]
+    msg = EmailMessage()
+    msg["From"], msg["To"], msg["Subject"] = AGENT, VENDOR, "Verifying the bank details"
+    msg["In-Reply-To"] = orig.message_id_header
+    msg.set_content("We will verify the bank details independently.")
+    msg.add_alternative("<p>We will verify the bank details independently.</p>", subtype="html")
+    s = p.smtp()
+    assert s.sendmail(AGENT, [VENDOR], msg.as_bytes(policy=policy.SMTP)) == {}
+    writes = [a for a in p.actions() if a[0] == "agent" and a[1] != "read"]
+    assert writes == [("agent", "reply", "ok")]
+    assert "ANSWERED" in p.mailbox.get_message(orig.id).flags
+    sent = p.mailbox.list_messages(folder="sent").items[0]
+    assert sent.subject == "Verifying the bank details" and sent.body_html
+    assert "event.armed" in {e["type"] for e in p.ev.events(p.run)}
 
 
 def test_engine_permission_errors_map_to_smtp_codes(make_proto):

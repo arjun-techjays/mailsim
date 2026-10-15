@@ -4,13 +4,16 @@
 `serve protocols` subcommand builds the engine and calls it; this package may not import
 `mailsim.engine.core`). `ProtocolServers` runs them on a private background thread, which is
 what tests and embedding hosts use. Listeners bind to loopback by default; they are inbound
-servers only and hand every message to the agent facade.
+servers only and hand every message to the agent facade. Binding to a non-loopback address
+requires TLS (or an explicit `allow_insecure_remote=True`), and each listener caps concurrent
+connections (`max_connections`).
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
 import logging
 import threading
 from typing import Any
@@ -22,6 +25,17 @@ from mailsim.protocols.tls import TLSContext, self_signed_context
 
 log = logging.getLogger(__name__)
 
+MAX_CONNECTIONS = 64  # per listener
+
+
+def is_loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
 
 class ProtocolServers:
     """IMAP + SMTP listeners over one engine. Port 0 picks a free port (see the properties)."""
@@ -29,13 +43,21 @@ class ProtocolServers:
     def __init__(self, engine: Any, *, host: str = "127.0.0.1", imap_port: int = 1143,
                  smtp_port: int = 1587, tls: bool = False, tls_context: TLSContext | None = None,
                  hostname: str = "localhost", session_factory: Any = None,
-                 blobs: Any = None, idle_timeout: float = IDLE_TIMEOUT) -> None:  # fmt: skip
+                 idle_timeout: float = IDLE_TIMEOUT, max_connections: int = MAX_CONNECTIONS,
+                 allow_insecure_remote: bool = False,
+                 reverify_seconds: float | None = None) -> None:  # fmt: skip
+        if not is_loopback(host) and not (tls or tls_context) and not allow_insecure_remote:
+            raise ValueError(f"refusing to serve IMAP/SMTP on non-loopback {host!r} without TLS "
+                             "(configure TLS or pass allow_insecure_remote=True)")  # fmt: skip
         self.host = host
         self.hostname = hostname
         self.idle_timeout = idle_timeout
+        self.max_connections = max_connections
         self.authenticator = Authenticator(engine, session_factory)
-        self.blobs = blobs if blobs is not None else getattr(engine, "blobs", None)
+        if reverify_seconds is not None:
+            self.authenticator.reverify_seconds = reverify_seconds
         self.tls_context = tls_context or (self_signed_context(hostname) if tls else None)
+        self._smtp_transports: set[asyncio.BaseTransport] = set()
         self._ports = {"imap": imap_port, "smtp": smtp_port}
         self._servers: list[asyncio.Server] = []
         self._clients: set[asyncio.Task[None]] = set()
@@ -53,18 +75,27 @@ class ProtocolServers:
 
     async def _imap_client(self, reader: asyncio.StreamReader,
                            writer: asyncio.StreamWriter) -> None:  # fmt: skip
+        if len(self._clients) >= self.max_connections:
+            writer.write(b"* BYE too many connections, try again later\r\n")
+            writer.close()
+            return
         task = asyncio.current_task()
         assert task is not None
         self._clients.add(task)
         self._transports.add(writer.transport)
         try:
-            session = ImapSession(self.authenticator, self.blobs,
-                                  tls_available=self.tls_context is not None)  # fmt: skip
+            session = ImapSession(self.authenticator, tls_available=self.tls_context is not None)
             await ImapConnection(session, reader, writer, tls_context=self.tls_context,
                                  idle_timeout=self.idle_timeout).run()  # fmt: skip
         finally:
             self._clients.discard(task)
             self._transports.discard(writer.transport)
+
+    def _smtp_connect(self, transport: asyncio.BaseTransport) -> bool:
+        if len(self._smtp_transports) >= self.max_connections:
+            return False
+        self._smtp_transports.add(transport)
+        return True
 
     async def start_async(self) -> None:
         """Bind both listeners on the running loop."""
@@ -72,7 +103,8 @@ class ProtocolServers:
         imap = await asyncio.start_server(self._imap_client, self.host, self._ports["imap"],
                                           limit=LINE_LIMIT)  # fmt: skip
         factory = smtp_factory(self.authenticator, tls_context=self.tls_context,
-                               hostname=self.hostname, on_connect=self._transports.add)  # fmt: skip
+                               hostname=self.hostname, on_connect=self._smtp_connect,
+                               on_disconnect=self._smtp_transports.discard)  # fmt: skip
         smtp = await loop.create_server(factory, self.host, self._ports["smtp"])
         self._servers = [imap, smtp]
         self._ports = {"imap": imap.sockets[0].getsockname()[1],
@@ -83,9 +115,10 @@ class ProtocolServers:
     async def stop_async(self) -> None:
         for server in self._servers:
             server.close()
-        for transport in list(self._transports):  # open client connections end with the server
+        for transport in [*self._transports, *self._smtp_transports]:  # clients end with us
             transport.close()
         self._transports.clear()
+        self._smtp_transports.clear()
         for task in list(self._clients):
             task.cancel()
         await asyncio.gather(*self._clients, return_exceptions=True)
@@ -143,10 +176,11 @@ class ProtocolServers:
 
 def run(engine: Any, host: str = "127.0.0.1", imap_port: int = 1143, smtp_port: int = 1587,
         tls: bool = False, *, tls_context: TLSContext | None = None,
-        hostname: str = "localhost") -> None:  # fmt: skip
+        hostname: str = "localhost", allow_insecure_remote: bool = False) -> None:  # fmt: skip
     """Serve IMAP + SMTP for `engine` until interrupted (entry point for `serve protocols`)."""
     servers = ProtocolServers(engine, host=host, imap_port=imap_port, smtp_port=smtp_port,
-                              tls=tls, tls_context=tls_context, hostname=hostname)  # fmt: skip
+                              tls=tls, tls_context=tls_context, hostname=hostname,
+                              allow_insecure_remote=allow_insecure_remote)  # fmt: skip
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(servers.serve_forever())
 

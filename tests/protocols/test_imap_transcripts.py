@@ -67,8 +67,10 @@ def test_responses_quote_and_literal_strings(proto):
         (b"a1 LOGIN a  b", b"a1 BAD unexpected character ' '"),
         (b"a1 LOGIN (a )", b"a1 BAD trailing SP in list"),
         (b"a1 LOGIN a(b", b"a1 BAD expected SP between arguments"),
-        (b"a1 LOGIN a]", b"a1 BAD unbalanced ']'"),
-        (b"a1 LOGIN a[b", b"a1 BAD unterminated '['"),
+        (b"a1 LOGIN a]", b"a1 BAD usage: LOGIN user password"),  # ']' is an ASTRING-CHAR
+        (b"a1 LOGIN a[b", b"a1 BAD usage: LOGIN user password"),
+        (b"a1 FETCH 1 BODY[x", b"a1 BAD unterminated '['"),
+        (b"a1 NOOP " + b"(" * 40, b"a1 BAD lists nested too deeply"),
         (b"a1 LOGIN {x}", b"a1 BAD malformed literal"),
         (b"a1 LOGIN a", b"a1 BAD usage: LOGIN user password"),
         (b"a1 LOGIN a ()", b"a1 BAD expected a string"),

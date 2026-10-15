@@ -47,6 +47,10 @@ class _Reader:
         return self.pos >= len(self.data) or self.data[self.pos :] in (b"\r\n", b"\n")
 
 
+MAX_DEPTH = 32  # parenthesized list nesting
+_SECTION_PREFIX = re.compile(rb"(?:BODY|BODY\.PEEK|BINARY|BINARY\.PEEK|BINARY\.SIZE)$", re.I)
+
+
 def tokenize(data: bytes) -> list[object]:
     """Tokenize a complete command (literals inline, as received). Raises ParseError."""
     r = _Reader(data)
@@ -56,7 +60,7 @@ def tokenize(data: bytes) -> list[object]:
     return out
 
 
-def _items(r: _Reader, *, nested: bool) -> list[object]:
+def _items(r: _Reader, *, nested: bool, depth: int = 0) -> list[object]:
     items: list[object] = []
     first = True
     while True:
@@ -77,19 +81,21 @@ def _items(r: _Reader, *, nested: bool) -> list[object]:
             if nested and r.peek() == ord(")"):
                 raise ParseError("trailing SP in list")
         first = False
-        items.append(_item(r, nested=nested))
+        items.append(_item(r, depth=depth))
 
 
-def _item(r: _Reader, *, nested: bool) -> object:
+def _item(r: _Reader, *, depth: int) -> object:
     c = r.peek()
     if c is None or c in (ord("\r"), ord("\n")):
         raise ParseError("missing argument")
     if c == ord("("):
+        if depth >= MAX_DEPTH:
+            raise ParseError("lists nested too deeply")
         r.pos += 1
         if r.peek() == ord(")"):
             r.pos += 1
             return []
-        return _items(r, nested=True)
+        return _items(r, nested=True, depth=depth + 1)
     if c == ord('"'):
         return _quoted(r)
     if c == ord("{"):
@@ -131,14 +137,12 @@ def _literal(r: _Reader) -> bytes:
 
 def _atom(r: _Reader) -> str:
     start = r.pos
-    depth = 0  # inside [...] spaces and parentheses belong to the atom
+    depth = 0  # inside a fetch section [...] spaces and parentheses belong to the atom
     while r.pos < len(r.data):
         c = r.data[r.pos]
-        if c == ord("["):
+        if c == ord("[") and (depth or _SECTION_PREFIX.search(r.data[start : r.pos])):
             depth += 1
-        elif c == ord("]"):
-            if depth == 0:
-                raise ParseError("unbalanced ']'")
+        elif c == ord("]") and depth:
             depth -= 1
         elif c in (ord("\r"), ord("\n")) or depth == 0 and c in _ATOM_SPECIALS:
             break
@@ -164,7 +168,7 @@ def astring(tok: object) -> str:
 
 
 # ------------------------------------------------------------------------- sequence sets
-_SEQ_RE = re.compile(r"^(\d+|\*)(?::(\d+|\*))?$")
+_SEQ_RE = re.compile(r"^(\d{1,10}|\*)(?::(\d{1,10}|\*))?$")
 
 
 def parse_sequence_set(text: object, largest: int) -> list[tuple[int, int]]:

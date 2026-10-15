@@ -260,9 +260,7 @@ def test_fetch_body_sections_and_partials(proto):
         ok(c.fetch("2", "(BODY.PEEK[1])"))[0][1]
         == b"Purchase order PO-001 matches the invoice.\r\n"
     )
-    # no implicit \Seen (documented deviation): BODY[] behaves like BODY.PEEK[]
-    ok(c.fetch("1", "(BODY[])"))
-    assert fetch_map(ok(c.fetch("1", "FLAGS")))[1] == b"1 (FLAGS ())"
+    assert fetch_map(ok(c.fetch("2", "FLAGS")))[2] == b"2 (FLAGS ())"  # PEEK never sets \Seen
 
 
 @pytest.mark.parametrize(

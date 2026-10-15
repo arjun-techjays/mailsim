@@ -50,8 +50,14 @@ LINE_LIMIT = 64 * 1024  # one command line (literals are counted separately)
 MAX_LITERAL = 25 * 1024 * 1024 + 64 * 1024  # an APPENDed message (MIME limit) plus slack
 MAX_COMMAND = MAX_LITERAL + 2 * LINE_LIMIT
 IDLE_TIMEOUT = 30 * 60.0  # RFC 3501 autologout timer is at least 30 minutes
+PREAUTH_TIMEOUT = 60.0  # idle limit before a successful login
+PREAUTH_LITERAL = 8 * 1024  # literals accepted before login (credentials only)
 MAX_AUTH_FAILURES = 3
 PAGE_SIZE = 500  # engine maximum page size for folder listings
+CHANGE_LIMIT = 500  # change-feed page size used to detect mailbox changes
+MAX_PATTERN = 255  # LIST/LSUB reference + pattern length
+MAX_SEARCH_DEPTH = 32
+RAW_CACHE_BYTES = 64 * 1024 * 1024
 
 SYSTEM_FLAGS = {
     "\\seen": ("\\Seen", "SEEN"),
@@ -68,7 +74,7 @@ _SYSTEM_LABELS = {"INBOX", "SENT", "DRAFTS", "TRASH", "ARCHIVE"}
 _MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 _DATE_RE = re.compile(r"^(\d{1,2})-([A-Za-z]{3})-(\d{4})$")
 _FETCH_SECTION_RE = re.compile(
-    r"^(BODY|BODY\.PEEK)\[([^\]]*)\](?:<(\d+)(?:\.(\d+))?>)?$", re.IGNORECASE
+    r"^(BODY|BODY\.PEEK)\[([^\]]*)\](?:<(\d{1,10})(?:\.(\d{1,10}))?>)?$", re.IGNORECASE
 )
 _ERROR_CODES = {
     "NOT_FOUND": "NONEXISTENT",
@@ -89,6 +95,29 @@ class Disconnect(Exception):
 # --------------------------------------------------------------------------- helpers
 def is_keyword(name: str) -> bool:
     return bool(_KEYWORD_RE.match(name))
+
+
+def wildcard_match(pattern: str, name: str, *, fold: bool = False) -> bool:
+    """IMAP LIST matching (`*` any, `%` any except the "/" delimiter) without regexes:
+    O(len(pattern) * len(name)) dynamic programming, so hostile patterns cannot backtrack."""
+    if fold:
+        pattern, name = pattern.upper(), name.upper()
+    row = [True] + [False] * len(name)  # row[j]: pattern[:i] matches name[:j]
+    for ch in pattern:
+        nxt = [False] * (len(name) + 1)
+        if ch in "*%":
+            nxt[0] = row[0]
+            for j in range(1, len(name) + 1):
+                nxt[j] = row[j] or (nxt[j - 1] and (ch == "*" or name[j - 1] != "/"))
+        else:
+            for j in range(1, len(name) + 1):
+                nxt[j] = row[j - 1] and name[j - 1] == ch
+        row = nxt
+    return row[-1]
+
+
+def _has_keyword(labels: list[str], word: str) -> bool:
+    return word.lower() in {k.lower() for k in labels}
 
 
 def user_labels(msg: CanonicalMessage) -> list[str]:
@@ -145,6 +174,7 @@ class Selected:
     uid_validity: int
     uids: list[int] = field(default_factory=list)  # seq n -> uids[n-1]
     flags: dict[int, list[str]] = field(default_factory=dict)
+    listing: dict[int, CanonicalMessage] | None = None  # cache until the change feed moves
 
 
 @dataclass
@@ -169,16 +199,19 @@ class FetchItem:
 class ImapSession:
     """One client's protocol state machine (not-authenticated / authenticated / selected)."""
 
-    def __init__(self, authenticator: Authenticator, blobs: Any = None, *,
-                 tls_available: bool = False, secured: bool = False) -> None:  # fmt: skip
+    def __init__(self, authenticator: Authenticator, *, tls_available: bool = False,
+                 secured: bool = False) -> None:  # fmt: skip
         self.auth = authenticator
-        self.blobs = blobs
         self.tls_available = tls_available
         self.secured = secured
         self.agent: AgentSession | None = None
         self.selected: Selected | None = None
         self.failures = 0
         self._raw_cache: OrderedDict[str, tuple[bytes, imapmime.Part]] = OrderedDict()
+        self._raw_bytes = 0
+        self._folder_cache: list[dict[str, Any]] | None = None
+        self._seq = 0  # change-feed position the cached views reflect
+        self._flush: Callable[[list[bytes]], None] | None = None
 
     # ----------------------------------------------------------------- framing
     @property
@@ -200,8 +233,13 @@ class ImapSession:
         caps = " ".join(self.capabilities())
         return f"* OK [CAPABILITY {caps}] mailsim IMAP4rev1 sandbox ready\r\n".encode()
 
-    def execute(self, data: bytes) -> Reply:
-        """Run one complete command (literals inline as received)."""
+    def execute(self, data: bytes, flush: Callable[[list[bytes]], None] | None = None) -> Reply:
+        """Run one complete command (literals inline as received). `flush` streams untagged
+        responses early (large FETCH results are sent per message)."""
+        self._flush = flush
+        if self.agent is not None and not self.auth.still_valid(self.agent):
+            self.agent, self.selected = None, None
+            return Reply([b"* BYE [UNAVAILABLE] credentials revoked or expired\r\n"], close=True)
         try:
             tokens = tokenize(data)
         except ParseError as exc:
@@ -345,6 +383,7 @@ class ImapSession:
             if exc.code is not None:
                 return self._failed(tag, f"NO [AUTHORIZATIONFAILED] {_one_line(exc.reason)}")
             return self._failed(tag, "NO [AUTHENTICATIONFAILED] Authentication failed")
+        self._seq = int(self._mb.list_changes(0, limit=1)["latest_sequence"])
         caps = " ".join(self.capabilities())
         return f"OK [CAPABILITY {caps}] authenticated as {self.agent.address}"
 
@@ -357,7 +396,29 @@ class ImapSession:
 
     # ----------------------------------------------------------------- folders
     def _folders(self) -> list[dict[str, Any]]:
-        return list(self._mb.list_folders())
+        if self._folder_cache is None:
+            self._folder_cache = list(self._mb.list_folders())
+        return self._folder_cache
+
+    def _poll(self) -> bool:
+        """One change-feed read: True when this mailbox changed since the cached views.
+        A run reset ends a selected session (its UIDs are no longer valid)."""
+        feed = self._mb.list_changes(self._seq, limit=CHANGE_LIMIT)
+        self._seq = int(feed["latest_sequence"])
+        if feed["reset_since"]:
+            self._folder_cache = None
+            if self.selected is not None:
+                self.selected = None
+                raise Disconnect("[UNAVAILABLE] UIDVALIDITY changed (the run was reset); reconnect")
+            return True
+        if feed["changes"]:
+            self._folder_cache = None
+            return True
+        return False
+
+    def _fresh_folders(self) -> list[dict[str, Any]]:
+        self._poll()
+        return self._folders()
 
     def _folder(self, name: str) -> dict[str, Any] | None:
         for f in self._folders():
@@ -395,12 +456,12 @@ class ImapSession:
             if kind == "LIST":
                 out.append(b'* LIST (\\Noselect) "/" ""\r\n')
             return f"OK {kind} completed"
-        rx = "".join(".*" if ch == "*" else "[^/]*" if ch == "%" else re.escape(ch)
-                     for ch in reference + pattern)  # fmt: skip
-        for f in self._folders():
+        full = reference + pattern
+        if len(full) > MAX_PATTERN:
+            raise ParseError(f"{kind} pattern too long (max {MAX_PATTERN})")
+        for f in self._fresh_folders():
             name = str(f["name"])
-            flags = re.IGNORECASE if name.upper() == "INBOX" else 0
-            if re.fullmatch(rx, name, flags):
+            if wildcard_match(full, name, fold=name.upper() == "INBOX"):
                 out.append(f'* {kind} ({self._attrs(f)}) "/" '.encode() + string(name) + b"\r\n")
         return f"OK {kind} completed"
 
@@ -435,6 +496,7 @@ class ImapSession:
         if len(args) != 2 or not isinstance(args[1], list) or not args[1]:
             raise ParseError("usage: STATUS mailbox (items)")
         name = astring(args[0])
+        self._poll()
         f = self._folder(name)
         if f is None:
             return "NO [NONEXISTENT] no such mailbox"
@@ -465,6 +527,7 @@ class ImapSession:
     def _select(self, args: list[Any], out: list[bytes], *, read_only: bool) -> str:
         self._arity(args, 1, "SELECT mailbox")
         self.selected = None  # a failed SELECT leaves no mailbox selected (RFC 3501 6.3.1)
+        self._poll()
         f = self._folder(astring(args[0]))
         if f is None:
             return "NO [NONEXISTENT] no such mailbox"
@@ -472,6 +535,7 @@ class ImapSession:
         sel = Selected(str(f["name"]), str(f["name"]), read_only, int(f["uid_validity"]))
         sel.uids = [int(m.imap_uid or 0) for m in msgs]
         sel.flags = {int(m.imap_uid or 0): imap_flags(m) for m in msgs}
+        sel.listing = {int(m.imap_uid or 0): m for m in msgs}
         keywords = sorted({k for flags in sel.flags.values() for k in flags if k[0] != "\\"})
         out.append(b"* FLAGS " + _flag_list(FLAG_ORDER + keywords) + b"\r\n")
         out.append(f"* {len(msgs)} EXISTS\r\n* 0 RECENT\r\n".encode())
@@ -492,7 +556,7 @@ class ImapSession:
         sel = self.selected
         assert sel is not None
         if not sel.read_only and any(
-            "DELETED" in m.flags for m in self._messages(sel.engine_folder)
+            "DELETED" in m.flags for m in self._sync([], expunges=False).values()
         ):
             self._mb.expunge(sel.engine_folder)
         self.selected = None
@@ -514,11 +578,9 @@ class ImapSession:
         """
         sel = self.selected
         assert sel is not None
-        folder = self._folder(sel.engine_folder)
-        if folder is None or int(folder["uid_validity"]) != sel.uid_validity:
-            self.selected = None
-            raise Disconnect("[UNAVAILABLE] UIDVALIDITY changed (the run was reset); reconnect")
-        by_uid = {int(m.imap_uid or 0): m for m in self._messages(sel.engine_folder)}
+        if self._poll() or sel.listing is None:
+            sel.listing = {int(m.imap_uid or 0): m for m in self._messages(sel.engine_folder)}
+        by_uid = sel.listing
         if expunges:
             for idx in range(len(sel.uids) - 1, -1, -1):
                 if sel.uids[idx] not in by_uid:
@@ -603,14 +665,12 @@ class ImapSession:
 
     # ----------------------------------------------------------------- FETCH
     def _raw(self, msg: CanonicalMessage) -> tuple[bytes, imapmime.Part]:
-        key = msg.raw_blob_ref or f"rebuilt:{msg.id}"
+        key = f"{msg.id}:{msg.raw_blob_ref}"
         hit = self._raw_cache.get(key)
         if hit is not None:
             self._raw_cache.move_to_end(key)
             return hit
-        raw: bytes | None = None
-        if msg.raw_blob_ref and self.blobs is not None:
-            raw = self.blobs.get(msg.raw_blob_ref)
+        raw = self._mb.get_raw(msg.id) if msg.raw_blob_ref else None
         if raw is None:  # no stored MIME: rebuild from the canonical fields (no attachments)
             raw = build_mime(message_id=msg.message_id_header, from_=msg.from_, to=msg.to,
                              cc=msg.cc, subject=msg.subject, date=msg.created_at,
@@ -618,8 +678,10 @@ class ImapSession:
                              references=msg.references or None)  # fmt: skip
         entry = (raw, imapmime.parse(raw))
         self._raw_cache[key] = entry
-        if len(self._raw_cache) > 64:
-            self._raw_cache.popitem(last=False)
+        self._raw_bytes += len(raw)
+        while self._raw_bytes > RAW_CACHE_BYTES and len(self._raw_cache) > 1:
+            _, (old, _part) = self._raw_cache.popitem(last=False)
+            self._raw_bytes -= len(old)
         return entry
 
     def _fetch_items(self, token: object) -> list[FetchItem]:
@@ -708,11 +770,32 @@ class ImapSession:
         items = self._fetch_items(args[1])
         if uid_mode and not any(i.name == "UID" for i in items):
             items.insert(0, FetchItem("UID"))
+        sets_seen = any(i.name in ("RFC822", "RFC822.TEXT") or (i.section is not None and not i.peek)
+                        for i in items)  # fmt: skip
+        sel = self.selected
+        assert sel is not None
         by_uid = self._sync(out, expunges=uid_mode)
         for seq, msg in self._targets(args[0], uid_mode, by_uid):
-            body = b" ".join(self._render(i, msg) for i in items)
+            shown = items
+            if sets_seen and not sel.read_only and "SEEN" not in msg.flags:
+                # RFC 3501 6.4.5: fetching the body sets \Seen (a read, never budgeted)
+                self._mb.mark_seen(msg.id)
+                labels = msg.labels[:-1] if msg.labels[-1:] == ["UNREAD"] else msg.labels
+                msg = msg.model_copy(update={"flags": sorted({*msg.flags, "SEEN"}),
+                                             "labels": labels})  # fmt: skip
+                uid = int(msg.imap_uid or 0)
+                sel.flags[uid] = imap_flags(msg)
+                if not any(i.name == "FLAGS" for i in items):
+                    shown = [*items, FetchItem("FLAGS")]
+            body = b" ".join(self._render(i, msg) for i in shown)
             out.append(f"* {seq} FETCH (".encode() + body + b")\r\n")
+            self._stream(out)
         return f"OK {'UID ' if uid_mode else ''}FETCH completed"
+
+    def _stream(self, out: list[bytes]) -> None:
+        if self._flush is not None and out:
+            self._flush(list(out))
+            out.clear()
 
     # ----------------------------------------------------------------- STORE
     def _store(self, args: list[Any], out: list[bytes], uid_mode: bool) -> str:
@@ -739,26 +822,35 @@ class ImapSession:
                 keywords.add(flag)
         by_uid = self._sync(out, expunges=uid_mode)
         targets = self._targets(args[0], uid_mode, by_uid)
+        wanted = {k.lower() for k in keywords}
         for _seq, msg in targets:
             cur_sys, cur_kw = set(msg.flags), set(user_labels(msg))
+            have = {k.lower() for k in cur_kw}
+            add_k = {k for k in keywords if k.lower() not in have}  # keywords match ignoring case
             if op == "+FLAGS":
-                add_s, rm_s, add_k, rm_k = system - cur_sys, set(), keywords - cur_kw, set()
+                add_s, rm_s, rm_k = system - cur_sys, set(), set()
             elif op == "-FLAGS":
-                add_s, rm_s, add_k, rm_k = set(), system & cur_sys, set(), keywords & cur_kw
+                add_s, rm_s, add_k = set(), system & cur_sys, set()
+                rm_k = {k for k in cur_kw if k.lower() in wanted}
             else:
-                kept_kw = {k for k in cur_kw if is_keyword(k)}
                 add_s, rm_s = system - cur_sys, (cur_sys & set(ENGINE_TO_IMAP)) - system
-                add_k, rm_k = keywords - cur_kw, kept_kw - keywords
+                rm_k = {k for k in cur_kw if is_keyword(k) and k.lower() not in wanted}
             if add_s or rm_s:
                 self._mb.set_flags(msg.id, add=sorted(add_s), remove=sorted(rm_s))
             if add_k or rm_k:
                 self._mb.modify_labels(msg.id, add=sorted(add_k), remove=sorted(rm_k))
         touched = frozenset(int(m.imap_uid or 0) for _, m in targets)
         fresh = self._sync(out, expunges=uid_mode, quiet=touched)
+        sel = self.selected
+        assert sel is not None
         if not silent:
-            for seq, msg in targets:
-                now = fresh.get(int(msg.imap_uid or 0), msg)
+            position = {u: i + 1 for i, u in enumerate(sel.uids)}  # after any EXPUNGE just sent
+            for _seq, msg in targets:
+                now = fresh.get(int(msg.imap_uid or 0))
+                if now is None or int(msg.imap_uid or 0) not in position:  # pragma: no cover
+                    continue  # removed by another session between the write and this echo
                 uid = f"UID {now.imap_uid} " if uid_mode else ""
+                seq = position[int(msg.imap_uid or 0)]
                 out.append(f"* {seq} FETCH ({uid}FLAGS ".encode() + _flag_list(imap_flags(now))
                            + b")\r\n")  # fmt: skip
         return f"OK {'UID ' if uid_mode else ''}STORE completed"
@@ -792,7 +884,7 @@ class ImapSession:
     def _move(self, args: list[Any], out: list[bytes], uid_mode: bool) -> str:
         token, dest = self._destination(args, "MOVE")
         self._require_writable()
-        by_uid = self._sync(out, expunges=True)
+        by_uid = self._sync(out, expunges=uid_mode)
         targets = self._targets(token, uid_mode, by_uid)
         if dest is None:
             return "NO [TRYCREATE] NOT_FOUND: no such destination mailbox"
@@ -846,6 +938,7 @@ class ImapSession:
                 keywords.append(flag)
             else:
                 raise ParseError(f"invalid flag {flag[:40]}")
+        self._poll()  # UIDVALIDITY in APPENDUID must be current
         dest = self._folder(astring(args[0]))
         if dest is None:
             return "NO [TRYCREATE] NOT_FOUND: no such mailbox"
@@ -885,8 +978,12 @@ class ImapSession:
         out.append(("* SEARCH" + "".join(f" {n}" for n in hits) + "\r\n").encode())
         return f"OK {'UID ' if uid_mode else ''}SEARCH completed"
 
-    def _search_key(self, args: list[Any], pos: int
+    def _search_key(self, args: list[Any], pos: int, depth: int = 0
                     ) -> tuple[Callable[[int, CanonicalMessage], bool], int]:  # fmt: skip
+        if depth > MAX_SEARCH_DEPTH:
+            raise ParseError("search criteria nested too deeply")
+        if pos >= len(args):
+            raise ParseError("missing search key")
         tok = args[pos]
         pos += 1
         if isinstance(tok, list):
@@ -895,7 +992,7 @@ class ImapSession:
             inner: list[Callable[[int, CanonicalMessage], bool]] = []
             i = 0
             while i < len(tok):
-                p, i = self._search_key(tok, i)
+                p, i = self._search_key(tok, i, depth + 1)
                 inner.append(p)
             return (lambda n, m: all(p(n, m) for p in inner)), pos
         if not isinstance(tok, str) or isinstance(tok, QStr):
@@ -922,7 +1019,7 @@ class ImapSession:
         if key in ("KEYWORD", "UNKEYWORD"):
             word = astring(arg())
             want = key == "KEYWORD"
-            return (lambda n, m: (word in user_labels(m)) == want), pos
+            return (lambda n, m: _has_keyword(user_labels(m), word) == want), pos
         if key in ("FROM", "TO", "CC", "BCC"):
             needle = astring(arg()).lower()
 
@@ -967,11 +1064,11 @@ class ImapSession:
             ranges = parse_sequence_set(arg(), max(sel.uids, default=0))
             return (lambda n, m: in_ranges(int(m.imap_uid or 0), ranges)), pos
         if key == "NOT":
-            inner_p, pos = self._search_key(args, pos)
+            inner_p, pos = self._search_key(args, pos, depth + 1)
             return (lambda n, m: not inner_p(n, m)), pos
         if key == "OR":
-            left, pos = self._search_key(args, pos)
-            right, pos = self._search_key(args, pos)
+            left, pos = self._search_key(args, pos, depth + 1)
+            right, pos = self._search_key(args, pos, depth + 1)
             return (lambda n, m: left(n, m) or right(n, m)), pos
         if key in ("EMAILID", "THREADID"):
             wanted = astring(arg())
@@ -1015,16 +1112,22 @@ class ImapConnection:
             self.writer.write(b"".join(chunks))
             await self.writer.drain()
 
+    @property
+    def _timeout(self) -> float:
+        if self.session.agent is None:
+            return min(self.idle_timeout, PREAUTH_TIMEOUT)
+        return self.idle_timeout
+
     async def _readline(self) -> bytes:
-        line = await asyncio.wait_for(self.reader.readuntil(b"\n"), self.idle_timeout)
-        return line
+        return await asyncio.wait_for(self.reader.readuntil(b"\n"), self._timeout)
 
     async def _read_command(self) -> bytes | None:
         line = await self._readline()
         buf = bytearray(line)
         while (marker := literal_marker(line)) is not None:
             size, non_sync = marker
-            if size > MAX_LITERAL or len(buf) + size > MAX_COMMAND:
+            limit = MAX_LITERAL if self.session.agent is not None else PREAUTH_LITERAL
+            if size > limit or len(buf) + size > MAX_COMMAND:
                 if non_sync:
                     raise Disconnect("literal too large")
                 head = bytes(buf).split(b" ", 1)[0].decode("ascii", "replace")
@@ -1033,7 +1136,7 @@ class ImapConnection:
                 return None
             if not non_sync:
                 await self._send([b"+ Ready for literal data\r\n"])
-            buf += await self.reader.readexactly(size)
+            buf += await asyncio.wait_for(self.reader.readexactly(size), self._timeout)
             line = await self._readline()
             buf += line
         return bytes(buf)
@@ -1066,7 +1169,7 @@ class ImapConnection:
                 continue
             if not data.strip():
                 continue
-            reply = await asyncio.to_thread(self.session.execute, data)
+            reply = await asyncio.to_thread(self.session.execute, data, self._flusher())
             await self._send(reply.lines)
             while reply.continuation is not None and reply.pending is not None:
                 await self._send([reply.continuation])
@@ -1077,6 +1180,15 @@ class ImapConnection:
                 await self._start_tls()
             if reply.close:
                 return
+
+    def _flusher(self) -> Callable[[list[bytes]], None]:
+        """Send untagged responses from the worker thread while a command is running."""
+        loop = asyncio.get_running_loop()
+
+        def flush(chunks: list[bytes]) -> None:
+            asyncio.run_coroutine_threadsafe(self._send(chunks), loop).result()
+
+        return flush
 
     async def _start_tls(self) -> None:
         if getattr(self.reader, "_buffer", b""):

@@ -228,7 +228,7 @@ def bodystructure(part: Part, *, extended: bool = True) -> bytes:
 
 # ------------------------------------------------------------------------- sections
 _SECTION_RE = re.compile(
-    r"^((?:\d+\.)*\d+)?(?:\.?(HEADER\.FIELDS\.NOT|HEADER\.FIELDS|HEADER|TEXT|MIME))?$",
+    r"^((?:\d{1,10}\.)*\d{1,10})?(?:\.?(HEADER\.FIELDS\.NOT|HEADER\.FIELDS|HEADER|TEXT|MIME))?$",
     re.IGNORECASE,
 )
 

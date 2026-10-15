@@ -10,11 +10,9 @@ import pytest
 from mailsim.api.auth import issue_key
 from mailsim.domain.models import Address, CanonicalMessage
 from mailsim.protocols import imap as imap_mod
-from mailsim.protocols import smtp as smtp_mod
-from mailsim.protocols.auth import Authenticator, AuthFailed
+from mailsim.protocols.auth import AgentSession, Authenticator, AuthFailed
 from mailsim.protocols.imap import ImapSession, user_labels
-from mailsim.protocols.smtp import SandboxHandler
-from tests.protocols.conftest import AGENT, VENDOR
+from tests.protocols.conftest import AGENT
 
 pytestmark = pytest.mark.db
 
@@ -28,30 +26,34 @@ def canonical(i: int = 0, **kw) -> CanonicalMessage:
     return CanonicalMessage(**data)
 
 
-def test_user_labels_and_rebuilt_raw():
+class _NoRawMailbox:
+    def get_raw(self, message_id):
+        return None
+
+
+def test_user_labels_rebuilt_raw_and_cache_budget(monkeypatch):
     assert user_labels(canonical(labels=["custom", "UNREAD"])) == ["custom"]
     assert user_labels(canonical(labels=["UNREAD"], flags=["SEEN"])) == ["UNREAD"]
-    session = ImapSession(Authenticator(None, session_factory=object()), blobs=None)  # type: ignore[arg-type]
-    raw, root = session._raw(canonical())
+    session = ImapSession(Authenticator(None, session_factory=object()))  # type: ignore[arg-type]
+    session.agent = AgentSession(_NoRawMailbox(), "b@example.test")  # type: ignore[arg-type]
+    raw, root = session._raw(canonical(raw_blob_ref="ref"))
     assert b"Message-ID: <m0@example.test>" in raw and root.body.startswith(b"hi")
-    assert session._raw(canonical())[0] is raw  # cached
-    for i in range(1, 70):
+    assert session._raw(canonical(raw_blob_ref="ref"))[0] is raw  # cached
+    monkeypatch.setattr(imap_mod, "RAW_CACHE_BYTES", 3 * len(raw))
+    for i in range(1, 10):
         session._raw(canonical(i))
-    assert len(session._raw_cache) == 64
+    assert len(session._raw_cache) == 3 and session._raw_bytes <= 3 * len(raw) + 10
+    # streaming without a flush callback leaves the responses in place
+    out = [b"x"]
+    session._stream(out)
+    assert out == [b"x"]
 
 
 def test_folder_listing_pages(proto, monkeypatch):
     monkeypatch.setattr(imap_mod, "PAGE_SIZE", 1)
-    monkeypatch.setattr(smtp_mod, "PAGE_SIZE", 1)
     c = proto.imap()
     assert c.select("INBOX")[1] == [b"2"]
-    orig = proto.mailbox.list_messages(folder="inbox").items[1]
-    s = proto.smtp()
-    assert s.sendmail(AGENT, [VENDOR],
-                      b"From: finance@example.test\r\nTo: vendor@example.test\r\n"
-                      b"In-Reply-To: " + orig.message_id_header.encode() + b"\r\n"
-                      b"Subject: Re\r\n\r\nok\r\n") == {}  # fmt: skip
-    assert ("agent", "draft", "ok") in proto.actions()  # PO came from procurement@: no match
+    assert c.uid("SEARCH", "ALL")[1] == [b"1 2"]
 
 
 def test_key_for_a_missing_mailbox(proto):
@@ -59,17 +61,11 @@ def test_key_for_a_missing_mailbox(proto):
         key = issue_key(s, tenant_id=proto.env.scope.tenant_id,
                         project_id=proto.env.scope.project_id, role="agent", run_id=proto.run,
                         mailbox_id="mbx_missing").api_key  # fmt: skip
-    with pytest.raises(AuthFailed, match="does not exist"):
+    with pytest.raises(AuthFailed, match="NOT_FOUND"):
         proto.servers.authenticator.login(AGENT, key)
     c = proto.imap(login=False)
     with pytest.raises(imaplib.IMAP4.error):
         c.login(AGENT, key)
-
-
-def test_smtp_authenticator_rejects_unknown_auth_data(proto):
-    handler = SandboxHandler(proto.servers.authenticator)
-    result = handler.authenticate(None, None, None, "XOAUTH2", object())  # type: ignore[arg-type]
-    assert result.success is False
 
 
 def test_misc_imap_paths(proto):
