@@ -204,15 +204,24 @@ def test_evaluator_view_and_complete_run(world):
     spec = ev.scenario_spec(run)
     assert spec["spec"]["scenario"]["id"] == "finance.invoice-bank-change"
     assert ev.state(run)["messages"] and ev.events(run) and ev.actions(run)
+    assert ctl.state(run) == ev.state(run)
     assert len(ev.state_hash(run)) == 64
     assert ctl.run_info(run)["status"] == "RUNNING" and ctl.actions(run)
+    seq = ev.events(run)[-1]["sequence"]
     with pytest.raises(InvalidRequest):
-        ev.complete_run(run, "MAYBE", {})
-    ev.complete_run(run, "PASSED", {"accuracy": 1.0})
+        ev.complete_run(run, "MAYBE", evaluation_id="ev_1", evaluated_through_sequence=seq)
+    agent.list_folders()  # the agent acts after the evaluator's snapshot ...
+    with pytest.raises(Conflict, match="changed after it was evaluated"):
+        ev.complete_run(run, "PASSED", evaluation_id="ev_1", evaluated_through_sequence=seq)
+    seq = ev.events(run)[-1]["sequence"]  # ... so re-evaluate, then complete
+    ev.complete_run(run, "PASSED", evaluation_id="ev_2", evaluated_through_sequence=seq)
     assert ev.run_info(run)["status"] == "PASSED"
-    assert ev.events(run)[-1]["type"] in ("run.completed", "ids.reserved")
+    last = ev.events(run)[-1]
+    assert last["type"] == "run.completed"
+    assert last["payload"] == {"verdict": "PASSED", "evaluation_id": "ev_2"}
     with pytest.raises(RunNotActive):
-        ev.complete_run(run, "FAILED", {})
+        ev.complete_run(run, "FAILED", evaluation_id="ev_3",
+                        evaluated_through_sequence=last["sequence"])  # fmt: skip
     with pytest.raises(Conflict):
         ctl.reset_run(run)
 
@@ -237,3 +246,102 @@ def test_run_level_checks_switch_and_build_are_validated(env):
     run = ctl.create_run(version, checks="off", agent_build="build-42")
     created = EvaluatorView(env.engine, env.scope).events(run)[0]["payload"]["config"]["evaluation"]
     assert created == {"checks": "off", "agent_build": "build-42"}
+
+
+def test_change_feed_pages_without_losing_changes(world):
+    env, ctl, ev, run, agent, *_ = world
+    start = agent.list_changes(0)["latest_sequence"]
+    msgs = agent.list_messages().items
+    for m in msgs:
+        agent.set_flags(m.id, add=["SEEN"])
+        agent.modify_labels(m.id, add=["x"])
+    seen, since = [], start
+    while True:
+        page = agent.list_changes(since, limit=1)
+        seen += [c["sequence"] for c in page["changes"]]
+        since = page["next_since"]
+        if not page["has_more"]:
+            break
+    assert len(seen) == 2 * len(msgs) == len(set(seen)), "no change skipped when paging"
+
+
+def test_denied_agent_action_is_logged_with_its_error_code(world):
+    env, ctl, ev, run, agent, *_ = world
+    with pytest.raises(NotFound):
+        agent.get_message("msg_nope")
+    counted = [e for e in ev.events(run) if e["type"] == "agent.action_counted"][-1]
+    assert counted["outcome"] == "NOT_FOUND" and counted["payload"]["outcome"] == "NOT_FOUND"
+
+
+def test_external_ids_imap_uids_drafts_and_order(world):
+    env, ctl, ev, run, agent, *_ = world
+    m0 = agent.list_messages().items[0]
+    assert m0.imap_uid == 1
+    assert m0.provider_ids["gmail_message_id"] and m0.provider_ids["graph_thread_id"]
+    assert (
+        agent.resolve_external_id("gmail", "message", m0.provider_ids["gmail_message_id"]) == m0.id
+    )
+    assert (
+        agent.resolve_external_id("graph", "thread", m0.provider_ids["graph_thread_id"])
+        == m0.thread_id
+    )
+    with pytest.raises(NotFound):
+        agent.resolve_external_id("gmail", "message", "0" * 16)
+    with pytest.raises(InvalidRequest):
+        agent.resolve_external_id("gmail", "label", "x")
+    d = agent.create_draft(to=["vendor@example.test"], subject="d", cc=["finance@example.test"],
+                           bcc=["vendor@example.test"], html="<b>x</b>",
+                           in_reply_to=m0.message_id_header, references=[m0.message_id_header])  # fmt: skip
+    draft = agent.get_message(d["message_id"])
+    assert draft.provider_ids["draft_id"] == d["draft_id"] and draft.thread_id == m0.thread_id
+    assert [a.email for a in draft.bcc] == ["vendor@example.test"]
+    gmail_draft = draft.provider_ids["gmail_draft_id"]
+    assert agent.resolve_external_id("gmail", "draft", gmail_draft) == d["message_id"]
+    u = agent.update_draft(d["message_id"], to=["vendor@example.test"], subject="d2",
+                           cc=["finance@example.test"])  # fmt: skip
+    updated = agent.get_message(u["message_id"])
+    assert updated.in_reply_to == m0.message_id_header and updated.thread_id == m0.thread_id
+    assert [a.email for a in updated.cc] == ["finance@example.test"]
+    assert agent.resolve_external_id("gmail", "draft", gmail_draft) == u["message_id"]
+    folders = {f["system_type"]: f for f in agent.list_folders()}
+    assert folders["inbox"]["uid_validity"] == 1 and folders["inbox"]["uid_next"] == 3
+    asc_ids = [m.id for m in agent.list_messages(page_size=500).items]
+    desc = agent.list_messages(order="desc", page_size=2)
+    rest = agent.list_messages(order="desc", page_size=500, cursor=desc.next_cursor).items
+    assert [m.id for m in desc.items + rest] == list(reversed(asc_ids))
+    with pytest.raises(InvalidRequest):
+        agent.list_messages(order="sideways")
+
+
+def test_external_ids_never_resolve_across_mailboxes(world):
+    env, ctl, ev, run, agent, fm, vendor, vend = world
+    sent = agent.send(to=["vendor@example.test"], subject="cross", text="x")
+    vendor_copy = sent["delivered_message_ids"][0]
+    gid = next(p["external_id"] for p in ev.state(run)["provider_ids"]
+               if p["entity_id"] == vendor_copy and p["provider"] == "gmail")  # fmt: skip
+    with pytest.raises(NotFound):
+        agent.resolve_external_id("gmail", "message", gid)
+
+
+def test_same_folder_move_keeps_uid_and_origin(world):
+    env, ctl, ev, run, agent, *_ = world
+    m = agent.list_messages(folder="inbox").items[0]
+    agent.move(m.id, "trash")
+    uid = agent.get_message(m.id).imap_uid
+    agent.trash(m.id)
+    agent.move(m.id, "trash")
+    assert agent.get_message(m.id).imap_uid == uid
+    agent.untrash(m.id)
+    assert agent.get_message(m.id).folder == "INBOX"
+
+
+def test_principal_roles_are_coerced_and_unknown_roles_fail_closed(env):
+    p = Principal(env.scope.tenant_id, env.scope.project_id, "agent", "run_x", "mbx_x")
+    assert p.role is Role.AGENT
+    assert isinstance(facade_for(env.engine, p), AgentMailbox), "string roles never fall through"
+    with pytest.raises(PermissionDenied):
+        Principal(env.scope.tenant_id, env.scope.project_id, "superuser")
+    rogue = Principal(env.scope.tenant_id, env.scope.project_id, Role.EVALUATOR)
+    object.__setattr__(rogue, "role", "nobody")
+    with pytest.raises(PermissionDenied):
+        facade_for(env.engine, rogue)

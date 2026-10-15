@@ -123,6 +123,11 @@ def _insert_message(session: Session, run: m.Run, p: dict[str, Any]) -> None:
         )
     )  # fmt: skip
     _map_ids(session, run, "message", msg["id"])
+    draft_id = (msg.get("provider_ids") or {}).get("draft_id")
+    if draft_id:  # drafts: stable external draft id -> the message currently holding the draft
+        for provider, fn in (("gmail", gmail_id), ("graph", graph_id)):
+            session.add(m.ProviderId(run_id=run.id, provider=provider, entity_type="draft",
+                                     external_id=fn(draft_id), entity_id=msg["id"]))  # fmt: skip
     session.flush()
     for a in msg["attachments"]:
         session.add(
@@ -151,6 +156,8 @@ def _msg(session: Session, run: m.Run, message_id: str) -> m.Message:
 @projector("message.moved")
 def _moved(session: Session, run: m.Run, p: dict[str, Any]) -> None:
     row = _msg(session, run, p["message_id"])
+    if row.folder_id == p["folder_id"]:
+        return  # same-folder move: no new UID, origin kept for untrash
     row.previous_folder_id = row.folder_id
     row.folder_id = p["folder_id"]
     row.imap_uid = _next_uid(session, run, p["folder_id"])  # IMAP: a moved message gets a new UID
@@ -179,6 +186,7 @@ def _deleted(session: Session, run: m.Run, p: dict[str, Any]) -> None:
         delete(m.Message).where(m.Message.run_id == run.id, m.Message.id == p["message_id"])
     )
     _unmap_ids(session, run, "message", [p["message_id"]])
+    _unmap_ids(session, run, "draft", [p["message_id"]])
     if p.get("empty_thread"):
         session.execute(
             delete(m.Thread).where(m.Thread.run_id == run.id, m.Thread.id == p["empty_thread"])

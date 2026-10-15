@@ -53,6 +53,8 @@ class CanonicalMessage(BaseModel):
     headers: dict[str, Any] = Field(default_factory=dict)
     is_draft: bool = False
     raw_blob_ref: str | None = None
+    imap_uid: int | None = None  # UID in the message's current folder
+    provider_ids: dict[str, str] = Field(default_factory=dict)  # e.g. gmail_message_id, draft_id
 
     model_config = ConfigDict(populate_by_name=True)
 

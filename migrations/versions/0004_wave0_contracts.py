@@ -21,6 +21,7 @@ def upgrade() -> None:
         sa.Column("tenant_id", sa.String(), nullable=False),
         sa.Column("project_id", sa.String(), nullable=False),
         sa.Column("key", sa.String(), nullable=False),
+        sa.Column("key_id", sa.String(), nullable=False),
         sa.Column("method_path", sa.String(), nullable=False),
         sa.Column("request_hash", sa.String(), nullable=False),
         sa.Column("status_code", sa.Integer(), nullable=False),
@@ -32,7 +33,7 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
-        sa.PrimaryKeyConstraint("tenant_id", "project_id", "key"),
+        sa.PrimaryKeyConstraint("tenant_id", "project_id", "key", "key_id"),
     )
     op.create_table(
         "usage_counters",

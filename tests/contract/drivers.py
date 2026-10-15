@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, ClassVar, Protocol
 
-from mailsim.domain.errors import ErrorCode, SimError, UnsupportedOperation
+from mailsim.domain.errors import ErrorCode, SimError
 from mailsim.engine.facades import AgentMailbox
 
 ALL_CAPABILITIES = frozenset(
@@ -36,6 +36,8 @@ class Msg:
     folder: str  # system type: inbox|sent|drafts|trash|archive
     flags: frozenset[str]
     labels: frozenset[str]
+    in_reply_to: str | None = None
+    body: str = ""  # everything textual the agent can read through this driver (body, headers)
 
 
 class MailboxDriver(Protocol):
@@ -78,7 +80,8 @@ class NeutralDriver:
     @staticmethod
     def _msg(m: Any) -> Msg:
         return Msg(m.id, m.id, m.message_id_header, m.thread_id, m.subject, _FOLDER[m.folder],
-                   frozenset(m.flags), frozenset(m.labels))  # fmt: skip
+                   frozenset(m.flags), frozenset(m.labels), m.in_reply_to,
+                   m.model_dump_json())  # fmt: skip
 
     def list(self, folder: str | None = None) -> list[Msg]:
         return [self._msg(m) for m in self.mb.list_messages(folder=folder, page_size=500).items]
@@ -115,33 +118,19 @@ class NeutralDriver:
         self.mb.delete(ref)
 
     def changes(self, since: int) -> tuple[list[str], int]:
-        feed = self.mb.list_changes(since)
-        return [c["message_id"] for c in feed["changes"]], int(feed["latest_sequence"])
+        ids: list[str] = []
+        while True:
+            feed = self.mb.list_changes(since)
+            ids += [c["message_id"] for c in feed["changes"]]
+            since = int(feed["next_since"])
+            if not feed["has_more"]:
+                return ids, since
 
     def error_code(self, exc: BaseException) -> str:
         return str(exc.code) if isinstance(exc, SimError) else type(exc).__name__
 
 
-class LimitedDriver(NeutralDriver):
-    """Harness self-test: a driver that declares fewer capabilities must refuse the rest
-    explicitly (spec 5.5 capability discovery)."""
-
-    name: ClassVar[str] = "limited"
-    capabilities: ClassVar[frozenset[str]] = frozenset({"list", "get", "send"})
-
-    def move(self, ref: str, folder: str) -> None:
-        raise UnsupportedOperation("move is not part of this profile")
-
-
 # Waves 1-2 append: RestDriver, GmailDriver, GraphDriver, ImapSmtpDriver, McpDriver.
 DRIVERS: list[type[NeutralDriver]] = [NeutralDriver]
 
-__all__ = [
-    "ALL_CAPABILITIES",
-    "DRIVERS",
-    "ErrorCode",
-    "LimitedDriver",
-    "MailboxDriver",
-    "Msg",
-    "NeutralDriver",
-]
+__all__ = ["ALL_CAPABILITIES", "DRIVERS", "ErrorCode", "MailboxDriver", "Msg", "NeutralDriver"]

@@ -10,7 +10,7 @@ import pytest
 
 from mailsim.domain.errors import ErrorCode
 from mailsim.engine.facades import AgentMailbox, Controller, EvaluatorView
-from tests.contract.drivers import ALL_CAPABILITIES, DRIVERS, LimitedDriver, NeutralDriver
+from tests.contract.drivers import ALL_CAPABILITIES, DRIVERS, NeutralDriver
 from tests.scenarios import write_variant
 
 pytestmark = pytest.mark.db
@@ -103,7 +103,8 @@ def test_threading_consistency(world, drv):
     d.reply(original.ref, "ack")
     thread = d.thread(original.thread_ref)
     assert original.canonical_id in {m.canonical_id for m in thread}
-    assert any(m.folder == "sent" for m in thread)
+    replies = [m for m in thread if m.folder == "sent"]
+    assert replies and all(m.in_reply_to == original.message_id_header for m in replies)
 
 
 def test_error_semantics(world, drv):
@@ -174,13 +175,13 @@ def test_change_feed(world, drv):
 
 
 def test_capability_discovery(world, drv):
+    """Every capability a driver does not declare must be refused explicitly. Drivers with
+    partial profiles add a `probe(cap)` that performs the native call for that capability."""
     d = world.driver(drv)
     for cap in sorted(ALL_CAPABILITIES - drv.capabilities):  # pragma: no cover - neutral has all
-        pytest.fail(f"{drv.name} must refuse {cap} explicitly (add a per-capability probe)")
-    limited = world.driver(LimitedDriver)
-    with pytest.raises(Exception) as ei:
-        limited.move(limited.list()[0].ref, "archive")
-    assert limited.error_code(ei.value) == ErrorCode.UNSUPPORTED_OPERATION
+        with pytest.raises(Exception) as ei:
+            d.probe(cap)  # type: ignore[attr-defined]
+        assert d.error_code(ei.value) == ErrorCode.UNSUPPORTED_OPERATION, cap
     assert d.search("purchase order")
 
 
@@ -197,9 +198,13 @@ def test_observability_every_mutation_is_audited(world, drv):
 
 def test_agent_cannot_see_hidden_state(world, drv):
     d = world.driver(drv)
+    first = d.list("inbox")[0]
+    d.reply(first.ref, "We will verify the bank details independently.")
+    world.ctl.advance(world.run, 700)
     key = world.ev.answer_key(world.run)  # inline-derived key from the example scenario
     secrets = [a["requirement"] for a in key["spec"]["answer_key"]["assertions"]]
-    visible = " ".join(repr(m) for m in d.list()).casefold()
+    visible = " ".join(m.body + m.subject for m in d.list()).casefold()
+    assert visible, "the driver must expose message text for this check to mean anything"
     assert not [s for s in secrets if s.casefold() in visible]
 
 

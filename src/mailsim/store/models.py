@@ -220,6 +220,8 @@ class IdempotencyKey(Base):
     tenant_id: Mapped[str] = mapped_column(String, primary_key=True)
     project_id: Mapped[str] = mapped_column(String, primary_key=True)
     key: Mapped[str] = mapped_column(String, primary_key=True)
+    # scoped to the credential: another principal can never replay someone else's response
+    key_id: Mapped[str] = mapped_column(String, primary_key=True)
     method_path: Mapped[str] = mapped_column(String, nullable=False)
     request_hash: Mapped[str] = mapped_column(String, nullable=False)
     status_code: Mapped[int] = mapped_column(Integer, nullable=False)

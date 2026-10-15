@@ -52,6 +52,12 @@ cli -> engine -> scenario -> store -> (mime | threads | providers) -> domain
 
 ## Known limitations / deliberate deviations
 
+* Databases created before migration 0004 must be recreated: earlier scenario versions still
+  embed inline assertions and earlier events lack `id_counter_after` (no backfill is provided;
+  no persistent data existed when Wave 0 landed).
+* Inline-derived answer keys share the version sequence with file keys (auto-numbered); publish
+  file keys with an explicit, higher version.
+
 * Determinism is per event log: after a reset the id counter keeps counting, so agent-created ids
   differ from a fresh run's (baseline ids are re-applied unchanged). Replay reproduces the log exactly.
 * Reset is allowed only from READY/RUNNING. Every agent command that passes the permission/mailbox

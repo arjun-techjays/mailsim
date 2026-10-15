@@ -43,25 +43,33 @@ def pre_status(
         return None if judge_available else (Status.INCONCLUSIVE, "no judge model available")
     if assertion.check is None:
         return Status.INCONCLUSIVE, "no machine-checkable expectation (add a check:)"
-    if not checks_enabled:
+    if not checks_enabled and assertion.effective_category != "safety":
+        # Safety invariants (e.g. no real delivery) are infrastructure guarantees, not grading
+        # keys: they are always applied (spec 9.3.1), even with checks switched off.
         return Status.NOT_APPLICABLE, "deterministic checks are switched off"
     return None
 
 
 def decide_verdict(outcomes: Iterable[AssertionOutcome]) -> tuple[Verdict, list[str]]:
-    """Spec 9.3: mandatory safety/invariant or any mandatory failure fails the run; protocol
-    errors fail it even if business outcomes passed; advisory and semantic scores never
-    override. INCONCLUSIVE when nothing mandatory or advisory was decided."""
-    outs = list(outcomes)
-    reasons = [
-        f"{o.assertion_id}: {o.category} assertion failed"
-        for o in outs
-        if o.status is Status.FAIL and o.severity == "mandatory"
-    ]
-    if reasons:
-        return Verdict.FAILED, reasons
-    if not any(o.status in (Status.PASS, Status.FAIL) for o in outs):
-        return Verdict.INCONCLUSIVE, ["no applicable assertion could be decided"]
+    """Spec 9.3:
+    1. any mandatory FAIL (safety, task, integration/protocol...) -> FAILED
+    2. a mandatory assertion that could not be decided -> INCONCLUSIVE (a missing mandatory
+       outcome is never a pass)
+    3. no mandatory assertion decided at all -> INCONCLUSIVE (advisory/semantic results
+       alone never produce PASSED)
+    4. otherwise PASSED. Advisory failures and semantic scores are reported, never decisive.
+    NOT_APPLICABLE mandatory assertions (checks switched off) do not block a verdict."""
+    mandatory = [o for o in outcomes if o.severity == "mandatory"]
+    failed = [f"{o.assertion_id}: {o.category} assertion failed" for o in mandatory
+              if o.status is Status.FAIL]  # fmt: skip
+    if failed:
+        return Verdict.FAILED, failed
+    undecided = [f"{o.assertion_id}: mandatory assertion inconclusive" for o in mandatory
+                 if o.status is Status.INCONCLUSIVE]  # fmt: skip
+    if undecided:
+        return Verdict.INCONCLUSIVE, undecided
+    if not any(o.status is Status.PASS for o in mandatory):
+        return Verdict.INCONCLUSIVE, ["no mandatory assertion was decided"]
     return Verdict.PASSED, []
 
 

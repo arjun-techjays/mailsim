@@ -35,6 +35,9 @@ def test_stub_routes_fail_explicitly_with_envelope():
     body = r.json()["error"]
     assert body["code"] == "UNSUPPORTED_OPERATION" and body["details"]["owner"] == "WS-A"
     assert body["request_id"] == "req-123" and r.headers["x-request-id"] == "req-123"
+    bad = client().get("/v1/runs/run_x", headers={"x-request-id": "evil value;injected"})
+    assert bad.json()["error"]["request_id"] != "evil value;injected"
+    assert len(bad.json()["error"]["request_id"]) == 32
 
 
 def _frozen_routes():
@@ -144,3 +147,41 @@ def test_llm_contract_models():
     req = LLMRequest(purpose="persona", messages=[Message(role="user", content="hi")])
     assert req.max_tokens == 1024 and Budget().max_calls == 200
     assert LLMResponse(text="x", provider="stub", model=DEFAULT_MODEL).model == "claude-sonnet-5-5"
+
+
+def test_every_route_declares_exactly_one_role_dependency():
+    from mailsim.auth.principal import Role
+
+    evaluator_only = ("/evaluations", "/results", "/accuracy")
+    for route in _frozen_routes():
+        roles = [getattr(d.call, "mailsim_roles", None) for d in route.dependant.dependencies]
+        roles = [r for r in roles if r is not None]
+        assert len(roles) == 1, route.path
+        if route.path.startswith("/v1/mailboxes/"):
+            assert roles[0] == {Role.AGENT}, route.path
+        else:
+            assert Role.AGENT not in roles[0], f"{route.path} must not accept agent credentials"
+        if any(x in route.path for x in evaluator_only):
+            assert roles[0] == {Role.EVALUATOR}, route.path
+        if route.path.endswith("/answer-keys") and "GET" in route.methods:
+            assert roles[0] == {Role.EVALUATOR}, "answer keys are hidden from non-evaluators"
+
+
+def test_role_dependencies_enforce_roles():
+    import pytest
+
+    from mailsim.api.deps import agent_for_mailbox, require_role
+    from mailsim.auth.principal import Principal, Role
+    from mailsim.domain.errors import PermissionDenied
+
+    ctl = Principal("t", "p", Role.CONTROLLER)
+    agent = Principal("t", "p", Role.AGENT, "run_1", "mbx_1")
+    dep = require_role(Role.CONTROLLER)
+    assert dep(ctl) is ctl
+    with pytest.raises(PermissionDenied):
+        dep(agent)
+    assert agent_for_mailbox("mbx_1", agent) is agent
+    with pytest.raises(PermissionDenied):
+        agent_for_mailbox("mbx_2", agent)
+    with pytest.raises(PermissionDenied):
+        agent_for_mailbox("mbx_1", ctl)

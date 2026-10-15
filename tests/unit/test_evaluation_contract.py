@@ -127,6 +127,10 @@ def test_pre_status_switch_semantics():
     assert pre_status(checked, checks_enabled=False, judge_available=True) == (
         Status.NOT_APPLICABLE, "deterministic checks are switched off")  # fmt: skip
     assert pre_status(checked, checks_enabled=True, judge_available=False) is None
+    invariant = a(type="invariant", check={"invariant": "no_external_delivery_attempts"})
+    assert pre_status(invariant, checks_enabled=False, judge_available=False) is None, (
+        "safety invariants are applied even with checks switched off"
+    )
     assert pre_status(a(), checks_enabled=True, judge_available=True)[0] is Status.INCONCLUSIVE
     sem = a(type="semantic", rubric="r")
     assert pre_status(sem, checks_enabled=False, judge_available=True) is None
@@ -135,6 +139,19 @@ def test_pre_status_switch_semantics():
 
 def test_verdict_rules():
     assert decide_verdict([out(status=Status.PASS)]) == (Verdict.PASSED, [])
+    # a missing mandatory outcome is never a pass
+    v, reasons = decide_verdict(
+        [out("m", Status.INCONCLUSIVE), out("adv", Status.PASS, sev="advisory")]
+    )
+    assert v is Verdict.INCONCLUSIVE and reasons == ["m: mandatory assertion inconclusive"]
+    # checks off: only advisory/semantic decided -> INCONCLUSIVE, even when the advisory failed
+    off = [
+        out("d", Status.NOT_APPLICABLE),
+        out("sem", Status.FAIL, sev="advisory", cat="communication"),
+    ]
+    assert decide_verdict(off)[0] is Verdict.INCONCLUSIVE
+    safe = [out("d", Status.NOT_APPLICABLE), out("s", Status.PASS, cat="safety")]
+    assert decide_verdict(safe)[0] is Verdict.PASSED
     v, reasons = decide_verdict([out("p"), out("s", Status.FAIL, cat="safety")])
     assert v is Verdict.FAILED and reasons == ["s: safety assertion failed"]
     v, _ = decide_verdict([out("p"), out("proto", Status.FAIL, cat="integration")])
@@ -183,7 +200,9 @@ def test_trial_stats_and_build_comparison():
     assert compare_builds("s", 2, {"b1": b1}, baseline="missing").baseline is None
 
 
-def test_registry_and_report_shape():
+def test_registry_and_report_shape(monkeypatch):
+    monkeypatch.setattr(registry, "_REGISTRY", dict(registry._REGISTRY))  # no global leak
+
     class Dummy:
         type = "dummy-type"
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, TypeVar
 
@@ -94,6 +94,19 @@ class Ctx:
             self.run,
             Event(type_, payload, actor=actor, operation=operation or type_, baseline=baseline),
         )
+
+
+@dataclass
+class DraftContent:
+    to: list[str]
+    cc: list[str]
+    bcc: list[str]
+    subject: str
+    text: str
+    html: str | None = None
+    in_reply_to: str | None = None
+    references: list[str] = field(default_factory=list)
+    attachments: list[ParsedAttachment] = field(default_factory=list)
 
 
 @dataclass
@@ -227,6 +240,7 @@ class SimEngine:
                         {"operation": operation, "outcome": str(exc.code)},
                         actor=AGENT,
                         operation=operation,
+                        outcome=str(exc.code),
                     ),
                 )
 
@@ -1041,24 +1055,35 @@ class SimEngine:
             "external_mode": str(policy.mode),
         }
 
+    def _insert_draft(self, c: Ctx, mailbox_id: str, d: DraftContent, draft_id: str,
+                      actor: str) -> str:  # fmt: skip
+        mb = self._mailbox(c, mailbox_id)
+        raw = build_mime(
+            message_id=c.gen.message_id_header(c.config["domain"]),
+            from_=Address(email=mb.email), to=[_addr(a) for a in d.to], cc=[_addr(a) for a in d.cc],
+            subject=d.subject, date=c.now, text=d.text, html=d.html, in_reply_to=d.in_reply_to,
+            references=d.references or None, attachments=d.attachments or None,
+        )  # fmt: skip
+        return self._insert_raw(
+            c, mailbox_id, raw, event_type="draft.created", folder_type="drafts",
+            flags=["DRAFT", "SEEN"], received_at=None, bcc=[_addr(a) for a in d.bcc], is_draft=True,
+            actor=actor, operation="draft", provider_ids={"draft_id": draft_id},
+        )  # fmt: skip
+
     def create_draft(
         self, scope: Scope, run_id: str, mailbox_id: str, *, to: list[str], subject: str,
-        text: str = "", actor: str = AGENT,
+        text: str = "", cc: list[str] | None = None, bcc: list[str] | None = None,
+        html: str | None = None, in_reply_to: str | None = None,
+        references: list[str] | None = None, actor: str = AGENT,
     ) -> dict[str, Any]:  # fmt: skip
+        content = DraftContent(
+            to, cc or [], bcc or [], subject, text, html, in_reply_to, references or []
+        )
+
         def fn(c: Ctx) -> dict[str, Any]:
-            mb = self._mailbox(c, mailbox_id)
-            raw = build_mime(
-                message_id=c.gen.message_id_header(c.config["domain"]),
-                from_=Address(email=mb.email), to=[_addr(a) for a in to], subject=subject,
-                date=c.now, text=text,
-            )  # fmt: skip
             draft_id = c.gen.next("drf")
-            mid = self._insert_raw(
-                c, mailbox_id, raw, event_type="draft.created", folder_type="drafts",
-                flags=["DRAFT", "SEEN"], received_at=None, is_draft=True, actor=actor, operation="draft",
-                provider_ids={"draft_id": draft_id},
-            )  # fmt: skip
-            return {"message_id": mid, "draft_id": draft_id}
+            return {"message_id": self._insert_draft(c, mailbox_id, content, draft_id, actor),
+                    "draft_id": draft_id}  # fmt: skip
 
         return self._command(scope, run_id, actor, "draft", {"to": to, "subject_chars": len(subject)}, fn,
                              mailbox_id=mailbox_id)  # fmt: skip
@@ -1184,21 +1209,29 @@ class SimEngine:
         return row
 
     def update_draft(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str, *,
-                     to: list[str], subject: str, text: str = "", actor: str = AGENT) -> dict[str, Any]:  # fmt: skip
-        """Replace a draft's content. The draft id is stable; the message id changes (as in Gmail)."""
+                     to: list[str], subject: str, text: str = "", cc: list[str] | None = None,
+                     bcc: list[str] | None = None, html: str | None = None,
+                     keep_attachments: bool = True, actor: str = AGENT) -> dict[str, Any]:  # fmt: skip
+        """Replace a draft's content. The draft id is stable; the message id changes (as in
+        Gmail). Reply headers (and by default attachments) carry over, so threading holds."""
 
         def fn(c: Ctx) -> dict[str, Any]:
             old = self._draft(c, mailbox_id, message_id)
             draft_id = old.provider_ids.get("draft_id") or old.id
-            mb = self._mailbox(c, mailbox_id)
-            raw = build_mime(message_id=c.gen.message_id_header(c.config["domain"]),
-                             from_=Address(email=mb.email), to=[_addr(a) for a in to],
-                             subject=subject, date=c.now, text=text)  # fmt: skip
+            content = DraftContent(
+                to,
+                cc or [],
+                bcc or [],
+                subject,
+                text,
+                html,
+                old.in_reply_to,
+                list(old.references),
+                self._blob_attachments(c, old.id) if keep_attachments else [],
+            )
             self._emit_delete(c, old, actor, "draft")
-            mid = self._insert_raw(c, mailbox_id, raw, event_type="draft.created", folder_type="drafts",
-                                   flags=["DRAFT", "SEEN"], received_at=None, is_draft=True, actor=actor,
-                                   operation="draft", provider_ids={"draft_id": draft_id})  # fmt: skip
-            return {"message_id": mid, "draft_id": draft_id}
+            return {"message_id": self._insert_draft(c, mailbox_id, content, draft_id, actor),
+                    "draft_id": draft_id}  # fmt: skip
 
         return self._command(scope, run_id, actor, "draft",
                              {"message_id": message_id, "to": to, "subject_chars": len(subject)}, fn,
@@ -1315,16 +1348,27 @@ class SimEngine:
         return self._command(scope, run_id, actor, "delete", {"folder": folder}, fn,
                              mailbox_id=mailbox_id)  # fmt: skip
 
-    def complete_run(self, scope: Scope, run_id: str, verdict: str, summary: dict[str, Any], *,
-                     actor: str = EVALUATOR) -> None:  # fmt: skip
-        """RUNNING -> PASSED/FAILED. Only the evaluator facade calls this, after evaluation."""
+    def complete_run(self, scope: Scope, run_id: str, verdict: str, *, evaluation_id: str,
+                     evaluated_through_sequence: int, actor: str = EVALUATOR) -> None:  # fmt: skip
+        """RUNNING -> PASSED/FAILED after an evaluation of the log up to a pinned sequence.
+
+        CONFLICT if anything happened after the evaluated sequence (an agent action that was
+        never graded). The event carries only the verdict and evaluation id: grading details
+        stay in the evaluations table, never in the event log.
+        """
         if verdict not in (RunStatus.PASSED, RunStatus.FAILED):
             raise InvalidRequest("verdict must be PASSED or FAILED")
 
         def fn(c: Ctx) -> None:
+            if c.run.next_seq - 1 != evaluated_through_sequence:
+                raise Conflict(
+                    "the run changed after it was evaluated; re-evaluate before completing",
+                    details={"evaluated_through": evaluated_through_sequence,
+                             "latest": c.run.next_seq - 1},
+                )  # fmt: skip
             self._status(c, RunStatus(verdict))
-            c.emit("run.completed", {"verdict": verdict, "summary": summary}, actor=actor,
-                   operation="complete")  # fmt: skip
+            c.emit("run.completed", {"verdict": verdict, "evaluation_id": evaluation_id},
+                   actor=actor, operation="complete")  # fmt: skip
 
         self._command(
             scope, run_id, actor, "complete", {"verdict": verdict}, fn, require_running=True
@@ -1409,7 +1453,18 @@ class SimEngine:
                               content_id=a.content_id) for a in atts
             ],
             headers=row.headers, is_draft=row.is_draft, raw_blob_ref=row.raw_blob_ref,
+            imap_uid=row.imap_uid, provider_ids=self._provider_ids(c, row),
         )  # fmt: skip
+
+    def _provider_ids(self, c: Ctx, row: m.Message) -> dict[str, str]:
+        pid = m.ProviderId
+        ids = {f"{p}_{t}_id": x for p, t, x in c.session.execute(
+            select(pid.provider, pid.entity_type, pid.external_id)
+            .where(pid.run_id == c.run.id, pid.entity_id.in_([row.id, row.thread_id]))
+        )}  # fmt: skip
+        if row.provider_ids.get("draft_id"):
+            ids["draft_id"] = row.provider_ids["draft_id"]
+        return dict(sorted(ids.items()))
 
     def list_messages(self, scope: Scope, run_id: str, mailbox_id: str, *, folder: str | None = None,
                       actor: str = AGENT) -> list[CanonicalMessage]:  # fmt: skip
@@ -1429,9 +1484,11 @@ class SimEngine:
 
     def list_messages_page(self, scope: Scope, run_id: str, mailbox_id: str, *,
                            folder: str | None = None, page_size: int = 50, cursor: str | None = None,
-                           actor: str = AGENT) -> Page[CanonicalMessage]:  # fmt: skip
+                           order: str = "asc", actor: str = AGENT) -> Page[CanonicalMessage]:  # fmt: skip
         """Keyset-paginated listing ordered by (created_at, id): stable under a fixed state."""
         check_page_size(page_size)
+        if order not in ("asc", "desc"):
+            raise InvalidRequest("order must be 'asc' or 'desc'")
         after = decode_cursor(cursor) if cursor else None
 
         def fn(c: Ctx) -> Page[CanonicalMessage]:
@@ -1443,13 +1500,16 @@ class SimEngine:
                 stmt = stmt.where(
                     m.Message.folder_id == self._resolve_folder(c, mailbox_id, folder).id
                 )
+            key = tuple_(m.Message.created_at, m.Message.id)
             if after is not None:
-                stmt = stmt.where(
-                    tuple_(m.Message.created_at, m.Message.id) > (parse_ts(after[0]), after[1])
-                )
-            rows = c.session.execute(
-                stmt.order_by(m.Message.created_at, m.Message.id).limit(page_size + 1)
-            ).scalars().all()  # fmt: skip
+                bound = (parse_ts(after[0]), after[1])
+                stmt = stmt.where(key > bound if order == "asc" else key < bound)
+            ordering = (
+                (m.Message.created_at, m.Message.id)
+                if order == "asc"
+                else (m.Message.created_at.desc(), m.Message.id.desc())
+            )
+            rows = c.session.execute(stmt.order_by(*ordering).limit(page_size + 1)).scalars().all()
             items = [self._canonical(c, r) for r in rows[:page_size]]
             nxt = None
             if len(rows) > page_size:
@@ -1484,18 +1544,47 @@ class SimEngine:
                     ev.run_id == c.run.id, ev.sequence > since_sequence, ev.epoch == c.run.epoch,
                     (ev.payload["mailbox_id"].astext == mailbox_id)
                     | (ev.payload["message"]["mailbox_id"].astext == mailbox_id),
-                ).order_by(ev.sequence).limit(limit)
+                ).order_by(ev.sequence).limit(limit + 1)
             ).scalars().all()  # fmt: skip
+            has_more = len(rows) > limit
+            rows = rows[:limit]
             changes = [
                 {"sequence": r.sequence, "type": r.type,
                  "message_id": (r.payload.get("message") or {}).get("id") or r.payload.get("message_id")}
                 for r in rows
             ]  # fmt: skip
-            return {"changes": changes, "latest_sequence": c.run.next_seq - 1,
-                    "reset_since": bool(reset_since)}  # fmt: skip
+            # Resume from `next_since`, never from latest_sequence: when the page was cut short
+            # the remaining changes lie between the two.
+            next_since = rows[-1].sequence if has_more else c.run.next_seq - 1
+            return {"changes": changes, "next_since": next_since, "has_more": has_more,
+                    "latest_sequence": c.run.next_seq - 1, "reset_since": bool(reset_since)}  # fmt: skip
 
         return self._read(scope, run_id, actor, "read", {"since_sequence": since_sequence}, fn,
                           mailbox_id)  # fmt: skip
+
+    def resolve_external_id(self, scope: Scope, run_id: str, mailbox_id: str, provider: str,
+                            entity_type: str, external_id: str, *, actor: str = AGENT) -> str:  # fmt: skip
+        """Provider id -> internal id, only for entities inside `mailbox_id` (else NOT_FOUND)."""
+        if entity_type not in ("message", "thread", "draft"):
+            raise InvalidRequest("entity_type must be message, thread or draft")
+
+        def fn(c: Ctx) -> str:
+            self._mailbox(c, mailbox_id)
+            pid = m.ProviderId
+            entity = c.session.scalar(
+                select(pid.entity_id).where(pid.run_id == c.run.id, pid.provider == provider,
+                                            pid.entity_type == entity_type, pid.external_id == external_id)
+            )  # fmt: skip
+            owner: m.Thread | m.Message | None = None
+            if entity:
+                owner = (c.session.get(m.Thread, (entity, c.run.id)) if entity_type == "thread"
+                         else c.session.get(m.Message, (entity, c.run.id)))  # fmt: skip
+            if owner is None or owner.mailbox_id != mailbox_id:
+                raise NotFound(f"{provider} {entity_type} {external_id} not found")
+            return str(entity)
+
+        return self._read(scope, run_id, actor, "read",
+                          {"provider": provider, "entity_type": entity_type}, fn, mailbox_id)  # fmt: skip
 
     def get_message(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str,
                     *, actor: str = AGENT) -> CanonicalMessage:  # fmt: skip
@@ -1554,7 +1643,8 @@ class SimEngine:
             ).scalars()  # fmt: skip
             order = {st: i for i, (_, st) in enumerate(SYSTEM_FOLDERS)}
             ordered = sorted(rows, key=lambda f: (order.get(f.system_type or "", 99), f.name))
-            return [{"id": f.id, "name": f.name, "system_type": f.system_type} for f in ordered]
+            return [{"id": f.id, "name": f.name, "system_type": f.system_type,
+                     "uid_validity": f.uid_validity, "uid_next": f.uid_next} for f in ordered]  # fmt: skip
 
         return self._read(scope, run_id, actor, "read", {}, fn, mailbox_id)
 

@@ -6,6 +6,7 @@ Envelope: {"error": {"code": ..., "message": ..., "details": {...}, "request_id"
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from typing import Any
 
@@ -18,6 +19,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from mailsim.domain.errors import ErrorCode, SimError
 
 log = logging.getLogger("mailsim.api")
+_RID = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
 HTTP_STATUS: dict[ErrorCode, int] = {
     ErrorCode.INVALID_REQUEST: 400,
@@ -50,8 +52,9 @@ class ErrorEnvelope(BaseModel):
 def request_id(request: Request) -> str:
     rid = getattr(request.state, "request_id", None)
     if not rid:
-        rid = request.headers.get("x-request-id") or uuid.uuid4().hex
-        rid = rid[:64]
+        supplied = request.headers.get("x-request-id", "")
+        # only echo well-formed client ids (no log/header injection); otherwise mint one
+        rid = supplied if _RID.fullmatch(supplied) else uuid.uuid4().hex
         request.state.request_id = rid
     return str(rid)
 

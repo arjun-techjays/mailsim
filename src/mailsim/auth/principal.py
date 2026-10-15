@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from mailsim.domain.errors import PermissionDenied
+
 
 class Role(StrEnum):
     AGENT = "agent"
@@ -24,3 +26,10 @@ class Principal:
     run_id: str | None = None
     mailbox_id: str | None = None
     key_id: str | None = None
+
+    def __post_init__(self) -> None:
+        # Roles usually arrive as strings (DB columns, tokens): coerce, and reject unknowns.
+        try:
+            object.__setattr__(self, "role", Role(self.role))
+        except ValueError:
+            raise PermissionDenied(f"unknown role {self.role!r}") from None

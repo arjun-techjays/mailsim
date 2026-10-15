@@ -32,10 +32,21 @@ class AgentMailbox:
 
     # reads
     def list_messages(
-        self, *, folder: str | None = None, page_size: int = 50, cursor: str | None = None
+        self,
+        *,
+        folder: str | None = None,
+        page_size: int = 50,
+        cursor: str | None = None,
+        order: str = "asc",
     ) -> Page[CanonicalMessage]:
         return self._e.list_messages_page(*self._a(), folder=folder, page_size=page_size,
-                                          cursor=cursor, actor=AGENT)  # fmt: skip
+                                          cursor=cursor, order=order, actor=AGENT)  # fmt: skip
+
+    def resolve_external_id(self, provider: str, entity_type: str, external_id: str) -> str:
+        """Gmail/Graph id -> internal id, restricted to this mailbox."""
+        return self._e.resolve_external_id(
+            *self._a(), provider, entity_type, external_id, actor=AGENT
+        )
 
     def get_message(self, message_id: str) -> CanonicalMessage:
         return self._e.get_message(*self._a(), message_id, actor=AGENT)
@@ -67,13 +78,19 @@ class AgentMailbox:
     def insert_message(self, raw: bytes, *, folder: str = "inbox") -> dict[str, Any]:
         return self._e.insert_message(*self._a(), raw, folder=folder, actor=AGENT)
 
-    def create_draft(self, *, to: list[str], subject: str, text: str = "") -> dict[str, Any]:
-        return self._e.create_draft(*self._a(), to=to, subject=subject, text=text, actor=AGENT)
+    def create_draft(self, *, to: list[str], subject: str, text: str = "",
+                     cc: list[str] | None = None, bcc: list[str] | None = None,
+                     html: str | None = None, in_reply_to: str | None = None,
+                     references: list[str] | None = None) -> dict[str, Any]:  # fmt: skip
+        return self._e.create_draft(*self._a(), to=to, subject=subject, text=text, cc=cc, bcc=bcc,
+                                    html=html, in_reply_to=in_reply_to, references=references,
+                                    actor=AGENT)  # fmt: skip
 
-    def update_draft(
-        self, message_id: str, *, to: list[str], subject: str, text: str = ""
-    ) -> dict[str, Any]:
+    def update_draft(self, message_id: str, *, to: list[str], subject: str, text: str = "",
+                     cc: list[str] | None = None, bcc: list[str] | None = None,
+                     html: str | None = None, keep_attachments: bool = True) -> dict[str, Any]:  # fmt: skip
         return self._e.update_draft(*self._a(), message_id, to=to, subject=subject, text=text,
+                                    cc=cc, bcc=bcc, html=html, keep_attachments=keep_attachments,
                                     actor=AGENT)  # fmt: skip
 
     def send_draft(self, message_id: str) -> dict[str, Any]:
@@ -155,6 +172,10 @@ class Controller:
     def actions(self, run_id: str) -> list[dict[str, Any]]:
         return self._e.actions(self.scope, run_id)
 
+    def state(self, run_id: str) -> dict[str, Any]:
+        """Canonical mailbox state (spec 7.2). Contains no answer key."""
+        return self._e.state(self.scope, run_id)
+
 
 class EvaluatorView:
     """Evaluator access (spec 8.3): full state, trace, actions; completes runs with a verdict."""
@@ -186,8 +207,10 @@ class EvaluatorView:
     def state_at(self, run_id: str, up_to_sequence: int) -> dict[str, Any]:
         return self._e.state_at(self.scope, run_id, up_to_sequence)
 
-    def complete_run(self, run_id: str, verdict: str, summary: dict[str, Any]) -> None:
-        self._e.complete_run(self.scope, run_id, verdict, summary, actor=EVALUATOR)
+    def complete_run(self, run_id: str, verdict: str, *, evaluation_id: str,
+                     evaluated_through_sequence: int) -> None:  # fmt: skip
+        self._e.complete_run(self.scope, run_id, verdict, evaluation_id=evaluation_id,
+                             evaluated_through_sequence=evaluated_through_sequence, actor=EVALUATOR)  # fmt: skip
 
 
 Facade = AgentMailbox | Controller | EvaluatorView
@@ -196,13 +219,16 @@ Facade = AgentMailbox | Controller | EvaluatorView
 def facade_for(engine: SimEngine, principal: Principal) -> Facade:
     """Build the only facade a credential's role allows."""
     scope = Scope(principal.tenant_id, principal.project_id)
-    if principal.role is Role.AGENT:
+    role = principal.role
+    if role == Role.AGENT:
         if not principal.run_id or not principal.mailbox_id:
             raise PermissionDenied("agent credentials must be bound to a run and a mailbox")
         return AgentMailbox(engine, scope, principal.run_id, principal.mailbox_id)
-    if principal.role is Role.CONTROLLER:
+    if role == Role.CONTROLLER:
         return Controller(engine, scope)
-    return EvaluatorView(engine, scope)
+    if role == Role.EVALUATOR:
+        return EvaluatorView(engine, scope)
+    raise PermissionDenied(f"unknown role {role!r}")  # fail closed, never the most privileged
 
 
 __all__ = ["AgentMailbox", "CONTROLLER", "Controller", "EvaluatorView", "Facade", "facade_for"]

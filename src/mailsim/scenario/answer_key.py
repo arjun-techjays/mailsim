@@ -80,6 +80,9 @@ class MessageWhere(_Strict):
     body_contains: str | None = None
     has_attachment: bool | None = None
     in_reply_to_subject: str | None = None  # replies to a message with this subject
+    # Messages the agent itself placed in a mailbox (insert/copy/draft) cannot satisfy a
+    # check unless explicitly allowed: the agent must not be able to forge evidence.
+    include_agent_created: bool = False
 
 
 class StateCheck(_Strict):
