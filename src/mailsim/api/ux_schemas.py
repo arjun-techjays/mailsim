@@ -11,11 +11,11 @@ from typing import Any, Literal
 from pydantic import Field
 
 from mailsim.api.schemas import (
+    _M,
     MAX_FIXTURE_B64_CHARS,
     MAX_SOURCE_CHARS,
     FixtureB64,
     ValidationIssue,
-    _M,
 )
 
 Interface = Literal["rest", "gmail", "graph", "mcp_http", "mcp_stdio", "imap", "smtp"]

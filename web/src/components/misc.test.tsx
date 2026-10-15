@@ -84,3 +84,24 @@ describe('small components', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Copy failed');
   });
 });
+
+describe('PageIntro', () => {
+  it('renders the explanation and next-step links', async () => {
+    const { render, screen } = await import('@testing-library/react');
+    const { MemoryRouter } = await import('react-router-dom');
+    const { PageIntro } = await import('./PageIntro');
+    render(
+      <MemoryRouter>
+        <PageIntro next={[{ to: '/runs', label: 'Start a run' }]}>Scenarios describe a world.</PageIntro>
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('page-intro')).toHaveTextContent('Scenarios describe a world.');
+    expect(screen.getByRole('link', { name: 'Start a run' })).toHaveAttribute('href', '/runs');
+    render(
+      <MemoryRouter>
+        <PageIntro>Alone</PageIntro>
+      </MemoryRouter>,
+    );
+    expect(screen.getAllByTestId('page-intro')[1]?.querySelector('nav')).toBeNull();
+  });
+});
