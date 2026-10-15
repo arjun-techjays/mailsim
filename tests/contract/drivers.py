@@ -717,3 +717,287 @@ class McpDriver(NeutralDriver):
 
 
 DRIVERS.append(McpDriver)
+
+
+# ---- Wave 2 (WS-E): IMAP4rev1 + SMTP listeners, driven with imaplib / smtplib -------------
+class ImapSmtpError(Exception):
+    """A NO/BAD/5xx reply; `code` is the engine error code carried in the reply text."""
+
+    def __init__(self, code: str, text: str) -> None:
+        self.code = code
+        super().__init__(f"{code}: {text}")
+
+
+_IMAP_FOLDERS = ["INBOX", "Sent", "Drafts", "Trash", "Archive"]
+_SYSTEM_TO_IMAP = {v: k for k, v in _FOLDER.items()}
+_IMAP_FLAGS = {"SEEN": "\\Seen", "ANSWERED": "\\Answered", "FLAGGED": "\\Flagged",
+               "DELETED": "\\Deleted", "DRAFT": "\\Draft"}  # fmt: skip
+_CODES = ("INVALID_REQUEST", "NOT_FOUND", "PERMISSION_DENIED", "UNSUPPORTED_OPERATION",
+          "CONFLICT", "RATE_LIMITED", "SIMULATION_LIMIT_EXCEEDED", "RUN_NOT_ACTIVE",
+          "EXTERNAL_DELIVERY_BLOCKED", "UPSTREAM_UNAVAILABLE")  # fmt: skip
+_LISTENERS: dict[str, Any] = {}
+
+
+def _listeners(engine: Any) -> Any:
+    """One loopback IMAP+SMTP listener pair per engine (each test has its own engine)."""
+    from mailsim.protocols.server import ProtocolServers
+
+    current = _LISTENERS.get("servers")
+    if current is None or _LISTENERS.get("engine") is not engine:
+        if current is not None:
+            current.stop()
+        _LISTENERS.update(engine=engine,
+                          servers=ProtocolServers(engine, imap_port=0, smtp_port=0).start())  # fmt: skip
+    return _LISTENERS["servers"]
+
+
+def _code_in(text: str) -> str:
+    import re
+
+    found = re.search(r"\b(" + "|".join(_CODES) + r")\b", text)
+    if found:
+        return found.group(1)
+    return "NOT_FOUND" if "TRYCREATE" in text or "NONEXISTENT" in text else "UNKNOWN"
+
+
+class ImapSmtpDriver(NeutralDriver):
+    """Reads and mailbox changes over IMAP, sending over SMTP submission. Refs are the IMAP
+    OBJECTID EMAILID (= the engine message id, stable across moves); threads are THREADIDs.
+    Only `changes` is not offered (no CONDSTORE/QRESYNC): `probe("changes")` shows the
+    explicit refusal."""
+
+    name: ClassVar[str] = "imap_smtp"
+    capabilities: ClassVar[frozenset[str]] = ALL_CAPABILITIES - {"changes"}
+
+    def __init__(self, mailbox: AgentMailbox) -> None:
+        from mailsim.api.auth import issue_key
+
+        engine, scope = harness_parts(mailbox)
+        self.servers = _listeners(engine)
+        with engine.session_factory.begin() as s:
+            self.key = issue_key(s, tenant_id=scope.tenant_id, project_id=scope.project_id,
+                                 role="agent", run_id=mailbox.run_id,
+                                 mailbox_id=mailbox.mailbox_id).api_key  # fmt: skip
+        self.address = next(m["email"] for m in engine.list_mailboxes(scope, mailbox.run_id)
+                            if m["id"] == mailbox.mailbox_id)  # fmt: skip
+        with self._imap():  # fail fast: the engine decides whether this mailbox is reachable
+            pass
+
+    # ---------------------------------------------------------------- plumbing
+    def _imap(self) -> Any:
+        import contextlib
+        import imaplib
+
+        @contextlib.contextmanager
+        def session() -> Any:
+            client = imaplib.IMAP4("127.0.0.1", self.servers.imap_port, timeout=10)
+            try:
+                try:
+                    client.login(self.address, self.key)
+                except imaplib.IMAP4.error as exc:
+                    raise ImapSmtpError(_code_in(str(exc)), str(exc)) from None
+                yield client
+            finally:
+                with contextlib.suppress(Exception):
+                    client.logout()
+
+        return session()
+
+    @staticmethod
+    def _ok(result: tuple[str, list[Any]]) -> list[Any]:
+        typ, data = result
+        if typ != "OK":
+            text = b" ".join(d for d in data if isinstance(d, bytes)).decode("utf-8", "replace")
+            raise ImapSmtpError(_code_in(text), text)
+        return data
+
+    def _call(self, client: Any, *args: Any) -> list[Any]:
+        import imaplib
+
+        try:
+            return self._ok(client.uid(*args))
+        except imaplib.IMAP4.error as exc:
+            raise ImapSmtpError(_code_in(str(exc)), str(exc)) from None
+
+    def _fetch(self, client: Any, folder: str, uids: str) -> list[Msg]:
+        import re
+        from email import message_from_bytes, policy
+
+        data = self._call(client, "FETCH", uids, "(UID FLAGS EMAILID THREADID BODY.PEEK[])")
+        out = []
+        for item in data:
+            if not isinstance(item, tuple):
+                continue
+            meta, raw = item[0].decode(), item[1]
+            flags_text = re.search(r"FLAGS \(([^)]*)\)", meta).group(1).split()  # type: ignore[union-attr]
+            email_id = re.search(r"EMAILID \(([^)]+)\)", meta).group(1)  # type: ignore[union-attr]
+            thread_id = re.search(r"THREADID \(([^)]+)\)", meta).group(1)  # type: ignore[union-attr]
+            back = {v: k for k, v in _IMAP_FLAGS.items()}
+            parsed = message_from_bytes(raw, policy=policy.default)
+            irt = parsed.get("In-Reply-To")
+            out.append(Msg(email_id, email_id, str(parsed.get("Message-ID", "")).strip(),
+                           thread_id, str(parsed.get("Subject", "")), _FOLDER[folder],
+                           frozenset(back[f] for f in flags_text if f in back),
+                           frozenset(f for f in flags_text if not f.startswith("\\")),
+                           str(irt).strip() if irt else None,
+                           raw.decode("utf-8", "replace")))  # fmt: skip
+        return out
+
+    def _select(self, client: Any, folder: str) -> None:
+        self._ok(client.select(folder))
+
+    def _where(self, client: Any, key: str, value: str) -> list[tuple[str, list[str]]]:
+        """[(folder, uids)] matching an OBJECTID search key, across all folders."""
+        hits = []
+        for folder in _IMAP_FOLDERS:
+            self._select(client, folder)
+            uids = self._call(client, "SEARCH", key, value)[0].split()
+            if uids:
+                hits.append((folder, [u.decode() for u in uids]))
+        return hits
+
+    def _locate(self, client: Any, ref: str) -> tuple[str, str]:
+        hits = self._where(client, "EMAILID", ref)
+        if not hits:
+            raise ImapSmtpError("NOT_FOUND", f"message {ref} not found")
+        folder, uids = hits[0]
+        self._select(client, folder)
+        return folder, uids[0]
+
+    # ---------------------------------------------------------------- reads
+    def list(self, folder: str | None = None) -> list[Msg]:
+        folders = [_SYSTEM_TO_IMAP[folder]] if folder else _IMAP_FOLDERS
+        out: list[Msg] = []
+        with self._imap() as c:
+            for name in folders:
+                self._select(c, name)
+                out += self._fetch(c, name, "1:*")
+        return out
+
+    def page(self, size: int, cursor: str | None) -> tuple[list[Msg], str | None]:
+        """Cursor = "<folder index>:<last UID>", walking folders in LIST order by UID."""
+        fi, last = (int(x) for x in cursor.split(":")) if cursor else (0, 0)
+        items: list[Msg] = []
+        with self._imap() as c:
+            while fi < len(_IMAP_FOLDERS):
+                name = _IMAP_FOLDERS[fi]
+                self._select(c, name)
+                uids = [int(u) for u in self._call(c, "SEARCH", "ALL")[0].split() if int(u) > last]
+                take = uids[: size - len(items)]
+                if take:
+                    items += self._fetch(c, name, ",".join(map(str, take)))
+                    last = take[-1]
+                if len(items) == size:
+                    more = uids[len(take):] or any(
+                        self._select(c, n) is None and self._call(c, "SEARCH", "ALL")[0]
+                        for n in _IMAP_FOLDERS[fi + 1 :]
+                    )  # fmt: skip
+                    return items, (f"{fi}:{last}" if more else None)
+                fi, last = fi + 1, 0
+        return items, None
+
+    def get(self, ref: str) -> Msg:
+        with self._imap() as c:
+            folder, uid = self._locate(c, ref)
+            return self._fetch(c, folder, uid)[0]
+
+    def _search(self, key: str, value: str) -> list[Msg]:
+        out: list[Msg] = []
+        with self._imap() as c:
+            for folder, uids in self._where(c, key, value):
+                self._select(c, folder)
+                out += self._fetch(c, folder, ",".join(uids))
+        return out
+
+    def thread(self, thread_ref: str) -> list[Msg]:
+        return self._search("THREADID", thread_ref)
+
+    def search(self, text: str) -> list[Msg]:
+        return self._search("TEXT", '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"')
+
+    # ---------------------------------------------------------------- SMTP
+    def _submit(self, to: list[str], subject: str, text: str, **headers: str) -> str:
+        import re
+        import smtplib
+        from email import policy
+        from email.message import EmailMessage
+
+        msg = EmailMessage()
+        msg["From"], msg["To"], msg["Subject"] = self.address, ", ".join(to), subject
+        for k, v in headers.items():
+            msg[k] = v
+        msg.set_content(text)
+        with smtplib.SMTP("127.0.0.1", self.servers.smtp_port, timeout=10) as s:
+            s.login(self.address, self.key)
+            s.mail(self.address)
+            for rcpt in to:
+                code, resp = s.rcpt(rcpt)
+                if code >= 400:
+                    s.rset()
+                    raise ImapSmtpError(_code_in(resp.decode()), resp.decode())
+            code, resp = s.data(msg.as_bytes(policy=policy.SMTP))
+            if code >= 400:
+                raise ImapSmtpError(_code_in(resp.decode()), resp.decode())
+        found = re.search(r"queued as (<[^>]+>)", resp.decode())
+        assert found, resp
+        return found.group(1)
+
+    def send(self, to: list[str], subject: str, text: str) -> str:
+        return self._submit(to, subject, text)
+
+    def reply(self, ref: str, text: str) -> None:
+        from email import message_from_bytes, policy
+
+        orig = self.get(ref)
+        parsed = message_from_bytes(orig.body.encode(), policy=policy.default)
+        sender = parsed["From"].addresses[0].addr_spec.lower()
+        to = [sender] if sender != self.address else [a.addr_spec for a in parsed["To"].addresses]
+        subject = orig.subject if orig.subject.lower().startswith("re:") else f"Re: {orig.subject}"
+        refs = " ".join(filter(None, [str(parsed.get("References", "")), orig.message_id_header]))
+        self._submit(to, subject, text, **{"In-Reply-To": orig.message_id_header,
+                                           "References": refs.strip()})  # fmt: skip
+
+    # ---------------------------------------------------------------- mailbox writes
+    def move(self, ref: str, folder: str) -> None:
+        with self._imap() as c:
+            _, uid = self._locate(c, ref)
+            self._call(c, "MOVE", uid, _SYSTEM_TO_IMAP.get(folder, folder))
+
+    def _store(self, ref: str, flags: list[str]) -> None:
+        with self._imap() as c:
+            _, uid = self._locate(c, ref)
+            self._call(c, "STORE", uid, "+FLAGS", "(" + " ".join(flags) + ")")
+
+    def flag(self, ref: str, add: list[str]) -> None:
+        self._store(ref, [_IMAP_FLAGS[f] for f in add])
+
+    def label(self, ref: str, add: list[str]) -> None:
+        self._store(ref, add)  # IMAP keywords are the engine's user labels
+
+    def delete(self, ref: str) -> None:
+        with self._imap() as c:
+            _, uid = self._locate(c, ref)
+            self._call(c, "STORE", uid, "+FLAGS", "(\\Deleted)")
+            self._call(c, "EXPUNGE", uid)
+
+    def changes(self, since: int) -> tuple[list[str], int]:  # pragma: no cover - not declared
+        raise ImapSmtpError("UNSUPPORTED_OPERATION", "no CONDSTORE/QRESYNC")
+
+    def probe(self, cap: str) -> None:
+        """The native IMAP call for an undeclared capability (CONDSTORE change feed)."""
+        assert cap == "changes", cap
+        with self._imap() as c:
+            self._select(c, "INBOX")
+            self._call(c, "FETCH", "1:*", "(FLAGS)", "(CHANGEDSINCE 1)")
+
+    def error_code(self, exc: BaseException) -> str:
+        import smtplib
+
+        if isinstance(exc, ImapSmtpError):
+            return exc.code
+        if isinstance(exc, smtplib.SMTPException):
+            return _code_in(str(exc))
+        return super().error_code(exc)
+
+
+DRIVERS.append(ImapSmtpDriver)
