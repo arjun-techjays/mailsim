@@ -60,6 +60,11 @@ export function saveDraft(storageKey: string, draft: Draft, baseline: string, fi
     sessionStorage.setItem(storageKey + FIXTURES, text);
     return { fixturesKept: true };
   } catch {
+    try {
+      sessionStorage.removeItem(storageKey + FIXTURES); // never restore stale fixtures
+    } catch {
+      /* storage disabled */
+    }
     return { fixturesKept: false }; // quota or storage disabled
   }
 }

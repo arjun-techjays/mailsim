@@ -39,6 +39,7 @@ export function SessionProvider({ children, initial, probe = initial === undefin
       if (mode === 'operator' && launchToken) {
         const operator: Session = { baseUrl, apiKey: '', role: 'operator', localToken: launchToken };
         queryClient.clear();
+        clearAllDrafts();
         saveSession(operator);
         setSession(operator);
       }

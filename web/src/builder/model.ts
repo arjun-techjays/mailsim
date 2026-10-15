@@ -401,7 +401,7 @@ export function fromDocument(doc: unknown): Imported {
   });
   const uids = new Map<string, string>();
   for (const p of [...personas].reverse()) uids.set(p.id, p.uid); // first persona wins on duplicates
-  const ref: Resolve = (id) => uids.get(id) ?? id;
+  const ref: Resolve = (id) => (id ? (uids.get(id) ?? id) : id); // a missing ref never binds to an id-less persona
   for (const p of personas) for (const r of p.script) r.from = r.from && ref(r.from);
   const form: ScenarioForm = {
     schemaVersion: str(root.schema_version) || SCHEMA_VERSION,

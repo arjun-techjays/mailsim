@@ -255,3 +255,27 @@ describe('model helpers', () => {
     ).toEqual(['extra', 'scenario.personas.0.behaviour', 'scenario.personas.0.behavior.script.0.on.fromm']);
   });
 });
+
+describe('missing references (integrator follow-up)', () => {
+  it('never bind to a persona whose id is still empty', async () => {
+    const { fromDocument, setPersonaId, toDocument } = await import('./model');
+    const imported = fromDocument({
+      schema_version: '1.1',
+      scenario: {
+        id: 's', version: 1, title: 't',
+        environment: { seed: 1, clock: { start_at: '2026-01-01T00:00:00Z' } },
+        organization: { domain: 'example.test' },
+        personas: [{ id: '', email: 'x@example.test', role: 'r' }],
+        mailboxes: [{ owner: '' }],
+        events: [{ id: 'e', trigger: { type: 'after_seconds', seconds: 1 }, event: { type: 'email.receive', from: '', to: '', subject: 's', body: 'b' } }],
+        agent: { mailbox: '' },
+      },
+    });
+    const f = imported.form;
+    setPersonaId(f, 0, 'alice', true);
+    const doc = toDocument(f) as { scenario: { mailboxes: { owner: string }[]; events: { event: { from: string } }[]; agent: { mailbox: string } } };
+    expect(doc.scenario.mailboxes[0]?.owner).toBe('');
+    expect(doc.scenario.events[0]?.event.from).toBe('');
+    expect(doc.scenario.agent.mailbox).toBe('');
+  });
+});

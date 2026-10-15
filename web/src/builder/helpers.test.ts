@@ -133,4 +133,16 @@ describe('draft storage', () => {
     expect(saveDraft(key, draft(), 'b')).toEqual({ fixturesKept: false });
     expect(() => clearDraft(key)).not.toThrow();
   });
+
+  it('removes previously stored fixtures when writing new ones fails (never restores stale ones)', () => {
+    const key = draftStorageKey('new', 'quota');
+    expect(saveDraft(key, draft({ 'a.eml': 'QQ==' }), 'b')).toEqual({ fixturesKept: true });
+    const real = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, k: string, v: string) {
+      if (k.endsWith(':fixtures')) throw new Error('quota');
+      real.call(this, k, v);
+    });
+    expect(saveDraft(key, draft({ 'b.eml': 'Qg==' }), 'b')).toEqual({ fixturesKept: false });
+    expect(sessionStorage.getItem(key + ':fixtures')).toBeNull();
+  });
 });
