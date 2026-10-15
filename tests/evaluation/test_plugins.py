@@ -322,6 +322,15 @@ def test_temporal_action_then_armed_event(world):
     assert o.status is Status.PASS and o.diff.actual["gap_seconds"] == 0
 
 
+def test_temporal_orders_consecutive_actions_without_events(world):
+    world.agent.get_message(world.inbox_id("Invoice INV-001"))  # read: no events
+    world.agent.search_messages("invoice")  # read: no events
+    chk = {"first": {"action": {"operation": "read"}}, "then": {"action": {"operation": "search"}}}
+    assert world.check(a("temporal", chk)).status is Status.PASS
+    back = {"first": {"action": {"operation": "search"}}, "then": {"action": {"operation": "read"}}}
+    assert world.check(a("temporal", back)).status is Status.FAIL
+
+
 # ----------------------------------------------------------------------------- protocol
 def test_protocol_error_budget(world):
     with pytest.raises(NotFound):
