@@ -29,11 +29,11 @@ def test_health_and_state():
     assert c.app.state.engine == "E"
 
 
-def test_stub_routes_fail_explicitly_with_envelope():
+def test_unauthenticated_requests_fail_with_envelope():
     r = client().get("/v1/runs/run_x", headers={"x-request-id": "req-123"})
-    assert r.status_code == 501
+    assert r.status_code == 401
     body = r.json()["error"]
-    assert body["code"] == "UNSUPPORTED_OPERATION" and body["details"]["owner"] == "WS-A"
+    assert body["code"] == "UNAUTHENTICATED" and body["details"] == {}
     assert body["request_id"] == "req-123" and r.headers["x-request-id"] == "req-123"
     bad = client().get("/v1/runs/run_x", headers={"x-request-id": "evil value;injected"})
     assert bad.json()["error"]["request_id"] != "evil value;injected"
@@ -47,28 +47,17 @@ def _frozen_routes():
         yield from module.router.routes
 
 
-def test_every_frozen_route_fails_explicitly_until_implemented():
-    """Capability discovery (spec 5.5): unimplemented operations never silently succeed."""
-    import inspect
-
-    import pytest
-
-    from mailsim.domain.errors import UnsupportedOperation
-
+def test_every_frozen_route_requires_a_credential():
+    """WS-A implemented the routes; every one of them refuses a missing credential (401)."""
     c = client()
     checked = 0
     for route in _frozen_routes():
         url = route.path.replace("{", "").replace("}", "")
         for method in sorted(route.methods - {"HEAD"}):
-            r = c.request(method, url, json={})  # unauthenticated: auth itself is not built yet
-            assert r.status_code == 501, (method, route.path, r.text)
-            assert r.json()["error"]["code"] == "UNSUPPORTED_OPERATION"
+            r = c.request(method, url, json={})
+            assert r.status_code == 401, (method, route.path, r.text)
+            assert r.json()["error"]["code"] == "UNAUTHENTICATED"
             checked += 1
-        # and the handler itself refuses explicitly, naming its owning workstream
-        kwargs = {name: None for name in inspect.signature(route.endpoint).parameters}
-        with pytest.raises(UnsupportedOperation) as ei:
-            route.endpoint(**kwargs)
-        assert ei.value.details["owner"] in ("WS-A", "WS-B")
     assert checked >= 28
 
 

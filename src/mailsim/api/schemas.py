@@ -236,3 +236,34 @@ class FolderOut(_M):
     id: str
     name: str
     system_type: str | None
+
+
+# ---- additive (Wave 1, WS-A) -------------------------------------------------------------
+class IssuedCredential(_M):
+    """A newly issued sandbox API key. `api_key` is shown once and never stored in clear."""
+
+    api_key: str
+    key_id: str
+    role: Literal["controller", "evaluator", "agent"]
+
+
+class ProjectCreated(ProjectOut):
+    """`POST /v1/projects` response: the project plus its first controller/evaluator keys."""
+
+    credentials: list[IssuedCredential]
+
+
+class ChangeOut(_M):
+    sequence: int
+    type: str
+    message_id: str | None
+
+
+class ChangeFeed(_M):
+    """Agent mailbox change feed keyed by event sequence (resume from `next_since`)."""
+
+    changes: list[ChangeOut]
+    next_since: int
+    has_more: bool
+    latest_sequence: int
+    reset_since: bool

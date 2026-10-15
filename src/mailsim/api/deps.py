@@ -10,20 +10,42 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from mailsim.api.auth import InvalidCredential, verify_key
 from mailsim.auth.principal import Principal, Role
 from mailsim.domain.errors import PermissionDenied, UnsupportedOperation
 
 bearer = HTTPBearer(auto_error=False, description="Sandbox-issued API key (role-scoped)")
 
 
+def _unauthenticated(message: str) -> HTTPException:
+    # mapped to the frozen envelope with code UNAUTHENTICATED (api/errors.py)
+    return HTTPException(status_code=401, detail=message, headers={"WWW-Authenticate": "Bearer"})
+
+
 def get_principal(
+    request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
 ) -> Principal:
-    """Resolve the caller's Principal from a sandbox API key. Implemented by WS-A."""
-    raise not_implemented("WS-A")
+    """Resolve the caller's Principal from a sandbox API key (`Authorization: Bearer msk_...`).
+
+    Missing, malformed, unknown, expired and revoked keys all answer 401 with the same
+    message, so the response never reveals whether a key exists.
+    """
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise _unauthenticated("missing or invalid API key")
+    session_factory = getattr(request.app.state, "session_factory", None)
+    if session_factory is None:
+        raise not_implemented("server configuration: no session_factory")
+    with session_factory() as session:
+        try:
+            principal = verify_key(session, credentials.credentials)
+        except InvalidCredential:
+            raise _unauthenticated("missing or invalid API key") from None
+    request.state.principal = principal
+    return principal
 
 
 def require_role(*roles: Role) -> Callable[[Principal], Principal]:

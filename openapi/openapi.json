@@ -725,6 +725,75 @@
         "title": "CategoryMetrics",
         "type": "object"
       },
+      "ChangeFeed": {
+        "additionalProperties": false,
+        "description": "Agent mailbox change feed keyed by event sequence (resume from `next_since`).",
+        "properties": {
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/ChangeOut"
+            },
+            "title": "Changes",
+            "type": "array"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "latest_sequence": {
+            "title": "Latest Sequence",
+            "type": "integer"
+          },
+          "next_since": {
+            "title": "Next Since",
+            "type": "integer"
+          },
+          "reset_since": {
+            "title": "Reset Since",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "changes",
+          "next_since",
+          "has_more",
+          "latest_sequence",
+          "reset_since"
+        ],
+        "title": "ChangeFeed",
+        "type": "object"
+      },
+      "ChangeOut": {
+        "additionalProperties": false,
+        "properties": {
+          "message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Id"
+          },
+          "sequence": {
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sequence",
+          "type",
+          "message_id"
+        ],
+        "title": "ChangeOut",
+        "type": "object"
+      },
       "ClockResult": {
         "additionalProperties": false,
         "properties": {
@@ -1304,6 +1373,36 @@
         "title": "InjectResult",
         "type": "object"
       },
+      "IssuedCredential": {
+        "additionalProperties": false,
+        "description": "A newly issued sandbox API key. `api_key` is shown once and never stored in clear.",
+        "properties": {
+          "api_key": {
+            "title": "Api Key",
+            "type": "string"
+          },
+          "key_id": {
+            "title": "Key Id",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "controller",
+              "evaluator",
+              "agent"
+            ],
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "api_key",
+          "key_id",
+          "role"
+        ],
+        "title": "IssuedCredential",
+        "type": "object"
+      },
       "MessagePage": {
         "additionalProperties": false,
         "properties": {
@@ -1392,6 +1491,45 @@
           "name"
         ],
         "title": "ProjectCreate",
+        "type": "object"
+      },
+      "ProjectCreated": {
+        "additionalProperties": false,
+        "description": "`POST /v1/projects` response: the project plus its first controller/evaluator keys.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "credentials": {
+            "items": {
+              "$ref": "#/components/schemas/IssuedCredential"
+            },
+            "title": "Credentials",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "tenant_id",
+          "name",
+          "created_at",
+          "credentials"
+        ],
+        "title": "ProjectCreated",
         "type": "object"
       },
       "ProjectOut": {
@@ -2032,6 +2170,77 @@
         ]
       }
     },
+    "/v1/mailboxes/{mailbox_id}/changes": {
+      "get": {
+        "description": "Mailbox change feed after event `since`; resume from `next_since` while `has_more`.\n`reset_since` true means the run was reset: resynchronise fully.",
+        "operationId": "changes_v1_mailboxes__mailbox_id__changes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mailbox_id",
+            "required": true,
+            "schema": {
+              "title": "Mailbox Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Since",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 500,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChangeFeed"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Changes",
+        "tags": [
+          "mailbox"
+        ]
+      }
+    },
     "/v1/mailboxes/{mailbox_id}/folders": {
       "get": {
         "operationId": "folders_v1_mailboxes__mailbox_id__folders_get",
@@ -2085,6 +2294,7 @@
     },
     "/v1/mailboxes/{mailbox_id}/messages": {
       "get": {
+        "description": "List (or with `q`, search subject/body/sender) ordered by (created_at, id).\nFollow `next_cursor` until it is null; under a fixed state no item is skipped or repeated.",
         "operationId": "list_messages_v1_mailboxes__mailbox_id__messages_get",
         "parameters": [
           {
@@ -2190,6 +2400,7 @@
         ]
       },
       "post": {
+        "description": "Send to simulated mailboxes only. External recipients follow the scenario's rule\n(deny/sink/event); nothing is ever delivered outside the sandbox.",
         "operationId": "send_v1_mailboxes__mailbox_id__messages_post",
         "parameters": [
           {
@@ -2246,6 +2457,54 @@
       }
     },
     "/v1/mailboxes/{mailbox_id}/messages/{message_id}": {
+      "delete": {
+        "description": "Permanently delete a message (to move it to Trash, PATCH `folder: trash`).",
+        "operationId": "delete_message_v1_mailboxes__mailbox_id__messages__message_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mailbox_id",
+            "required": true,
+            "schema": {
+              "title": "Mailbox Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "title": "Message Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Message",
+        "tags": [
+          "mailbox"
+        ]
+      },
       "get": {
         "operationId": "get_message_v1_mailboxes__mailbox_id__messages__message_id__get",
         "parameters": [
@@ -2301,6 +2560,7 @@
         ]
       },
       "patch": {
+        "description": "Move and/or change labels and flags. Each kind of change is one agent write (budget).",
         "operationId": "patch_message_v1_mailboxes__mailbox_id__messages__message_id__patch",
         "parameters": [
           {
@@ -2493,6 +2753,7 @@
     },
     "/v1/projects": {
       "post": {
+        "description": "Create a project in the caller's tenant. The response carries the new project's first\ncontroller and evaluator keys (shown once). The very first tenant/project/keys come from\n`python -m mailsim.api.server bootstrap`.",
         "operationId": "create_project_v1_projects_post",
         "requestBody": {
           "content": {
@@ -2509,7 +2770,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ProjectOut"
+                  "$ref": "#/components/schemas/ProjectCreated"
                 }
               }
             },
@@ -2539,6 +2800,7 @@
     },
     "/v1/projects/{project_id}": {
       "get": {
+        "description": "Projects in the caller's tenant only (any other id answers NOT_FOUND).",
         "operationId": "get_project_v1_projects__project_id__get",
         "parameters": [
           {
@@ -2682,8 +2944,57 @@
         ]
       }
     },
+    "/v1/runs/{run_id}/agent-credentials": {
+      "post": {
+        "description": "Issue an additional agent key for a run (e.g. after a lost or redacted response).",
+        "operationId": "create_agent_credential_v1_runs__run_id__agent_credentials_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentCredential"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Agent Credential",
+        "tags": [
+          "control"
+        ]
+      }
+    },
     "/v1/runs/{run_id}/artifacts": {
       "get": {
+        "description": "Trace, raw MIME and attachment blobs; evaluation reports for evaluators only.",
         "operationId": "run_artifacts_v1_runs__run_id__artifacts_get",
         "parameters": [
           {
@@ -2994,8 +3305,79 @@
         ]
       }
     },
+    "/v1/runs/{run_id}/evaluations/{evaluation_id}/report": {
+      "get": {
+        "description": "Download one evaluation's report (JSON, JUnit XML or Markdown).",
+        "operationId": "evaluation_report_v1_runs__run_id__evaluations__evaluation_id__report_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "evaluation_id",
+            "required": true,
+            "schema": {
+              "title": "Evaluation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "format",
+            "required": false,
+            "schema": {
+              "default": "json",
+              "enum": [
+                "json",
+                "junit",
+                "markdown"
+              ],
+              "title": "Format",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {},
+              "application/xml": {},
+              "text/markdown; charset=utf-8": {}
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Evaluation Report",
+        "tags": [
+          "control"
+        ]
+      }
+    },
     "/v1/runs/{run_id}/events": {
       "get": {
+        "description": "Event trace in sequence order; follow `next_cursor` until it is null.",
         "operationId": "run_events_v1_runs__run_id__events_get",
         "parameters": [
           {
@@ -3071,6 +3453,7 @@
     },
     "/v1/runs/{run_id}/mailboxes/{mailbox_id}/inject": {
       "post": {
+        "description": "Inject an inbound message into a simulated mailbox. Nothing ever leaves the sandbox:\nthe only delivery status is `delivered_to_simulated_mailbox`.",
         "operationId": "inject_v1_runs__run_id__mailboxes__mailbox_id__inject_post",
         "parameters": [
           {
@@ -3218,6 +3601,7 @@
     },
     "/v1/runs/{run_id}/reset": {
       "post": {
+        "description": "Restore the scenario baseline (new epoch). The run is READY again; start it.",
         "operationId": "reset_run_v1_runs__run_id__reset_post",
         "parameters": [
           {
@@ -3424,6 +3808,7 @@
     },
     "/v1/runs/{run_id}/state": {
       "get": {
+        "description": "Canonical mailbox state. `at_sequence` (state as of that event) is evaluator-only.",
         "operationId": "state_v1_runs__run_id__state_get",
         "parameters": [
           {
@@ -3489,6 +3874,7 @@
     },
     "/v1/scenarios": {
       "get": {
+        "description": "Scenarios in the caller's project; `tag` matches the latest version's tags, `q` is a\ncase-insensitive substring of the key or the latest title.",
         "operationId": "list_scenarios_v1_scenarios_get",
         "parameters": [
           {
@@ -3561,6 +3947,7 @@
         ]
       },
       "post": {
+        "description": "Publish a scenario version from YAML/JSON text or a parsed document plus base64\nfixtures. Inline evaluation assertions are split off into an evaluator-only answer key.",
         "operationId": "create_scenario_v1_scenarios_post",
         "parameters": [
           {
@@ -3820,6 +4207,7 @@
         ]
       },
       "post": {
+        "description": "Publish a hidden answer-key version. The response is metadata only.",
         "operationId": "create_answer_key_v1_scenarios__scenario_key__answer_keys_post",
         "parameters": [
           {
@@ -3877,6 +4265,7 @@
     },
     "/v1/scenarios/{scenario_key}/runs": {
       "post": {
+        "description": "Create (and by default start) an isolated run. The agent's key is returned ONCE here;\nan idempotent replay returns it redacted (mint another with\n`POST /v1/runs/{run_id}/agent-credentials`).",
         "operationId": "create_run_v1_scenarios__scenario_key__runs_post",
         "parameters": [
           {
@@ -3951,6 +4340,7 @@
     },
     "/v1/scenarios/{scenario_key}/validate": {
       "post": {
+        "description": "Validate schema, references, fixtures and assertions without storing anything.",
         "operationId": "validate_scenario_v1_scenarios__scenario_key__validate_post",
         "parameters": [
           {
