@@ -1004,6 +1004,22 @@ class SimEngine:
                 if orig is None:
                     raise NotFound(f"message {in_reply_to_message_id} not found")
                 irt, refs = orig.message_id_header, [*orig.references, orig.message_id_header]
+                # at most one recorded outcome per (epoch, persona, message): concurrent
+                # runtimes cannot double-reply (checked under the run lock)
+                ev = m.EventRow
+                already = c.session.scalar(
+                    select(func.count()).select_from(ev).where(
+                        ev.run_id == c.run.id, ev.epoch == c.run.epoch,
+                        ev.type.in_(("persona.generated", "persona.generation_failed")),
+                        ev.payload["persona_id"].astext == persona_id,
+                        (ev.payload["in_reply_to"].astext == irt)
+                        | (ev.payload["message_id"].astext == in_reply_to_message_id),
+                    )
+                )  # fmt: skip
+                if already:
+                    raise Conflict(
+                        f"persona {persona_id} already answered {in_reply_to_message_id}"
+                    )
             c.emit("persona.generated",
                    {"persona_id": persona_id, "generation": generation, "subject": subject,
                     "text": text, "to": to, "in_reply_to": irt},

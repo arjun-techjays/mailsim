@@ -81,7 +81,7 @@ ALLOWED = {
     "anthropic": {"src/mailsim/llm/providers/anthropic.py"},
     "httpx": {"src/mailsim/llm/providers/openai_compatible.py"},
 }
-ALWAYS_FORBIDDEN = FORBIDDEN | {"anthropic", "openai", "aiosmtpd.handlers", "mcp.client"}
+ALWAYS_FORBIDDEN = FORBIDDEN | {"anthropic", "openai", "aiosmtpd.handlers", "mcp.client", "httpx2"}
 
 
 def test_source_tree_has_no_mail_or_network_imports():
