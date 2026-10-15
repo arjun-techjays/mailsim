@@ -3,6 +3,7 @@ import pytest
 from mailsim.domain.errors import InvalidRequest
 from mailsim.llm.config import REDACTED, LLMConfig, redact, secret_values
 from mailsim.llm.contract import DEFAULT_MODEL
+from tests.llm.conftest import fake_key
 
 
 def test_defaults_are_offline_stub():
@@ -45,11 +46,45 @@ def test_openai_compatible_requirements():
         ({"MAILSIM_LLM_MAX_CALLS": "many"}, "integer"),
         ({"MAILSIM_LLM_TIMEOUT_SECONDS": "0"}, "invalid LLM configuration"),
         ({"MAILSIM_LLM_MAX_CALLS": "-1"}, "invalid LLM configuration"),
+        ({"MAILSIM_LLM_TIMEOUT_SECONDS": "soon"}, "number"),
+        (
+            {
+                "MAILSIM_LLM_PROVIDER": "openai_compatible",
+                "MAILSIM_LLM_MODEL": "m",
+                "MAILSIM_LLM_BASE_URL": "http://llm.example.test/v1",
+            },
+            "invalid LLM configuration",
+        ),
+        (
+            {
+                "MAILSIM_LLM_PROVIDER": "openai_compatible",
+                "MAILSIM_LLM_MODEL": "m",
+                "MAILSIM_LLM_BASE_URL": "ftp://127.0.0.1/v1",
+            },
+            "invalid LLM configuration",
+        ),
+        ({"MAILSIM_LLM_PROVIDER": "anthropic", "MAILSIM_ENV": "deployment"}, "HTTPS_PROXY"),
     ],
 )
 def test_invalid_env(env, match):
     with pytest.raises(InvalidRequest, match=match):
         LLMConfig.from_env(env)
+
+
+@pytest.mark.parametrize("value", ["0", "false", "No", "OFF"])
+def test_fallbacks_off_values(value):
+    assert LLMConfig.from_env({"MAILSIM_LLM_FALLBACKS": value}).fallbacks is False
+
+
+def test_float_timeout_urls_and_deployment_proxy():
+    assert LLMConfig.from_env({"MAILSIM_LLM_TIMEOUT_SECONDS": "2.5"}).timeout_seconds == 2.5
+    for url in ("https://llm.example.test/v1", "http://localhost:11434/v1",
+                "http://[::1]:11434/v1", "http://127.0.0.1:11434/v1"):  # fmt: skip
+        assert LLMConfig(provider="openai_compatible", model="m", base_url=url).base_url == url
+    deployed = {"MAILSIM_LLM_PROVIDER": "anthropic", "MAILSIM_ENV": "deployment"}
+    assert LLMConfig.from_env({**deployed, "HTTPS_PROXY": "http://egress:3128"}).provider
+    assert LLMConfig.from_env({**deployed, "https_proxy": "http://egress:3128"}).provider
+    assert LLMConfig.from_env({"MAILSIM_ENV": "deployment"}).provider == "stub"
 
 
 def test_from_process_env(monkeypatch):
@@ -65,11 +100,11 @@ def test_redact_env_secrets_and_patterns(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     assert secret_values() == ["plain-secret-value-123"]
     text = (
-        "key plain-secret-value-123; sk-ant-api03-AbCdEf123456; sk-abcdefghijklmnop1234; "
+        f"key plain-secret-value-123; {fake_key()}; {fake_key('sk-')}; "
         'Authorization: Bearer abc.def.ghi; x-api-key: zzz999; {"api_key": "qqq"}'
     )
     out = redact(text, ["extra-token", ""])
-    for leaked in ("plain-secret-value-123", "sk-ant-api03", "sk-abcdefghijklmnop", "abc.def.ghi",
+    for leaked in ("plain-secret-value-123", "api03-FAKE", "abc.def.ghi",
                    "zzz999", "qqq"):  # fmt: skip
         assert leaked not in out
     assert out.count(REDACTED) >= 6 and "x-api-key: " in out

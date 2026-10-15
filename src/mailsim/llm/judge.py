@@ -9,6 +9,11 @@ returning ``{"passed": bool | None, "score": float | None, "explanation": str,
 "llm_call_id": str | None}``. The judge sees ONLY the requirement, the rubric and the texts
 the agent sent - never deterministic check data, answer keys or mailbox state. Unparseable
 output, invalid fields or a provider/budget failure yield INCONCLUSIVE (``passed=None``).
+
+Injection containment: agent texts are HTML-escaped (``&``, ``<``, ``>``) so they cannot
+close their delimiter, their total size is capped, and the verdict must be the model's
+ENTIRE output (one JSON object, optionally fenced) - a verdict echoed from an agent message
+next to the real one is rejected.
 """
 
 from __future__ import annotations
@@ -32,17 +37,38 @@ JUDGE_SYSTEM = (
     '"score": number between 0 and 1 or null, "explanation": "one or two sentences"}.'
 )
 MAX_PARSE_CHARS = 20_000
-_FENCE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
+MAX_AGENT_CHARS = 20_000  # total agent text shown to the judge
+TRUNCATED = "[truncated]"
+_FENCE = re.compile(r"\A```(?:json)?[ \t]*\n?(.*?)\n?```\Z", re.DOTALL)
 
 
-def build_judge_request(*, requirement: str, rubric: str, agent_texts: list[str],
-                        run_id: str | None = None, max_tokens: int = 4096) -> LLMRequest:  # fmt: skip
+def _escape(text: str) -> str:
+    """Neutralise delimiter breakout: agent text can never close or open a tag."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def cap_agent_texts(agent_texts: list[str], limit: int = MAX_AGENT_CHARS) -> list[str]:
+    """Keep at most `limit` characters in total, marking what was cut."""
+    out: list[str] = []
+    left = limit
+    for i, text in enumerate(agent_texts):
+        if left <= 0:
+            out.append(f"{TRUNCATED} {len(agent_texts) - i} further message(s) omitted")
+            break
+        out.append(text if len(text) <= left else f"{text[:left]}\n{TRUNCATED}")
+        left -= len(text)
+    return out
+
+
+def build_judge_request(*, requirement: str, rubric: str, agent_texts: list[str], run_id: str,
+                        max_tokens: int = 4096) -> LLMRequest:  # fmt: skip
+    texts = cap_agent_texts(list(agent_texts))
     parts = [f"<requirement>\n{requirement}\n</requirement>",
              f"<rubric>\n{rubric or '(none)'}\n</rubric>",
              f"<agent_messages count=\"{len(agent_texts)}\">"]  # fmt: skip
     parts += [
-        f'<agent_message index="{i}">\n{text}\n</agent_message>'
-        for i, text in enumerate(agent_texts)
+        f'<agent_message index="{i}">\n{_escape(text)}\n</agent_message>'
+        for i, text in enumerate(texts)
     ]
     parts.append("</agent_messages>")
     return LLMRequest(
@@ -54,48 +80,41 @@ def build_judge_request(*, requirement: str, rubric: str, agent_texts: list[str]
     )
 
 
-def _candidates(text: str) -> list[Any]:
-    text = text[:MAX_PARSE_CHARS]
-    sources = [m.group(1) for m in _FENCE.finditer(text)] + [text]
-    decoder = json.JSONDecoder()
-    found: list[Any] = []
-    for src in sources:
-        for idx, ch in enumerate(src):
-            if ch != "{":
-                continue
-            try:
-                obj, _ = decoder.raw_decode(src, idx)
-            except ValueError:
-                continue
-            found.append(obj)
-    return found
-
-
 def parse_verdict(text: str) -> dict[str, Any] | None:
-    """The first JSON object with a valid verdict shape, else None."""
-    for obj in _candidates(text):
-        if not isinstance(obj, dict) or "passed" not in obj:
-            continue
-        passed, score, explanation = obj.get("passed"), obj.get("score"), obj.get("explanation")
-        if passed is not None and not isinstance(passed, bool):
-            continue
-        if score is not None:
-            if isinstance(score, bool) or not isinstance(score, int | float):
-                continue
-            if not 0 <= float(score) <= 1:
-                continue
-            score = float(score)
-        if not isinstance(explanation, str):
-            explanation = ""
-        return {"passed": passed, "score": score, "explanation": explanation[:2000]}
-    return None
+    """Accept ONLY a response that is exactly one JSON verdict object (optionally inside one
+    code fence). Anything else - prose around it, several objects, an echoed verdict
+    followed by another - is None (INCONCLUSIVE)."""
+    body = text.strip()
+    if len(body) > MAX_PARSE_CHARS:
+        return None
+    fenced = _FENCE.match(body)
+    if fenced:
+        body = fenced.group(1).strip()
+    try:
+        obj = json.loads(body)
+    except ValueError:
+        return None
+    if not isinstance(obj, dict) or "passed" not in obj:
+        return None
+    passed, score, explanation = obj.get("passed"), obj.get("score"), obj.get("explanation")
+    if passed is not None and not isinstance(passed, bool):
+        return None
+    if score is not None:
+        if isinstance(score, bool) or not isinstance(score, int | float):
+            return None
+        if not 0 <= float(score) <= 1:
+            return None
+        score = float(score)
+    if not isinstance(explanation, str):
+        explanation = ""
+    return {"passed": passed, "score": score, "explanation": explanation[:2000]}
 
 
 class LLMJudge:
     """Judge backed by the gateway (purpose ``judge``; counted against the run budget)."""
 
-    def __init__(self, gateway: LLMGateway, *, run_id: str | None = None,
-                 evaluation_id: str | None = None, max_tokens: int = 4096) -> None:  # fmt: skip
+    def __init__(self, gateway: LLMGateway, *, run_id: str, evaluation_id: str | None = None,
+                 max_tokens: int = 4096) -> None:  # fmt: skip
         self.gateway = gateway
         self.run_id = run_id
         self.evaluation_id = evaluation_id

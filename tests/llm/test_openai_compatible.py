@@ -8,8 +8,9 @@ import pytest
 from mailsim.llm.contract import LLMRequest, Message
 from mailsim.llm.gateway import LLMProviderError, LLMUnavailable
 from mailsim.llm.providers.openai_compatible import OpenAICompatibleProvider
+from tests.llm.conftest import fake_key
 
-KEY = "ollama-secret-key-0001"
+KEY = fake_key("ollama-")
 
 
 def req(**kw):
@@ -81,6 +82,7 @@ def test_env_key_is_used(monkeypatch):
 @pytest.mark.parametrize(
     "status, cls, kind",
     [(429, LLMUnavailable, "rate_limited"), (503, LLMUnavailable, "server_error"),
+     (408, LLMUnavailable, "timeout"),
      (401, LLMProviderError, "auth"), (403, LLMProviderError, "auth"),
      (400, LLMProviderError, "bad_request")],
 )  # fmt: skip
@@ -117,3 +119,18 @@ def test_malformed_payloads(response):
     with pytest.raises(LLMProviderError) as ei:
         provider(lambda request: response).generate(req())
     assert ei.value.details["kind"] == "bad_response"
+    assert (ei.value.details["input_tokens"], ei.value.details["output_tokens"]) == (0, 0)
+
+
+def test_client_is_closed_after_each_call():
+    closed = []
+
+    class Tracking(httpx.MockTransport):
+        def close(self):
+            closed.append(True)
+
+    p = OpenAICompatibleProvider(base_url="https://llm.example.test/v1", model="m",
+                                 transport=Tracking(ok({"choices": [{"message": {"content": "x"}}]})))  # fmt: skip
+    p.generate(req())
+    p.generate(req())
+    assert closed == [True, True]

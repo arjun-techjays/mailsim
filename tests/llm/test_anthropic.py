@@ -12,8 +12,9 @@ from mailsim.llm.contract import LLMRequest, Message
 from mailsim.llm.gateway import LLMProviderError, LLMUnavailable
 from mailsim.llm.providers import anthropic as provider_mod
 from mailsim.llm.providers.anthropic import FALLBACK_BETA, AnthropicProvider
+from tests.llm.conftest import fake_key
 
-KEY = "sk-ant-api03-FAKEKEYFORTESTS00001"
+KEY = fake_key()
 
 
 def req(system="be brief"):
@@ -76,6 +77,7 @@ def test_fallbacks_disabled_or_unsupported_model_uses_plain_messages():
 @pytest.mark.parametrize(
     "status, cls, kind",
     [(429, LLMUnavailable, "rate_limited"), (500, LLMUnavailable, "server_error"),
+     (408, LLMUnavailable, "timeout"),
      (529, LLMUnavailable, "server_error"), (401, LLMProviderError, "auth"),
      (403, LLMProviderError, "auth"), (400, LLMProviderError, "bad_request"),
      (404, LLMProviderError, "bad_request")],
@@ -106,16 +108,20 @@ def test_transport_errors(exc, kind):
     assert ei.value.details["kind"] == kind
 
 
-def test_refusal_and_empty_output_are_typed_errors():
+def test_refusal_is_a_typed_error_with_billed_usage():
     payload = message(stop="refusal")
     payload["stop_details"] = {"type": "refusal", "category": "cyber", "explanation": "x"}
     _, handler = capture(payload)
     with pytest.raises(LLMProviderError, match="category=cyber") as ei:
         AnthropicProvider(client=sdk_client(handler)).generate(req())
-    assert ei.value.details["kind"] == "refusal"
+    d = ei.value.details
+    assert (d["kind"], d["input_tokens"], d["output_tokens"]) == ("refusal", 21, 4)
+
+
+def test_empty_or_truncated_output_is_returned_for_the_gateway_to_judge():
     _, handler = capture(message(content=[], stop="max_tokens"))
-    with pytest.raises(LLMProviderError, match="stop_reason=max_tokens"):
-        AnthropicProvider(client=sdk_client(handler)).generate(req())
+    r = AnthropicProvider(client=sdk_client(handler)).generate(req())
+    assert (r.text, r.stop_reason, r.output_tokens) == ("", "max_tokens", 4)
 
 
 class _Raising:

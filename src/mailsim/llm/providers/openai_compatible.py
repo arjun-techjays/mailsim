@@ -31,16 +31,21 @@ class OpenAICompatibleProvider:
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
-        key = api_key if api_key is not None else os.environ.get("MAILSIM_LLM_API_KEY")
-        headers = {"Authorization": f"Bearer {key}"} if key else {}
-        self._client = httpx.Client(
-            timeout=timeout_seconds, headers=headers, transport=transport, trust_env=True
-        )
+        self.timeout_seconds = timeout_seconds
+        self._api_key = api_key
+        self._transport = transport
 
-    def _fail(self, kind: str, message: str, *, retryable: bool) -> SimError:
+    def _client(self) -> httpx.Client:
+        key = self._api_key if self._api_key is not None else os.environ.get("MAILSIM_LLM_API_KEY")
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        return httpx.Client(timeout=self.timeout_seconds, headers=headers,
+                            transport=self._transport, trust_env=True)  # fmt: skip
+
+    def _fail(self, kind: str, message: str, *, retryable: bool,
+              usage: tuple[int, int] | None = None) -> SimError:  # fmt: skip
         from mailsim.llm.gateway import provider_error
 
-        return provider_error(self.name, kind, message, retryable=retryable)
+        return provider_error(self.name, kind, message, retryable=retryable, usage=usage)
 
     def generate(self, request: LLMRequest) -> LLMResponse:
         messages: list[dict[str, str]] = []
@@ -52,14 +57,15 @@ class OpenAICompatibleProvider:
         if request.temperature is not None:
             body["temperature"] = request.temperature
         try:
-            resp = self._client.post(f"{self.base_url}/chat/completions", json=body)
+            with self._client() as client:  # one short-lived client per call: always closed
+                resp = client.post(f"{self.base_url}/chat/completions", json=body)
         except httpx.TimeoutException:
             raise self._fail("timeout", "request timed out", retryable=True) from None
         except httpx.HTTPError as exc:
             raise self._fail("connection", type(exc).__name__, retryable=True) from None
-        if resp.status_code == 429 or resp.status_code >= 500:
-            raise self._fail("server_error" if resp.status_code >= 500 else "rate_limited",
-                             f"HTTP {resp.status_code}", retryable=True)  # fmt: skip
+        if resp.status_code in (408, 429) or resp.status_code >= 500:
+            kind = {408: "timeout", 429: "rate_limited"}.get(resp.status_code, "server_error")
+            raise self._fail(kind, f"HTTP {resp.status_code}", retryable=True)
         if resp.status_code >= 400:
             kind = "auth" if resp.status_code in (401, 403) else "bad_request"
             raise self._fail(kind, f"HTTP {resp.status_code}", retryable=False)
@@ -80,4 +86,4 @@ class OpenAICompatibleProvider:
             )
         except (ValueError, KeyError, IndexError, TypeError, AttributeError):
             raise self._fail("bad_response", "malformed completion payload",
-                             retryable=False) from None  # fmt: skip
+                             retryable=False, usage=(0, 0)) from None  # fmt: skip

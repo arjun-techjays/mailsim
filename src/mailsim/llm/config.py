@@ -6,19 +6,23 @@ Environment variables (all optional; the default provider is the offline `stub`)
 - ``MAILSIM_LLM_MODEL``: model id. Defaults: anthropic -> ``claude-sonnet-5-5`` (set
   ``claude-opus-5-5`` for Opus); stub -> ``stub-1``; openai_compatible -> required.
 - ``MAILSIM_LLM_BASE_URL``: OpenAI-compatible base URL, e.g. ``http://127.0.0.1:11434/v1``
-  (Ollama). ``MAILSIM_OLLAMA_URL`` is accepted as a fallback.
+  (Ollama). ``MAILSIM_OLLAMA_URL`` is accepted as a fallback. Must be ``https://`` unless
+  the host is loopback.
 - ``MAILSIM_LLM_API_KEY``: optional bearer key for the OpenAI-compatible endpoint.
 - ``ANTHROPIC_API_KEY``: read by the Anthropic SDK itself; never stored in this config.
-- ``MAILSIM_LLM_TIMEOUT_SECONDS`` (default 60), ``MAILSIM_LLM_MAX_RETRIES`` (default 2).
+  ``ANTHROPIC_BASE_URL`` (also read by the SDK) may redirect Claude traffic, e.g. to a
+  gateway; in deployment it must still be reachable only through the egress proxy.
+- ``MAILSIM_LLM_TIMEOUT_SECONDS`` (default 60, float), ``MAILSIM_LLM_MAX_RETRIES`` (default 2).
 - ``MAILSIM_LLM_EFFORT``: optional Anthropic ``output_config.effort`` (low..max).
-- ``MAILSIM_LLM_FALLBACKS``: ``1``/``0`` - Anthropic server-side refusal fallbacks (default on).
+- ``MAILSIM_LLM_FALLBACKS``: Anthropic server-side refusal fallbacks (default on;
+  ``0``/``false``/``no``/``off`` disables).
 - ``MAILSIM_LLM_STUB_FIXTURES``: path to a stub fixture table (JSON).
 - ``MAILSIM_LLM_MAX_CALLS`` / ``MAILSIM_LLM_MAX_INPUT_TOKENS`` / ``MAILSIM_LLM_MAX_OUTPUT_TOKENS``:
   per-run budget overrides.
 
-Egress: in deployment the Anthropic SDK and the OpenAI-compatible client reach the network
-only through the allowlist egress proxy given in ``HTTPS_PROXY`` (both honour it); the
-``app`` service itself sits on an internal network.
+Egress: in deployment (``MAILSIM_ENV=deployment``) a non-stub provider refuses to start
+unless ``HTTPS_PROXY`` points at the allowlist egress proxy; the Anthropic SDK and the
+OpenAI-compatible client both honour it, and the ``app`` service sits on an internal network.
 """
 
 from __future__ import annotations
@@ -27,8 +31,9 @@ import os
 import re
 from collections.abc import Iterable, Mapping
 from typing import Literal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from mailsim.domain.errors import InvalidRequest
 from mailsim.llm.contract import DEFAULT_MODEL, Budget, ProviderName
@@ -41,9 +46,11 @@ SECRET_ENV_VARS = (
     "MAILSIM_LLM_API_KEY",
     "OPENAI_API_KEY",
 )
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
 _PROVIDERS: tuple[ProviderName, ...] = ("stub", "anthropic", "openai_compatible")
 _EFFORTS: tuple[Effort, ...] = ("low", "medium", "high", "xhigh", "max")
+_FALSY = frozenset({"0", "false", "no", "off"})
 _SECRET_PATTERNS = (
     re.compile(r"sk-ant-[A-Za-z0-9_\-]{6,}"),
     re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}"),
@@ -51,6 +58,17 @@ _SECRET_PATTERNS = (
     re.compile(r"(?i)(x-api-key|api[_-]?key|authorization)(\"?\s*[:=]\s*\"?)[^\s\"',}]+"),
 )
 REDACTED = "[REDACTED]"
+
+
+def check_base_url(url: str) -> str:
+    """Only https, or plain http to a loopback host (local Ollama)."""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if parts.scheme == "https" and host:
+        return url
+    if parts.scheme == "http" and host in LOOPBACK_HOSTS:
+        return url
+    raise ValueError("base_url must be https:// (plain http only for a loopback host)")
 
 
 class LLMConfig(BaseModel):
@@ -66,6 +84,12 @@ class LLMConfig(BaseModel):
     stub_fixtures: str | None = None
     budget: Budget = Field(default_factory=Budget)
 
+    @model_validator(mode="after")
+    def _url(self) -> LLMConfig:
+        if self.base_url is not None:
+            check_base_url(self.base_url)
+        return self
+
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> LLMConfig:
         e = os.environ if env is None else env
@@ -74,6 +98,15 @@ class LLMConfig(BaseModel):
             raise InvalidRequest(
                 f"MAILSIM_LLM_PROVIDER must be one of {list(_PROVIDERS)}",
                 details={"provider": provider},
+            )
+        if (
+            provider != "stub"
+            and e.get("MAILSIM_ENV", "").strip().lower() == "deployment"
+            and not (e.get("HTTPS_PROXY") or e.get("https_proxy"))
+        ):
+            raise InvalidRequest(
+                "MAILSIM_ENV=deployment requires HTTPS_PROXY (allowlist egress proxy) "
+                "for a non-stub LLM provider"
             )
         base_url = e.get("MAILSIM_LLM_BASE_URL") or e.get("MAILSIM_OLLAMA_URL") or None
         model = e.get("MAILSIM_LLM_MODEL", "").strip()
@@ -99,15 +132,16 @@ class LLMConfig(BaseModel):
                 provider=provider,
                 model=model,
                 base_url=base_url,
-                timeout_seconds=_int(e, "MAILSIM_LLM_TIMEOUT_SECONDS", 60),
+                timeout_seconds=_float(e, "MAILSIM_LLM_TIMEOUT_SECONDS", 60.0),
                 max_retries=_int(e, "MAILSIM_LLM_MAX_RETRIES", 2),
                 effort=effort,
-                fallbacks=e.get("MAILSIM_LLM_FALLBACKS", "1").strip().lower() not in ("0", "false"),
+                fallbacks=e.get("MAILSIM_LLM_FALLBACKS", "1").strip().lower() not in _FALSY,
                 stub_fixtures=e.get("MAILSIM_LLM_STUB_FIXTURES") or None,
                 budget=budget,
             )
         except ValidationError as exc:
-            fields = sorted({".".join(str(x) for x in err["loc"]) for err in exc.errors()})
+            fields = sorted({".".join(str(x) for x in err["loc"]) or "config"
+                             for err in exc.errors()})  # fmt: skip
             raise InvalidRequest("invalid LLM configuration", details={"fields": fields}) from None
 
 
@@ -119,6 +153,16 @@ def _int(env: Mapping[str, str], name: str, default: int) -> int:
         return int(raw)
     except ValueError:
         raise InvalidRequest(f"{name} must be an integer") from None
+
+
+def _float(env: Mapping[str, str], name: str, default: float) -> float:
+    raw = env.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        raise InvalidRequest(f"{name} must be a number") from None
 
 
 def secret_values(env: Mapping[str, str] | None = None) -> list[str]:

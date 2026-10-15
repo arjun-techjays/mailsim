@@ -33,10 +33,12 @@ class ScriptedProvider:
         out = self.outputs.pop(0) if self.outputs else "ok"
         if isinstance(out, BaseException):
             raise out
+        if isinstance(out, LLMResponse):
+            return out
         return LLMResponse(text=out, provider="stub", model="fake-1",
                            input_tokens=self.in_tokens, output_tokens=self.out_tokens)  # fmt: skip
 
 
-@pytest.fixture()
-def scripted():
-    return ScriptedProvider
+def fake_key(prefix: str = "sk-ant-") -> str:
+    """Build fake secrets at runtime so secret scanners never see a literal key."""
+    return prefix + "-".join(["api03", "FAKE" * 3, "0" * 8])
