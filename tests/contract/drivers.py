@@ -443,3 +443,157 @@ class GmailDriver(NeutralDriver):
 
 
 DRIVERS.append(GmailDriver)
+
+
+# ---- Wave 2 (WS-D): the Microsoft Graph v1.0 mail profile, driven over HTTP ---------------
+_GRAPH_FOLDERS = {"inbox": "inbox", "sent": "sentitems", "drafts": "drafts",
+                  "trash": "deleteditems", "archive": "archive"}  # fmt: skip
+_GRAPH_CODES = {
+    "ErrorInvalidRequest": ErrorCode.INVALID_REQUEST, "ErrorItemNotFound": ErrorCode.NOT_FOUND,
+    "ErrorAccessDenied": ErrorCode.PERMISSION_DENIED,
+    "ErrorNotSupported": ErrorCode.UNSUPPORTED_OPERATION,
+    "ErrorIrresolvableConflict": ErrorCode.CONFLICT,
+    "ErrorTooManyRequests": ErrorCode.RATE_LIMITED,
+    "ErrorQuotaExceeded": ErrorCode.SIMULATION_LIMIT_EXCEEDED,
+    "ErrorPreconditionFailed": ErrorCode.RUN_NOT_ACTIVE,
+    "ErrorMessageSubmissionBlocked": ErrorCode.EXTERNAL_DELIVERY_BLOCKED,
+    "ErrorServiceUnavailable": ErrorCode.UPSTREAM_UNAVAILABLE,
+}  # fmt: skip
+_GRAPH_SELECT = ("id,subject,body,internetMessageId,conversationId,parentFolderId,isRead,"
+                 "isDraft,flag,categories,internetMessageHeaders,from,toRecipients")  # fmt: skip
+_GRAPH_EXPAND = "singleValueExtendedProperties($filter=id eq 'Integer 0x1081')"
+
+
+class GraphDriver(RestDriver):
+    """`/graph/v1.0/me/...` over HTTP with an agent key, speaking only Graph: Graph ids,
+    well-known folder names, isRead/flag/categories, the PidTagLastVerbExecuted extended
+    property for ANSWERED, sendMail, permanentDelete and messages/delta. Canonical ids are
+    looked up through the agent facade (test harness only) for cross-driver comparisons."""
+
+    name: ClassVar[str] = "graph"
+    capabilities: ClassVar[frozenset[str]] = ALL_CAPABILITIES
+
+    def __init__(self, mailbox: AgentMailbox) -> None:
+        super().__init__(mailbox)
+        from mailsim.adapters.graph.api import router
+
+        self.http.app.include_router(router)  # type: ignore[attr-defined]
+        self.mb = mailbox
+        self.base = "/graph/v1.0/me"
+        self._folders: dict[str, str] | None = None
+
+    def _call(self, method: str, path: str, **kw: Any) -> Any:
+        r = self.http.request(method, path if path.startswith("http") else self.base + path, **kw)
+        if r.status_code >= 400:
+            raise RestError(r.status_code, r.json())
+        return r.json() if r.content else None
+
+    def _folder_types(self) -> dict[str, str]:
+        if self._folders is None:
+            self._folders = {self._call("GET", f"/mailFolders/{wk}")["id"]: st
+                             for st, wk in _GRAPH_FOLDERS.items()}  # fmt: skip
+        return self._folders
+
+    def _canonical(self, ref: str) -> str:
+        for kind in ("message", "draft"):
+            try:
+                return self.mb.resolve_external_id("graph", kind, ref)
+            except SimError:
+                continue
+        return ref
+
+    def _gmsg(self, d: dict[str, Any]) -> Msg:
+        import json
+
+        headers = {h["name"].lower(): h["value"] for h in d.get("internetMessageHeaders", [])}
+        flags = {"SEEN"} if d["isRead"] else set()
+        flags |= {"FLAGGED"} if d["flag"]["flagStatus"] == "flagged" else set()
+        flags |= {"DRAFT"} if d["isDraft"] else set()
+        flags |= {"ANSWERED"} if d.get("singleValueExtendedProperties") else set()
+        return Msg(d["id"], self._canonical(d["id"]), d["internetMessageId"], d["conversationId"],
+                   d["subject"], self._folder_types()[d["parentFolderId"]], frozenset(flags),
+                   frozenset(d["categories"]), headers.get("in-reply-to"), json.dumps(d))  # fmt: skip
+
+    def _params(self, **extra: Any) -> dict[str, Any]:
+        return {"$select": _GRAPH_SELECT, "$expand": _GRAPH_EXPAND, **extra}
+
+    def _collect(self, path: str, **params: Any) -> list[Msg]:
+        out: list[Msg] = []
+        page = self._call("GET", path, params=self._params(**{"$top": 1000, **params}))
+        while True:
+            out += [self._gmsg(d) for d in page["value"]]
+            if "@odata.nextLink" not in page:
+                return out
+            page = self._call("GET", page["@odata.nextLink"])
+
+    def list(self, folder: str | None = None) -> list[Msg]:
+        path = f"/mailFolders/{_GRAPH_FOLDERS[folder]}/messages" if folder else "/messages"
+        return self._collect(path, **{"$orderby": "receivedDateTime asc"})  # neutral's order
+
+    def page(self, size: int, cursor: str | None) -> tuple[list[Msg], str | None]:
+        p = (self._call("GET", cursor) if cursor
+             else self._call("GET", "/messages", params=self._params(**{"$top": size})))  # fmt: skip
+        return [self._gmsg(d) for d in p["value"]], p.get("@odata.nextLink")
+
+    def get(self, ref: str) -> Msg:
+        return self._gmsg(self._call("GET", f"/messages/{ref}", params=self._params()))
+
+    def thread(self, thread_ref: str) -> list[Msg]:
+        return self._collect("/messages", **{"$filter": f"conversationId eq '{thread_ref}'"})
+
+    def search(self, text: str) -> list[Msg]:
+        return self._collect("/messages", **{"$search": f'"{text}"'})
+
+    def send(self, to: list[str], subject: str, text: str) -> str:
+        before = {m.ref for m in self.list("sent")}
+        message = {"subject": subject, "body": {"contentType": "text", "content": text},
+                   "toRecipients": [{"emailAddress": {"address": a}} for a in to]}  # fmt: skip
+        self._call("POST", "/sendMail", json={"message": message})
+        (new,) = [m for m in self.list("sent") if m.ref not in before]
+        return new.message_id_header
+
+    def reply(self, ref: str, text: str) -> None:
+        self._call("POST", f"/messages/{ref}/reply", json={"comment": text})
+
+    def move(self, ref: str, folder: str) -> None:
+        dest = _GRAPH_FOLDERS.get(folder, folder)
+        self._call("POST", f"/messages/{ref}/move", json={"destinationId": dest})
+
+    def flag(self, ref: str, add: list[str]) -> None:
+        patch: dict[str, Any] = {}
+        if "SEEN" in add:
+            patch["isRead"] = True
+        if "FLAGGED" in add:
+            patch["flag"] = {"flagStatus": "flagged"}
+        if "ANSWERED" in add:
+            patch["singleValueExtendedProperties"] = [{"id": "Integer 0x1081", "value": "102"}]
+        self._call("PATCH", f"/messages/{ref}", json=patch)
+
+    def label(self, ref: str, add: list[str]) -> None:
+        current = self._call("GET", f"/messages/{ref}", params={"$select": "categories"})
+        merged = list(dict.fromkeys([*current["categories"], *add]))
+        self._call("PATCH", f"/messages/{ref}", json={"categories": merged})
+
+    def delete(self, ref: str) -> None:
+        self._call("POST", f"/messages/{ref}/permanentDelete")
+
+    def changes(self, since: Any) -> tuple[list[str], Any]:
+        """`since` is 0 (initial sync) or the deltaLink of the previous round."""
+        url = "/messages/delta" if since == 0 else since
+        ids: list[str] = []
+        page = self._call("GET", url, params={"$select": "id"} if since == 0 else None)
+        while True:
+            for d in page["value"]:
+                if "@removed" not in d:
+                    ids.append(self._canonical(d["id"]))
+            if "@odata.deltaLink" in page:
+                return ids, page["@odata.deltaLink"]
+            page = self._call("GET", page["@odata.nextLink"])
+
+    def error_code(self, exc: BaseException) -> str:
+        if isinstance(exc, RestError):
+            return str(_GRAPH_CODES.get(exc.code, exc.code))
+        return super().error_code(exc)
+
+
+DRIVERS.append(GraphDriver)
