@@ -21,6 +21,10 @@ export interface Pickers {
   personas: PersonaOption[];
   /** Scenario event ids (for temporal checks and evaluate-at). */
   events: string[];
+  /** Labels seen in the scenario/run, offered for `label`. */
+  labels?: string[];
+  /** Server-side defaults of groups left empty, by property name (e.g. where -> "folder: sent"). */
+  notes?: Record<string, string>;
 }
 
 interface NodeProps {
@@ -33,6 +37,8 @@ interface NodeProps {
   onChange: (v: unknown) => void;
   ctx: Pickers;
   errors: Map<string, string[]>;
+  /** Schema default of a list (e.g. protocol error_codes), shown when nothing is set. */
+  defaultValue?: unknown;
 }
 
 const asObj = (v: unknown): Record<string, unknown> =>
@@ -71,12 +77,16 @@ function Choice({
 function CountField({ p, label, help, errors }: { p: NodeProps; label: string; help?: string; errors: string[] }) {
   const id = fieldId(p.path);
   const v = asObj(p.value);
-  const mode =
-    v.eq != null ? 'eq' : v.min != null && v.max != null ? 'range' : v.min != null ? 'min' : v.max != null ? 'max' : '';
+  // The mode is local so clearing a number does not switch the mode under the user.
+  const [mode, setMode] = useState(
+    v.eq != null ? 'eq' : v.min != null && v.max != null ? 'range' : v.min != null ? 'min' : v.max != null ? 'max' : '',
+  );
   const num = (x: unknown) => asStr(x);
   const set = (next: Record<string, unknown> | undefined) => p.onChange(next);
-  const n = (s: string) => (s.trim() === '' ? 0 : Number(s));
+  /** Whole numbers only; an empty box removes the bound. */
+  const n = (s: string) => (s.trim() === '' ? undefined : Math.max(0, Math.trunc(Number(s))));
   const changeMode = (m: string) => {
+    setMode(m);
     const seed = Number(v.eq ?? v.min ?? v.max ?? 1);
     if (m === '') set(undefined);
     else if (m === 'range') set({ min: seed, max: seed });
@@ -93,7 +103,7 @@ function CountField({ p, label, help, errors }: { p: NodeProps; label: string; h
           step={1}
           className="ak-narrow"
           value={num(v[key])}
-          onChange={(e) => set({ ...v, [key]: n(e.target.value) })}
+          onChange={(e) => set(setIn(v, [key], n(e.target.value)))}
         />
       )}
     </Field>
@@ -152,13 +162,18 @@ function OutcomeField({ control, value, onChange }: { control: ControlProps; val
 function StringList({ p, label, help, errors }: { p: NodeProps; label: string; help?: string; errors: string[] }) {
   const id = fieldId(p.path);
   const items = Array.isArray(p.value) ? p.value.map(asStr) : [];
-  const set = (next: string[]) => p.onChange(next);
+  // An emptied list is dropped so the server default applies again.
+  const set = (next: string[]) => p.onChange(next.length > 0 ? next : undefined);
+  // Pydantic omits factory defaults from the schema; the type's notes fill the gap.
+  const defaultText = Array.isArray(p.defaultValue) ? (p.defaultValue as unknown[]).map(asStr).join(', ') : p.ctx.notes?.[p.name];
   return (
     <fieldset className="ak-group" id={id} tabIndex={-1}>
       <legend>{label}</legend>
       {help && <p className="hint ak-help">{help}</p>}
       <GroupErrors id={id} errors={errors} />
-      {items.length === 0 && <p className="muted">None yet.</p>}
+      {items.length === 0 && (
+        <p className="muted">{defaultText ? `Not set: the default is ${defaultText}.` : 'None yet.'}</p>
+      )}
       <ul className="ak-list">
         {items.map((item, i) => (
           <li key={i} className="ak-row">
@@ -204,12 +219,17 @@ function JsonField({ control, value, onChange }: { control: ControlProps; value:
       <textarea
         {...control}
         aria-invalid={control['aria-invalid'] || !!error || undefined}
+        aria-describedby={[control['aria-describedby'], error ? `${control.id}-json-err` : ''].filter(Boolean).join(' ') || undefined}
         className="mono"
         rows={3}
         value={text}
         onChange={(e) => commit(e.target.value)}
       />
-      {error && <p className="field-error">{error}</p>}
+      {error && (
+        <p id={`${control.id}-json-err`} className="field-error">
+          {error}
+        </p>
+      )}
     </>
   );
 }
@@ -226,6 +246,7 @@ function Node(p: NodeProps) {
   if (ref === 'Count') return <CountField p={p} label={label} help={help} errors={errors} />;
 
   if (kind === 'object') {
+    const note = p.ctx.notes?.[p.name];
     const present = p.value != null && typeof p.value === 'object';
     const shown = present || !optional;
     return (
@@ -239,6 +260,7 @@ function Node(p: NodeProps) {
           </label>
         )}
         <GroupErrors id={id} errors={errors} />
+        {note && Object.keys(asObj(p.value)).length === 0 && <p className="hint">Nothing set: {note}.</p>}
         {shown && (
           <ObjectFields
             root={p.root}
@@ -255,7 +277,9 @@ function Node(p: NodeProps) {
   }
 
   if (kind === 'array') {
-    if (kindOf(itemsOf(schema, p.root)) === 'string') return <StringList p={p} label={label} help={help} errors={errors} />;
+    if (kindOf(itemsOf(schema, p.root)) === 'string') {
+      return <StringList p={{ ...p, defaultValue: schema.default }} label={label} help={help} errors={errors} />;
+    }
   }
 
   const value = asStr(p.value);
@@ -296,12 +320,11 @@ function Node(p: NodeProps) {
     );
   } else if (kind === 'string' && p.name === 'outcome') {
     control = (c) => <OutcomeField control={c} value={value} onChange={(v) => p.onChange(v)} />;
-  } else if (kind === 'string' && (p.name === 'from' || p.name === 'to' || p.name === 'event')) {
+  } else if (kind === 'string' && (p.name === 'from' || p.name === 'to' || p.name === 'event' || p.name === 'label')) {
     const options =
-      p.name === 'event' ? events.map((e) => ({ value: e, label: e })) : personas.flatMap((x) => [
-        { value: x.id, label: x.label },
-        { value: x.email, label: x.label },
-      ]);
+      p.name === 'label'
+        ? (p.ctx.labels ?? []).map((l) => ({ value: l, label: l }))
+        : p.name === 'event' ? events.map((e) => ({ value: e, label: e })) : personas.filter((x) => x.email).map((x) => ({ value: x.email, label: `${x.label} (${x.id})` }));
     control = (c) => (
       <>
         <input {...c} list={`${id}-options`} value={value} onChange={(e) => setStr(e.target.value)} autoComplete="off" />

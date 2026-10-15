@@ -1,8 +1,9 @@
 // Mail-client view of every mailbox in a run: mailboxes and folders (left), messages of the
 // selected folder (middle, newest first, paged by the operator inspect API) and the reading pane
 // with the whole thread (right). Email HTML is only rendered by SafeEmailBody (empty sandbox).
-import { useMemo, useState } from 'react';
-import type { CanonicalMessage, RunOut } from '../api/types';
+import { useQueryClient, useIsFetching, type InfiniteData, type QueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { CanonicalMessage, MessagePage, RunOut } from '../api/types';
 import { hasRole, useApi, useRole } from '../auth/session';
 import { ErrorDisplay } from '../components/ErrorDisplay';
 import { address } from '../components/format';
@@ -13,11 +14,29 @@ import { ComposeInject } from './ComposeInject';
 import { ReadingPane } from './ReadingPane';
 import type { ParsedSnapshot } from './snapshot';
 import { isUnread, mailboxTitle, useRunMailboxes, type BrowserMailbox } from './useRunMailboxes';
-import { subjectOf } from './text';
+import { subjectOf } from './mailFormat';
 import { VirtualTime } from './VirtualTime';
 import './browser.css';
 
 export const MESSAGE_PAGE_SIZE = 20;
+
+function findListed(qc: QueryClient, runId: string, id: string): CanonicalMessage | undefined {
+  for (const [, data] of qc.getQueriesData<InfiniteData<MessagePage>>({ queryKey: runKeys.inspect(runId) })) {
+    for (const page of data?.pages ?? []) {
+      const m = page.items.find((i) => i.id === id);
+      if (m) return m;
+    }
+  }
+  return undefined;
+}
+
+const when = (m: CanonicalMessage) => m.received_at ?? m.created_at;
+
+/** The selected message's thread in its mailbox, oldest first (always contains the message). */
+function threadOf(all: CanonicalMessage[], selected: CanonicalMessage): CanonicalMessage[] {
+  const others = all.filter((m) => m.mailbox_id === selected.mailbox_id && m.thread_id === selected.thread_id && m.id !== selected.id);
+  return [...others, selected].sort((a, b) => when(a).localeCompare(when(b)));
+}
 
 export interface BrowserSelection {
   mailbox?: string | null;
@@ -88,19 +107,17 @@ function MessageList({
   runId,
   mailbox,
   folderId,
-  version,
   selected,
   onSelect,
 }: {
   runId: string;
   mailbox: BrowserMailbox;
   folderId: string | null;
-  version: number;
   selected: string | null;
   onSelect: (id: string) => void;
 }) {
   const api = useApi();
-  const list = useCursorList<CanonicalMessage>([...runKeys.inspect(runId), mailbox.id, folderId, version], (cursor) =>
+  const list = useCursorList<CanonicalMessage>([...runKeys.inspect(runId), mailbox.id, folderId], (cursor) =>
     api.inspectMessages(runId, mailbox.id, { folder: folderId, cursor, pageSize: MESSAGE_PAGE_SIZE, order: 'desc' }),
   );
   if (list.isLoading) return <Loading label="Loading messages…" />;
@@ -180,15 +197,12 @@ function MessageList({
 export function MailboxBrowser({
   run,
   snapshot,
-  version,
   error,
   selection,
   onChange,
 }: {
   run: RunOut;
   snapshot: ParsedSnapshot | undefined;
-  /** Changes whenever the run state was refetched (refreshes the message list). */
-  version: number;
   error: unknown;
   selection: BrowserSelection;
   onChange: (next: BrowserSelection) => void;
@@ -197,6 +211,9 @@ export function MailboxBrowser({
   const { mailboxes, error: listError } = useRunMailboxes(run, snapshot);
   const [userSelected, setUserSelected] = useState(false);
   const [composing, setComposing] = useState(false);
+  const qc = useQueryClient();
+  const stateFetching = useIsFetching({ queryKey: runKeys.state(run.id), exact: true }) > 0;
+  const refreshed = useRef(new Set<string>());
 
   const messageParam = selection.message ?? null;
   const mailbox = useMemo(() => {
@@ -208,18 +225,26 @@ export function MailboxBrowser({
   }, [mailboxes, selection.mailbox, messageParam, snapshot]);
   const folderId = mailbox && mailbox.folders.some((f) => f.id === selection.folder) ? (selection.folder as string) : null;
 
+  const missing =
+    !!messageParam && !!snapshot && !snapshot.messages.some((m) => m.id === messageParam) && !findListed(qc, run.id, messageParam);
+  useEffect(() => {
+    // Not in the snapshot nor the loaded list: refresh the state once before giving up.
+    if (!missing || !messageParam || refreshed.current.has(messageParam)) return;
+    refreshed.current.add(messageParam);
+    void qc.invalidateQueries({ queryKey: runKeys.state(run.id), exact: true });
+  }, [missing, messageParam, qc, run.id]);
+
   if (error) return <ErrorDisplay error={error} title="Could not load run state" />;
   if (listError) return <ErrorDisplay error={listError} title="Could not load the run’s mailboxes" />;
   if (!snapshot || !mailboxes) return <Loading label="Loading mailboxes…" />;
   if (!mailbox) return <Empty>This run has no mailboxes.</Empty>;
 
   const folder = mailbox.folders.find((f) => f.id === folderId);
-  const selected = messageParam ? snapshot.messages.find((m) => m.id === messageParam) : undefined;
-  const thread = selected
-    ? snapshot.messages
-        .filter((m) => m.mailbox_id === selected.mailbox_id && m.thread_id === selected.thread_id)
-        .sort((a, b) => (a.received_at ?? a.created_at).localeCompare(b.received_at ?? b.created_at))
-    : [];
+  // The message list (inspect API) can be newer than the state snapshot: use either.
+  const selected = messageParam
+    ? (snapshot.messages.find((m) => m.id === messageParam) ?? findListed(qc, run.id, messageParam))
+    : undefined;
+  const thread = selected ? threadOf(snapshot.messages, selected) : [];
   const select = (id: string) => {
     setUserSelected(true);
     setComposing(false);
@@ -257,7 +282,6 @@ export function MailboxBrowser({
           runId={run.id}
           mailbox={mailbox}
           folderId={folderId}
-          version={version}
           selected={messageParam}
           onSelect={select}
         />
@@ -282,6 +306,8 @@ export function MailboxBrowser({
             onOpen={select}
             rawMimeHref={(ref) => runLinks.artifact(run.id, ref)}
           />
+        ) : messageParam && (stateFetching || !refreshed.current.has(messageParam)) ? (
+          <Loading label="Loading message…" />
         ) : messageParam ? (
           <ErrorDisplay error={new Error(`Message ${messageParam} is not in this run (it may have been reset).`)} title="Could not load message" />
         ) : (

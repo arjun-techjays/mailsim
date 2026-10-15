@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { delay, http, HttpResponse } from 'msw';
-import { AUTHORING_META } from '../mocks/akeyMeta';
+import { AUTHORING_META } from '../mocks/authoring';
 import { mockDb, server } from '../test/server';
 import { OPERATOR_SESSION, renderApp, sessionFor } from '../test/utils';
 import { draftKey } from './draftStorage';

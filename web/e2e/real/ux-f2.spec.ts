@@ -85,7 +85,7 @@ test('mailbox browser, inject, clock toolbar and activity on a new run', async (
   await expect(run.messageList()).toContainText('E2E injected');
 
   const bar = run.toolbar();
-  await bar.getByRole('button', { name: 'Advance the clock 1 minute' }).click();
+  await bar.getByRole('button', { name: /advance the clock 1 minute$/ }).click();
   await expect(bar.getByTestId('toolbar-result')).toContainText('Advanced the clock by 1 minute.');
   await bar.getByRole('button', { name: 'Tick scheduler' }).click();
   await expect(bar.getByTestId('toolbar-result')).toContainText('Scheduler tick.');

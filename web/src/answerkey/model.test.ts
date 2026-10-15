@@ -1,5 +1,6 @@
-import { AUTHORING_META } from '../mocks/akeyMeta';
-import { clearDraft, draftKey, loadDraft, saveDraft } from './draftStorage';
+import { AUTHORING_META } from '../mocks/authoring';
+import { clearAllDrafts, clearDraft, draftKey, loadDraft, saveDraft } from './draftStorage';
+import { labelsOf, personaOptions } from './useScenarioContext';
 import {
   defaultCheck,
   emptyDraft,
@@ -202,5 +203,28 @@ describe('draft storage', () => {
     });
     expect(() => clearDraft(key)).not.toThrow();
     rm.mockRestore();
+  });
+});
+
+describe('review helpers', () => {
+  it('clears all drafts and survives a broken storage', () => {
+    sessionStorage.setItem(draftKey('a', null), '{}');
+    sessionStorage.setItem('other', '1');
+    clearAllDrafts();
+    expect(Object.keys(sessionStorage)).toEqual(['other']);
+    const spy = vi.spyOn(window, 'sessionStorage', 'get').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    expect(() => clearAllDrafts()).not.toThrow();
+    spy.mockRestore();
+  });
+
+  it('collects labels and persona options defensively', () => {
+    expect(labelsOf([{ labels: ['B', 'A', 3] }, { labels: 'x' }, { labels: ['A'] }, null])).toEqual(['A', 'B']);
+    expect(labelsOf(undefined)).toEqual([]);
+    expect(personaOptions([{ id: 'p', email: 'e' }, { id: '' }, { id: 'q', name: 'Q', role: 'R' }])).toEqual([
+      { id: 'p', email: 'e', label: 'p' },
+      { id: 'q', email: '', label: 'Q, R' },
+    ]);
   });
 });

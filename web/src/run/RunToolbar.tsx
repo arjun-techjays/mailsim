@@ -8,8 +8,9 @@ import type { ClockResult, RunOut } from '../api/types';
 import { useApi } from '../auth/session';
 import { ErrorDisplay } from '../components/ErrorDisplay';
 import { parseSnapshot } from '../mailbox/snapshot';
-import { subjectOf } from '../mailbox/text';
-import { formatVirtual } from '../mailbox/time';
+import { subjectOf } from '../mailbox/mailFormat';
+import { formatVirtual } from '../mailbox/mailFormat';
+import { clockCall } from './simActions';
 import { deliveredIndex, type Delivered } from './toolbarDiff';
 import { runKeys, runLinks } from './keys';
 import '../mailbox/browser.css';
@@ -64,9 +65,15 @@ export function RunToolbar({ run }: { run: RunOut }) {
   const running = run.status === 'RUNNING';
 
   /** Messages currently in the run (null when the state cannot be read: the diff is skipped). */
-  const messageIds = async (): Promise<Map<string, Delivered> | null> => {
+  // At most one /state request per side: the cached snapshot before, and after the step the
+  // snapshot the invalidation just refetched (a fresh fetch only if no view had it mounted).
+  const messageIds = async (fresh: boolean): Promise<Map<string, Delivered> | null> => {
     try {
-      const raw = await qc.fetchQuery({ queryKey: runKeys.state(run.id), queryFn: () => api.state(run.id) });
+      const raw = await qc.fetchQuery({
+        queryKey: runKeys.state(run.id),
+        queryFn: () => api.state(run.id),
+        staleTime: fresh ? 2_000 : Infinity,
+      });
       return deliveredIndex(parseSnapshot(raw));
     } catch {
       return null;
@@ -75,10 +82,10 @@ export function RunToolbar({ run }: { run: RunOut }) {
 
   const mutation = useMutation({
     mutationFn: async (op: { kind: 'advance'; seconds: number; label: string } | { kind: 'tick' }): Promise<Outcome> => {
-      const before = await messageIds();
-      const result = op.kind === 'tick' ? await api.tick(run.id) : await api.advance(run.id, op.seconds);
+      const before = await messageIds(false);
+      const result = await clockCall(api, run.id, op);
       await qc.invalidateQueries({ queryKey: runKeys.all(run.id) });
-      const after = before ? await messageIds() : null;
+      const after = before ? await messageIds(true) : null;
       const delivered = before && after ? [...after.values()].filter((m) => !before.has(m.id)) : null;
       return {
         label: op.kind === 'tick' ? 'Scheduler tick' : `Advanced the clock by ${op.label}`,
@@ -118,7 +125,7 @@ export function RunToolbar({ run }: { run: RunOut }) {
             key={p.seconds}
             type="button"
             disabled={disabled}
-            aria-label={`Advance the clock ${p.long}`}
+            aria-label={`${p.label}: advance the clock ${p.long}`}
             onClick={() => mutation.mutate({ kind: 'advance', seconds: p.seconds, label: p.long })}
           >
             {p.label}

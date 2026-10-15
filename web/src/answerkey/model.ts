@@ -52,7 +52,8 @@ export const DEFAULT_SEVERITY = (type: string) => (type === 'semantic' ? 'adviso
 let seq = 0;
 export const newKey = () => `a${(seq += 1)}`;
 
-export function defaultCheck(type: string, meta: AuthoringMeta): Check {
+/** A valid starting check per type (`events`: scenario event ids, used to seed temporal checks). */
+export function defaultCheck(type: string, meta: AuthoringMeta, events: string[] = []): Check {
   switch (type) {
     case 'state':
       return { where: { folder: 'sent' }, count: { min: 1 } };
@@ -66,7 +67,10 @@ export function defaultCheck(type: string, meta: AuthoringMeta): Check {
     case 'invariant':
       return { invariant: meta.invariants[0] ?? '' };
     case 'temporal':
-      return { first: { event: '' }, then: { action: { operation: 'reply' } } };
+      return {
+        first: events[0] ? { event: events[0] } : { action: { operation: 'read' } },
+        then: { action: { operation: 'reply' } },
+      };
     case 'protocol':
       return { max_errors: 0 };
     default:
@@ -81,7 +85,7 @@ export function uniqueId(base: string, taken: string[]): string {
   return `${base}-${n}`;
 }
 
-export function newAssertion(type: string, meta: AuthoringMeta, taken: string[]): AssertionDraft {
+export function newAssertion(type: string, meta: AuthoringMeta, taken: string[], events: string[] = []): AssertionDraft {
   return {
     key: newKey(),
     id: uniqueId(`${type}-check`, taken),
@@ -94,7 +98,7 @@ export function newAssertion(type: string, meta: AuthoringMeta, taken: string[])
     evaluateAt: 'end',
     evaluateEvent: '',
     useCheck: type !== 'semantic' && meta.assertion_types.some((t) => t.type === type && t.check_schema != null),
-    check: type === 'semantic' ? {} : defaultCheck(type, meta),
+    check: type === 'semantic' ? {} : defaultCheck(type, meta, events),
   };
 }
 
@@ -176,6 +180,21 @@ export function fromDocument(doc: Record<string, unknown>, scenario: string): Ke
       };
     }),
   };
+}
+
+const TOP_KEYS = ['answer_key_version', 'answer_key'];
+const BODY_KEYS = ['scenario', 'version', 'scenario_versions', 'checks_default', 'assertions'];
+const ASSERTION_KEYS = ['id', 'type', 'requirement', 'severity', 'category', 'subject', 'evaluate_at', 'check', 'rubric'];
+
+/** Keys of a parsed document that the form (and the strict server model) does not know. */
+export function droppedKeys(doc: Record<string, unknown>): string[] {
+  const out = Object.keys(doc).filter((k) => !TOP_KEYS.includes(k));
+  const body = obj(doc.answer_key);
+  out.push(...Object.keys(body).filter((k) => !BODY_KEYS.includes(k)).map((k) => `answer_key.${k}`));
+  (Array.isArray(body.assertions) ? body.assertions : []).forEach((a, i) => {
+    out.push(...Object.keys(obj(a)).filter((k) => !ASSERTION_KEYS.includes(k)).map((k) => `answer_key.assertions.${i}.${k}`));
+  });
+  return out;
 }
 
 // ---- immutable path updates (paths are arrays of keys / indexes) ---------------------------

@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import type { CanonicalMessage } from '../api/types';
 import { deliveredIndex } from '../run/toolbarDiff';
 import { ReadingPane } from './ReadingPane';
-import { snippet, subjectOf } from './text';
+import { snippet, subjectOf } from './mailFormat';
 import { VirtualTime } from './VirtualTime';
 
 const base = {

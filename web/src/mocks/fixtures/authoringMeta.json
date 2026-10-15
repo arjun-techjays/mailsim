@@ -1,8 +1,839 @@
-// Generated from the pydantic models (src/mailsim/scenario/answer_key.py) for the mock API.
-import type { AuthoringMeta } from '../api/types';
-
-export const AUTHORING_META: AuthoringMeta = {
+{
  "scenario_schema": {
+  "$defs": {
+   "AgentSpec": {
+    "additionalProperties": false,
+    "properties": {
+     "mailbox": {
+      "title": "Mailbox",
+      "type": "string"
+     },
+     "allowed_operations": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Allowed Operations",
+      "type": "array"
+     },
+     "prohibited_operations": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Prohibited Operations",
+      "type": "array"
+     }
+    },
+    "required": [
+     "mailbox"
+    ],
+    "title": "AgentSpec",
+    "type": "object"
+   },
+   "AnswerAssertion": {
+    "additionalProperties": false,
+    "properties": {
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "type": {
+      "title": "Type",
+      "type": "string"
+     },
+     "requirement": {
+      "title": "Requirement",
+      "type": "string"
+     },
+     "severity": {
+      "anyOf": [
+       {
+        "enum": [
+         "mandatory",
+         "advisory"
+        ],
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Severity"
+     },
+     "category": {
+      "anyOf": [
+       {
+        "enum": [
+         "task",
+         "safety",
+         "integration",
+         "efficiency",
+         "communication"
+        ],
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Category"
+     },
+     "subject": {
+      "default": "agent",
+      "enum": [
+       "agent",
+       "simulator"
+      ],
+      "title": "Subject",
+      "type": "string"
+     },
+     "evaluate_at": {
+      "$ref": "#/$defs/EvaluatePoint"
+     },
+     "check": {
+      "anyOf": [
+       {
+        "additionalProperties": true,
+        "type": "object"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Check"
+     },
+     "rubric": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Rubric"
+     }
+    },
+    "required": [
+     "id",
+     "type",
+     "requirement"
+    ],
+    "title": "AnswerAssertion",
+    "type": "object"
+   },
+   "BehaviorSpec": {
+    "additionalProperties": false,
+    "properties": {
+     "response_style": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Response Style"
+     },
+     "response_delay_seconds": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Response Delay Seconds",
+      "type": "integer"
+     },
+     "mode": {
+      "default": "silent",
+      "enum": [
+       "silent",
+       "scripted",
+       "llm"
+      ],
+      "title": "Mode",
+      "type": "string"
+     },
+     "script": {
+      "items": {
+       "$ref": "#/$defs/ScriptRule"
+      },
+      "title": "Script",
+      "type": "array"
+     }
+    },
+    "title": "BehaviorSpec",
+    "type": "object"
+   },
+   "ClockSpec": {
+    "additionalProperties": false,
+    "properties": {
+     "start_at": {
+      "title": "Start At",
+      "type": "string"
+     },
+     "mode": {
+      "const": "virtual",
+      "default": "virtual",
+      "title": "Mode",
+      "type": "string"
+     }
+    },
+    "required": [
+     "start_at"
+    ],
+    "title": "ClockSpec",
+    "type": "object"
+   },
+   "DeliverySpec": {
+    "additionalProperties": false,
+    "properties": {
+     "external_delivery": {
+      "default": "deny",
+      "enum": [
+       "deny",
+       "sink",
+       "event"
+      ],
+      "title": "External Delivery",
+      "type": "string"
+     },
+     "persona_replies": {
+      "default": "enabled",
+      "enum": [
+       "enabled",
+       "disabled"
+      ],
+      "title": "Persona Replies",
+      "type": "string"
+     }
+    },
+    "title": "DeliverySpec",
+    "type": "object"
+   },
+   "EnvironmentSpec": {
+    "additionalProperties": false,
+    "properties": {
+     "seed": {
+      "minimum": 0,
+      "title": "Seed",
+      "type": "integer"
+     },
+     "clock": {
+      "$ref": "#/$defs/ClockSpec"
+     },
+     "delivery": {
+      "$ref": "#/$defs/DeliverySpec"
+     }
+    },
+    "required": [
+     "seed",
+     "clock"
+    ],
+    "title": "EnvironmentSpec",
+    "type": "object"
+   },
+   "EvaluatePoint": {
+    "additionalProperties": false,
+    "properties": {
+     "at": {
+      "default": "end",
+      "enum": [
+       "end",
+       "after_event"
+      ],
+      "title": "At",
+      "type": "string"
+     },
+     "event": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Event"
+     }
+    },
+    "title": "EvaluatePoint",
+    "type": "object"
+   },
+   "EvaluationSpec": {
+    "additionalProperties": false,
+    "properties": {
+     "assertions": {
+      "items": {
+       "$ref": "#/$defs/AnswerAssertion"
+      },
+      "title": "Assertions",
+      "type": "array"
+     },
+     "limits": {
+      "$ref": "#/$defs/LimitsSpec"
+     }
+    },
+    "title": "EvaluationSpec",
+    "type": "object"
+   },
+   "EventSpec": {
+    "additionalProperties": false,
+    "properties": {
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "trigger": {
+      "$ref": "#/$defs/TriggerSpec"
+     },
+     "event": {
+      "$ref": "#/$defs/ReceiveEventSpec"
+     }
+    },
+    "required": [
+     "id",
+     "trigger",
+     "event"
+    ],
+    "title": "EventSpec",
+    "type": "object"
+   },
+   "InitialMessageSpec": {
+    "additionalProperties": false,
+    "properties": {
+     "fixture": {
+      "title": "Fixture",
+      "type": "string"
+     }
+    },
+    "required": [
+     "fixture"
+    ],
+    "title": "InitialMessageSpec",
+    "type": "object"
+   },
+   "LimitsSpec": {
+    "additionalProperties": false,
+    "properties": {
+     "max_agent_actions": {
+      "default": 100,
+      "exclusiveMinimum": 0,
+      "title": "Max Agent Actions",
+      "type": "integer"
+     },
+     "max_virtual_duration_seconds": {
+      "default": 86400,
+      "exclusiveMinimum": 0,
+      "title": "Max Virtual Duration Seconds",
+      "type": "integer"
+     }
+    },
+    "title": "LimitsSpec",
+    "type": "object"
+   },
+   "MailboxSpec": {
+    "additionalProperties": false,
+    "properties": {
+     "owner": {
+      "title": "Owner",
+      "type": "string"
+     },
+     "initial_messages": {
+      "items": {
+       "$ref": "#/$defs/InitialMessageSpec"
+      },
+      "title": "Initial Messages",
+      "type": "array"
+     }
+    },
+    "required": [
+     "owner"
+    ],
+    "title": "MailboxSpec",
+    "type": "object"
+   },
+   "OrganizationSpec": {
+    "additionalProperties": false,
+    "properties": {
+     "domain": {
+      "title": "Domain",
+      "type": "string"
+     },
+     "name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Name"
+     },
+     "policies": {
+      "items": {
+       "$ref": "#/$defs/PolicySpec"
+      },
+      "title": "Policies",
+      "type": "array"
+     }
+    },
+    "required": [
+     "domain"
+    ],
+    "title": "OrganizationSpec",
+    "type": "object"
+   },
+   "PersonaSpec": {
+    "additionalProperties": false,
+    "properties": {
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Name"
+     },
+     "email": {
+      "title": "Email",
+      "type": "string"
+     },
+     "role": {
+      "title": "Role",
+      "type": "string"
+     },
+     "knowledge": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Knowledge",
+      "type": "array"
+     },
+     "behavior": {
+      "$ref": "#/$defs/BehaviorSpec"
+     }
+    },
+    "required": [
+     "id",
+     "email",
+     "role"
+    ],
+    "title": "PersonaSpec",
+    "type": "object"
+   },
+   "PolicySpec": {
+    "additionalProperties": false,
+    "properties": {
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "rule": {
+      "title": "Rule",
+      "type": "string"
+     }
+    },
+    "required": [
+     "id",
+     "rule"
+    ],
+    "title": "PolicySpec",
+    "type": "object"
+   },
+   "ReceiveEventSpec": {
+    "additionalProperties": false,
+    "properties": {
+     "type": {
+      "const": "email.receive",
+      "title": "Type",
+      "type": "string"
+     },
+     "from": {
+      "title": "From",
+      "type": "string"
+     },
+     "to": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "items": {
+         "type": "string"
+        },
+        "type": "array"
+       }
+      ],
+      "title": "To"
+     },
+     "subject": {
+      "title": "Subject",
+      "type": "string"
+     },
+     "body": {
+      "title": "Body",
+      "type": "string"
+     }
+    },
+    "required": [
+     "type",
+     "from",
+     "to",
+     "subject",
+     "body"
+    ],
+    "title": "ReceiveEventSpec",
+    "type": "object"
+   },
+   "RelationshipSpec": {
+    "additionalProperties": false,
+    "properties": {
+     "source": {
+      "title": "Source",
+      "type": "string"
+     },
+     "target": {
+      "title": "Target",
+      "type": "string"
+     },
+     "type": {
+      "title": "Type",
+      "type": "string"
+     },
+     "trust_level": {
+      "default": "medium",
+      "enum": [
+       "low",
+       "medium",
+       "high"
+      ],
+      "title": "Trust Level",
+      "type": "string"
+     }
+    },
+    "required": [
+     "source",
+     "target",
+     "type"
+    ],
+    "title": "RelationshipSpec",
+    "type": "object"
+   },
+   "ScenarioBody": {
+    "additionalProperties": false,
+    "properties": {
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "version": {
+      "minimum": 1,
+      "title": "Version",
+      "type": "integer"
+     },
+     "title": {
+      "title": "Title",
+      "type": "string"
+     },
+     "tags": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Tags",
+      "type": "array"
+     },
+     "environment": {
+      "$ref": "#/$defs/EnvironmentSpec"
+     },
+     "organization": {
+      "$ref": "#/$defs/OrganizationSpec"
+     },
+     "personas": {
+      "items": {
+       "$ref": "#/$defs/PersonaSpec"
+      },
+      "title": "Personas",
+      "type": "array"
+     },
+     "relationships": {
+      "items": {
+       "$ref": "#/$defs/RelationshipSpec"
+      },
+      "title": "Relationships",
+      "type": "array"
+     },
+     "projects": {
+      "items": {
+       "$ref": "#/$defs/WorkProjectSpec"
+      },
+      "title": "Projects",
+      "type": "array"
+     },
+     "mailboxes": {
+      "items": {
+       "$ref": "#/$defs/MailboxSpec"
+      },
+      "title": "Mailboxes",
+      "type": "array"
+     },
+     "events": {
+      "items": {
+       "$ref": "#/$defs/EventSpec"
+      },
+      "title": "Events",
+      "type": "array"
+     },
+     "agent": {
+      "$ref": "#/$defs/AgentSpec"
+     },
+     "evaluation": {
+      "$ref": "#/$defs/EvaluationSpec"
+     }
+    },
+    "required": [
+     "id",
+     "version",
+     "title",
+     "environment",
+     "organization",
+     "agent"
+    ],
+    "title": "ScenarioBody",
+    "type": "object"
+   },
+   "ScriptMatch": {
+    "additionalProperties": false,
+    "properties": {
+     "from": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "From"
+     },
+     "subject_contains": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Subject Contains"
+     },
+     "body_contains": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Body Contains"
+     }
+    },
+    "title": "ScriptMatch",
+    "type": "object"
+   },
+   "ScriptReply": {
+    "additionalProperties": false,
+    "properties": {
+     "subject": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Subject"
+     },
+     "body": {
+      "title": "Body",
+      "type": "string"
+     }
+    },
+    "required": [
+     "body"
+    ],
+    "title": "ScriptReply",
+    "type": "object"
+   },
+   "ScriptRule": {
+    "additionalProperties": false,
+    "description": "Scripted persona policy (1.1): deterministic reply when an incoming mail matches.",
+    "properties": {
+     "on": {
+      "$ref": "#/$defs/ScriptMatch"
+     },
+     "reply": {
+      "$ref": "#/$defs/ScriptReply"
+     },
+     "delay_seconds": {
+      "anyOf": [
+       {
+        "minimum": 0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Delay Seconds"
+     },
+     "once": {
+      "default": true,
+      "title": "Once",
+      "type": "boolean"
+     }
+    },
+    "required": [
+     "reply"
+    ],
+    "title": "ScriptRule",
+    "type": "object"
+   },
+   "TriggerSpec": {
+    "additionalProperties": false,
+    "properties": {
+     "type": {
+      "enum": [
+       "at",
+       "after_seconds",
+       "after_agent_action"
+      ],
+      "title": "Type",
+      "type": "string"
+     },
+     "at": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "At"
+     },
+     "seconds": {
+      "anyOf": [
+       {
+        "minimum": 0,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Seconds"
+     },
+     "action": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Action"
+     },
+     "delay_seconds": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Delay Seconds",
+      "type": "integer"
+     }
+    },
+    "required": [
+     "type"
+    ],
+    "title": "TriggerSpec",
+    "type": "object"
+   },
+   "WorkProjectSpec": {
+    "additionalProperties": false,
+    "properties": {
+     "id": {
+      "title": "Id",
+      "type": "string"
+     },
+     "name": {
+      "title": "Name",
+      "type": "string"
+     },
+     "participants": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Participants",
+      "type": "array"
+     },
+     "facts": {
+      "items": {
+       "type": "string"
+      },
+      "title": "Facts",
+      "type": "array"
+     }
+    },
+    "required": [
+     "id",
+     "name"
+    ],
+    "title": "WorkProjectSpec",
+    "type": "object"
+   }
+  },
+  "additionalProperties": false,
+  "properties": {
+   "schema_version": {
+    "enum": [
+     "1.0",
+     "1.1"
+    ],
+    "title": "Schema Version",
+    "type": "string"
+   },
+   "scenario": {
+    "$ref": "#/$defs/ScenarioBody"
+   }
+  },
+  "required": [
+   "schema_version",
+   "scenario"
+  ],
+  "title": "ScenarioDoc",
   "type": "object"
  },
  "answer_key_schema": {
@@ -225,18 +1056,25 @@ export const AUTHORING_META: AuthoringMeta = {
   "after_agent_action"
  ],
  "trigger_actions": [
-  "send_reply",
-  "reply",
-  "send_message",
-  "send",
-  "read",
-  "search",
+  "copy",
+  "delete",
+  "draft",
+  "flag",
+  "forward",
+  "insert",
+  "label",
   "move",
-  "label"
+  "read",
+  "reply",
+  "search",
+  "send",
+  "send_message",
+  "send_reply"
  ],
  "external_delivery_modes": [
   "deny",
-  "sink"
+  "sink",
+  "event"
  ],
  "behavior_modes": [
   "silent",
@@ -1280,4 +2118,4 @@ export const AUTHORING_META: AuthoringMeta = {
   "FLAGGED",
   "SEEN"
  ]
-};
+}

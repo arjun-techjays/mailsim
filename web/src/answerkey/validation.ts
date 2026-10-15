@@ -43,6 +43,9 @@ export function clientIssues(d: KeyDraft): Issue[] {
     if (!a.requirement.trim()) {
       out.push({ path: `assertions.${i}.requirement`, message: 'Describe what this assertion expects.' });
     }
+    if (a.evaluateAt === 'after_event' && !a.evaluateEvent.trim()) {
+      out.push({ path: `assertions.${i}.evaluate_at.event`, message: 'Name the scenario event to evaluate after.' });
+    }
   });
   return out;
 }
@@ -65,7 +68,9 @@ export function leakedFields(assertions: AssertionDraft[], leaks: Issue[]): Issu
     for (const f of LEAK_FIELDS) {
       const text = a[f].trim();
       if (text.length < 8) continue;
-      const hit = leaks.find((l) => l.message.toLowerCase().includes(text.toLowerCase()));
+      // Servers may shorten long quotes: the first 60 characters identify the field.
+      const probe = text.slice(0, 60).toLowerCase();
+      const hit = leaks.find((l) => l.message.toLowerCase().includes(probe));
       if (hit) {
         out.push({
           path: `assertions.${i}.${f}`,

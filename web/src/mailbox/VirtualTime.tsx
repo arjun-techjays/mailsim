@@ -1,4 +1,4 @@
-import { formatVirtual, formatVirtualShort } from './time';
+import { formatVirtual, formatVirtualShort } from './mailFormat';
 
 export function VirtualTime({ value, short = false }: { value: string | null | undefined; short?: boolean }) {
   if (!value) return <>—</>;

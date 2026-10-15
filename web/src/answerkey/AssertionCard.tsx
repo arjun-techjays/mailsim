@@ -1,5 +1,6 @@
 import { CheckBuilder, type Pickers } from './CheckBuilder';
 import { Field } from './fields';
+import { CHECK_DEFAULT_NOTES } from './help';
 import { DEFAULT_SEVERITY, defaultCheck, fieldId, TYPE_HELP, type AssertionDraft } from './model';
 import type { JsonSchema } from './schema';
 
@@ -38,7 +39,7 @@ export function AssertionCard({
     const next = meta.assertion_types.find((t) => t.type === type);
     set({
       type,
-      check: type === 'semantic' ? {} : defaultCheck(type, meta),
+      check: type === 'semantic' ? {} : defaultCheck(type, meta, ctx.events),
       useCheck: type !== 'semantic' && next?.check_schema != null,
     });
   };
@@ -147,7 +148,7 @@ export function AssertionCard({
               value={a.check}
               onChange={(check) => set({ check })}
               path={['assertions', index, 'check']}
-              ctx={ctx}
+              ctx={{ ...ctx, notes: CHECK_DEFAULT_NOTES[a.type] }}
               errors={errors}
             />
           ) : (

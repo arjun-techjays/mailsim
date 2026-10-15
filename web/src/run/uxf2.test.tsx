@@ -18,7 +18,7 @@ describe('Run toolbar', () => {
   it('is shown for controllers outside the overview and reports what each step did', async () => {
     const { user } = renderApp('/runs/run_demo?tab=activity', sessionFor('controller'));
     const bar = await screen.findByTestId('run-toolbar');
-    await user.click(within(bar).getByRole('button', { name: 'Advance the clock 10 minutes' }));
+    await user.click(within(bar).getByRole('button', { name: /advance the clock 10 minutes/ }));
     const result = await within(bar).findByTestId('toolbar-result');
     expect(result).toHaveTextContent('Advanced the clock by 10 minutes.');
     expect(result).toHaveTextContent('2 Mar 2026, 09:02 UTC → 2 Mar 2026, 09:12 UTC');
@@ -70,7 +70,7 @@ describe('Run toolbar', () => {
     );
     const { user } = renderApp('/runs/run_demo?tab=trace', sessionFor('controller'));
     const bar2 = await screen.findByTestId('run-toolbar');
-    await user.click(within(bar2).getByRole('button', { name: 'Advance the clock 1 minute' }));
+    await user.click(within(bar2).getByRole('button', { name: /advance the clock 1 minute$/ }));
     await waitFor(() => expect(within(bar2).getByTestId('toolbar-result')).toHaveTextContent('0 persona replies delivered.'));
     expect(within(bar2).queryByText('No new messages arrived.')).toBeNull();
     await user.click(within(bar2).getByRole('button', { name: 'Tick scheduler' }));
@@ -81,7 +81,7 @@ describe('Run toolbar', () => {
     mockDb.runs.run_demo!.run.virtual_time = null;
     const { user } = renderApp('/runs/run_demo?tab=trace', sessionFor('controller'));
     const bar = await screen.findByTestId('run-toolbar');
-    await user.click(within(bar).getByRole('button', { name: 'Advance the clock 1 day' }));
+    await user.click(within(bar).getByRole('button', { name: /advance the clock 1 day/ }));
     await waitFor(() => expect(within(bar).getByTestId('toolbar-result')).toHaveTextContent('Virtual time is now'));
   });
 });
@@ -101,6 +101,7 @@ function renderPanel(run: RunOut, props: { pollMs?: number; announceMs?: number 
 }
 
 const renderPanelWithUnmount = renderPanel;
+const renderQueryPanel = () => renderPanel(mockDb.runs.run_demo!.run, { pollMs: 15 });
 const demo = () => mockDb.runs.run_demo!;
 const push = (id: number, operation: string, extra: Partial<{ interface: string | null; actor: string; outcome: string }> = {}) =>
   demo().actions.push({
@@ -235,6 +236,66 @@ describe('Activity panel concurrency', () => {
     await screen.findByText('copy', { selector: 'th' });
     cleanup();
     expect(spy).toHaveBeenCalled();
+  });
+});
+
+describe('Activity panel resilience', () => {
+  it('backs off after errors and recovers', async () => {
+    let fail500 = true;
+    server.use(
+      http.get('*/v1/runs/:id/activity', () =>
+        fail500 ? fail(500) : HttpResponse.json({ items: [], next_after_id: null }),
+      ),
+    );
+    renderPanel(demo().run, { pollMs: 20 });
+    await waitFor(() => expect(screen.getByTestId('activity-status')).toHaveTextContent(/Retrying in \d+ s after an error/));
+    fail500 = false;
+    await waitFor(() => expect(screen.getByTestId('activity-status')).toHaveTextContent('Live'), { timeout: 3000 });
+  });
+
+  it('stops for a key that may not read activity', async () => {
+    let calls = 0;
+    server.use(
+      http.get('*/v1/runs/:id/activity', () => {
+        calls += 1;
+        return fail(403, 'PERMISSION_DENIED');
+      }),
+    );
+    renderPanel(demo().run, { pollMs: 20 });
+    await waitFor(() => expect(screen.getByTestId('activity-status')).toHaveTextContent('Stopped'));
+    const n = calls;
+    await new Promise((r) => setTimeout(r, 120));
+    expect(calls).toBe(n);
+  });
+
+  it('dedupes rows, advances the cursor from the newest id, caps retained rows and refreshes the run status', async () => {
+    let call = 0;
+    const afters: number[] = [];
+    let runGets = 0;
+    server.events.on('request:start', ({ request }) => {
+      if (/\/v1\/runs\/run_demo$/.test(new URL(request.url).pathname)) runGets += 1;
+    });
+    const item = (id: number) => ({ id, actor: 'agent', operation: `op${id}`, outcome: 'ok', interface: 'rest', virtual_time: null, input: {}, result: {} });
+    server.use(
+      http.get('*/v1/runs/:id/activity', ({ request }) => {
+        call += 1;
+        const after = Number(new URL(request.url).searchParams.get('after_id'));
+        afters.push(after);
+        if (call <= 6) {
+          // 6 full pages (1200 rows) on the first poll; the server's cursor lags behind
+          return HttpResponse.json({ items: Array.from({ length: 200 }, (_, i) => item(after + i + 1)), next_after_id: null });
+        }
+        // later: a duplicate of a known row plus one new row
+        return HttpResponse.json({ items: [item(1200), item(1201)], next_after_id: 1 });
+      }),
+    );
+    renderQueryPanel();
+    expect(await screen.findByTestId('activity-dropped')).toHaveTextContent(/Only the newest 1000 actions are kept here; 20\d older ones are in the Actions tab/);
+    await waitFor(() => expect(screen.getByText('op1201', { selector: 'th' })).toBeInTheDocument());
+    expect(screen.getAllByText('op1200', { selector: 'th' })).toHaveLength(1);
+    expect(afters.slice(0, 7)).toEqual([0, 200, 400, 600, 800, 1000, 1200]);
+    await waitFor(() => expect(runGets).toBeGreaterThan(0), { timeout: 3000 });
+    server.events.removeAllListeners();
   });
 });
 

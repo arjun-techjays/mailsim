@@ -10,9 +10,9 @@ import type {
   ScenarioVersionDocument,
   ValidationIssue,
 } from '../api/types';
-import { AUTHORING_META } from './akeyMeta';
+import { AUTHORING_META } from './authoring';
 import { FINANCE_MAILBOX, newMockRun, SCENARIO_KEY, type KeyInfo, type MockDb, type MockRun } from './db';
-import { fromYaml, toYaml, YamlError } from './miniYaml';
+import { fromYaml, YamlError } from './miniYaml';
 
 type Guard = 'controller' | 'evaluator' | 'inspector' | 'agent';
 type Doc = Record<string, unknown>;
@@ -234,26 +234,6 @@ export function createAkeyHandlers(db: MockDb, h: AkeyHelpers): HttpHandler[] {
   };
 
   return [
-    http.get('*/v1/meta/authoring', ({ request }) => {
-      const who = auth(request, 'inspector');
-      return who instanceof Response ? who : ok(AUTHORING_META);
-    }),
-    http.post('*/v1/tools/json-to-yaml', async ({ request }) => {
-      const who = auth(request, 'inspector');
-      if (who instanceof Response) return who;
-      const body = (await request.json()) as { document?: unknown };
-      if (!isObj(body.document)) return fail(400, 'INVALID_REQUEST', 'document must be an object');
-      return ok({ source: toYaml(body.document) });
-    }),
-    http.post('*/v1/tools/yaml-to-json', async ({ request }) => {
-      const who = auth(request, 'inspector');
-      if (who instanceof Response) return who;
-      const body = (await request.json()) as { source?: string };
-      const { doc, error } = parseDraft({ source: body.source ?? '' });
-      if (error) return ok({ document: null, error });
-      if (!isObj(doc)) return ok({ document: null, error: issue('', 'the document must be a mapping (key: value)') });
-      return ok({ document: doc, error: null });
-    }),
     http.get('*/v1/scenarios/:key/versions/:version/document', ({ request, params }) => {
       const who = auth(request, 'controller');
       if (who instanceof Response) return who;

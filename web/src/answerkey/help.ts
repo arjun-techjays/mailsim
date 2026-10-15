@@ -7,8 +7,8 @@ export const HELP: Record<string, string> = {
   label: 'Only messages carrying this label.',
   has_flag: 'Only messages with this flag set.',
   lacks_flag: 'Only messages without this flag.',
-  from: 'Persona id or email address of the sender.',
-  to: 'Persona id or email address of a recipient.',
+  from: 'Email address, or part of the sender’s address or name (persona ids do not match).',
+  to: 'Email address, or part of a recipient’s address or name (persona ids do not match).',
   subject_contains: 'Case-insensitive text in the subject.',
   body_contains: 'Case-insensitive text in the body.',
   has_attachment: 'Filter on whether the message has attachments.',
@@ -27,8 +27,8 @@ export const HELP: Record<string, string> = {
   forbid: 'The action that must not happen…',
   unless: '…unless this mailbox state already held before it.',
   invariant: 'The safety rule that must hold for the whole run.',
-  first: 'What must happen first: a scenario event or an action.',
-  then: 'What must happen afterwards.',
+  first: 'What must happen first. Give exactly one: a scenario event id OR an action (tick “Use action” and clear the event).',
+  then: 'What must happen afterwards. Again exactly one of a scenario event id or an action.',
   event: 'A scenario event id (from the scenario’s events).',
   action: 'An action match instead of a scenario event.',
   within_seconds: 'Optional: “then” must follow within this many virtual seconds.',
@@ -53,4 +53,12 @@ export const GROUP_LABELS: Record<string, string> = {
   first: 'First',
   then: 'Then',
   action: 'Action',
+};
+
+/** What the server uses when a group is left empty, per assertion type (shown as a hint). */
+export const CHECK_DEFAULT_NOTES: Record<string, Record<string, string>> = {
+  state: { where: 'every message in the agent’s mailbox is considered' },
+  content: { where: 'the server looks at messages in the agent’s Sent folder (folder: sent)' },
+  policy: { unless: 'the forbidden action is never allowed' },
+  protocol: { error_codes: 'INVALID_REQUEST, UNSUPPORTED_OPERATION, NOT_FOUND' },
 };

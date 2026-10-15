@@ -1,16 +1,14 @@
 // "Inject email" opened from a mailbox (controller/operator): deliver a message into this run's
 // simulated mailbox as if a persona or an outside sender wrote it. Never leaves the sandbox.
-import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import type { CanonicalMessage, InjectRequest, InjectResult } from '../api/types';
-import { useApi } from '../auth/session';
+import type { CanonicalMessage } from '../api/types';
 import { ErrorDisplay } from '../components/ErrorDisplay';
 import { splitList } from '../components/format';
 import { validateInject, type Errors } from '../run/injectValidation';
-import { runKeys } from '../run/keys';
+import { useInjectMutation } from '../run/simActions';
 import type { BrowserMailbox } from './useRunMailboxes';
 import { mailboxTitle } from './useRunMailboxes';
-import { subjectOf } from './text';
+import { subjectOf } from './mailFormat';
 
 const EXTERNAL = '__external__';
 
@@ -76,8 +74,6 @@ export function ComposeInject({
   onClose: () => void;
   onOpenMessage: (id: string) => void;
 }) {
-  const api = useApi();
-  const qc = useQueryClient();
   const heading = useRef<HTMLHeadingElement>(null);
   const senders = mailboxes.filter((m) => m.id !== mailbox.id);
   const [fromChoice, setFromChoice] = useState(senders[0]?.email ?? EXTERNAL);
@@ -91,20 +87,16 @@ export function ComposeInject({
   const [html, setHtml] = useState('');
   const [replyTo, setReplyTo] = useState('');
   const [errors, setErrors] = useState<Errors>({});
-  const [result, setResult] = useState<InjectResult | null>(null);
 
   useEffect(() => heading.current?.focus(), []);
 
-  const mutation = useMutation({
-    mutationFn: (body: InjectRequest) => api.inject(runId, mailbox.id, body),
-    onMutate: () => setResult(null),
-    onSuccess: (r) => setResult(r),
-    onSettled: () => qc.invalidateQueries({ queryKey: runKeys.all(runId) }),
-  });
+  const { mutation, result } = useInjectMutation(runId);
 
   const from = fromChoice === EXTERNAL ? external.trim() : fromChoice;
   const allTo = [...to, ...splitList(toExtra)];
   const allCc = [...cc, ...splitList(ccExtra)];
+  const known = new Set(mailboxes.map((m) => m.email.toLowerCase()));
+  const outside = [...new Set([...allTo, ...allCc].filter((a) => !known.has(a.toLowerCase())))];
 
   const pickReply = (id: string) => {
     setReplyTo(id);
@@ -128,6 +120,8 @@ export function ComposeInject({
     if (Object.keys(errs).length > 0) return;
     const parent = replyCandidates.find((m) => m.id === replyTo);
     mutation.mutate({
+      mailboxId: mailbox.id,
+      body: {
       message: {
         from,
         to: allTo,
@@ -135,9 +129,10 @@ export function ComposeInject({
         subject,
         text: text || null,
         html: html || null,
-        ...(parent ? { in_reply_to: parent.message_id_header, references: [...(parent.references as string[]), parent.message_id_header] } : {}),
+        ...(parent ? { in_reply_to: parent.message_id_header, references: [...(parent.references ?? []), parent.message_id_header] } : {}),
       },
       delivery: { mode: 'immediate' },
+      },
     });
   };
 
@@ -197,6 +192,12 @@ export function ComposeInject({
         )}
         <Recipients legend="To" name="to" mailboxes={mailboxes} picked={to} onPick={setTo} extra={toExtra} onExtra={setToExtra} error={errors.to} />
         <Recipients legend="Cc" name="cc" mailboxes={mailboxes} picked={cc} onPick={setCc} extra={ccExtra} onExtra={setCcExtra} />
+        {outside.length > 0 && (
+          <p className="notice" data-testid="compose-outside">
+            {outside.join(', ')} {outside.length === 1 ? 'is' : 'are'} outside the scenario (no mailbox in this run): the
+            server will refuse or sink {outside.length === 1 ? 'it' : 'them'} according to the scenario’s delivery policy.
+          </p>
+        )}
         <div className="field">
           <label htmlFor="inj2-reply">In reply to (threading)</label>
           <select id="inj2-reply" value={replyTo} onChange={(e) => pickReply(e.target.value)}>

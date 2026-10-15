@@ -14,6 +14,7 @@ import type { Pickers } from './CheckBuilder';
 import { clearDraft, draftKey, loadDraft, saveDraft } from './draftStorage';
 import { Field } from './fields';
 import {
+  droppedKeys,
   emptyDraft,
   fieldId,
   fromDocument,
@@ -90,19 +91,25 @@ function AnswerKeyEditor({ scenarioKey, meta, versions, taken, base, storageKey,
   const [restored] = useState(() => loadDraft(storageKey));
   const [draft, setDraft] = useState<KeyDraft>(() => restored ?? base);
   const [showRestored, setShowRestored] = useState(restored !== null);
+  // Grading content is stored only once the user actually changed something (never the
+  // unedited copy of a published key), and never again after publish/discard/cancel.
+  const [dirty, setDirty] = useState(restored !== null);
   const [mode, setMode] = useState<'form' | 'yaml'>('form');
   const [yaml, setYaml] = useState('');
   const [yamlIssue, setYamlIssue] = useState<Issue | null>(null);
   const [converting, setConverting] = useState(false);
   const [conversionError, setConversionError] = useState<unknown>(null);
+  const [dropped, setDropped] = useState<string[]>([]);
   const [newType, setNewType] = useState('state');
   const [blocked, setBlocked] = useState(false);
   const focusAfter = useRef<string | null>(null);
   const summary = useRef<HTMLHeadingElement>(null);
   const scenarioCtx = useScenarioContext(scenarioKey, versions.reduce((a, b) => Math.max(a, b), 0));
-  const ctx: Pickers = { meta, personas: scenarioCtx.personas, events: scenarioCtx.events };
+  const ctx: Pickers = { meta, personas: scenarioCtx.personas, events: scenarioCtx.events, labels: scenarioCtx.labels };
 
-  useEffect(() => saveDraft(storageKey, draft), [storageKey, draft]);
+  useEffect(() => {
+    if (dirty) saveDraft(storageKey, draft);
+  }, [dirty, storageKey, draft]);
   useEffect(() => {
     if (!focusAfter.current) return;
     document.getElementById(focusAfter.current)?.focus();
@@ -126,12 +133,15 @@ function AnswerKeyEditor({ scenarioKey, meta, versions, taken, base, storageKey,
   const inline = byPath([...problems, ...leakedFields(draft.assertions, leaks)]);
   const err = (path: string) => inline.get(path) ?? [];
 
-  const update = (fn: (d: KeyDraft) => KeyDraft) => setDraft((d) => fn(d));
+  const update = (fn: (d: KeyDraft) => KeyDraft) => {
+    setDirty(true);
+    setDraft((d) => fn(d));
+  };
   const setAssertions = (fn: (list: AssertionDraft[]) => AssertionDraft[]) =>
     update((d) => ({ ...d, assertions: fn(d.assertions) }));
 
   const addAssertion = () => {
-    const a = newAssertion(newType, meta, draft.assertions.map((x) => x.id));
+    const a = newAssertion(newType, meta, draft.assertions.map((x) => x.id), scenarioCtx.events);
     focusAfter.current = `${fieldId(`assertions.${draft.assertions.length}`)}-h`;
     setAssertions((list) => [...list, a]);
   };
@@ -184,7 +194,8 @@ function AnswerKeyEditor({ scenarioKey, meta, versions, taken, base, storageKey,
         setYamlIssue({ path: out.error?.path ?? '', message: out.error?.message ?? 'The YAML could not be read.' });
         return;
       }
-      setDraft(fromDocument(out.document, scenarioKey));
+      setDropped(droppedKeys(out.document));
+      update(() => fromDocument(out.document as Record<string, unknown>, scenarioKey));
       setYamlIssue(null);
       setMode('form');
       focusAfter.current = 'ak-mode-form';
@@ -198,6 +209,7 @@ function AnswerKeyEditor({ scenarioKey, meta, versions, taken, base, storageKey,
   const save = useMutation({
     mutationFn: () => api.createAnswerKey(scenarioKey, mode === 'yaml' ? { source: yaml } : { document: doc }),
     onSuccess: (out: AnswerKeyOut) => {
+      setDirty(false);
       clearDraft(storageKey);
       void qc.invalidateQueries({ queryKey: ['answer-keys', scenarioKey] });
       navigate(`/scenarios/${encodeURIComponent(scenarioKey)}`, { state: { answerKeySaved: out.version } });
@@ -205,6 +217,17 @@ function AnswerKeyEditor({ scenarioKey, meta, versions, taken, base, storageKey,
   });
 
   const knownProblems = problems.length + leaks.length + (yamlIssue ? 1 : 0);
+  const settled = live.pending
+    ? null
+    : live.error
+      ? 'Live validation failed.'
+      : knownProblems === 0
+        ? 'No problems found. Ready to publish.'
+        : `${knownProblems} problem${knownProblems === 1 ? '' : 's'} to fix.`;
+  const [announced, setAnnounced] = useState('');
+  useEffect(() => {
+    if (settled !== null) setAnnounced(settled);
+  }, [settled]);
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
     // While a re-check is in flight the server result may be stale: only block on fresh facts
@@ -220,6 +243,7 @@ function AnswerKeyEditor({ scenarioKey, meta, versions, taken, base, storageKey,
   };
 
   const discard = () => {
+    setDirty(false);
     clearDraft(storageKey);
     setDraft(base);
     setShowRestored(false);
@@ -255,6 +279,14 @@ function AnswerKeyEditor({ scenarioKey, meta, versions, taken, base, storageKey,
         </span>
       </div>
       {conversionError != null && <ErrorDisplay error={conversionError} title="Could not convert" />}
+      {mode === 'form' && dropped.length > 0 && (
+        <div className="notice" role="status" data-testid="yaml-dropped">
+          <p>
+            Ignored {dropped.length} field{dropped.length === 1 ? '' : 's'} the answer-key format does not have (check the
+            spelling): {dropped.map((d) => <code key={d}>{d} </code>)}
+          </p>
+        </div>
+      )}
 
       {mode === 'yaml' ? (
         <div className="field">
@@ -441,7 +473,11 @@ function AnswerKeyEditor({ scenarioKey, meta, versions, taken, base, storageKey,
         <h2 id="ak-check-h" tabIndex={-1} ref={summary}>
           Validation
         </h2>
-        <div aria-live="polite" role="status" data-testid="validation-status">
+        {/* Screen readers only hear settled results (not every keystroke's "Checking…"). */}
+        <p className="visually-hidden" role="status" data-testid="validation-announcer">
+          {announced}
+        </p>
+        <div data-testid="validation-status">
           {live.error ? (
             <ErrorDisplay error={live.error} title="Live validation failed" />
           ) : live.pending && !live.result ? (
@@ -474,7 +510,15 @@ function AnswerKeyEditor({ scenarioKey, meta, versions, taken, base, storageKey,
         <button type="submit" className="ak-primary" disabled={save.isPending}>
           {save.isPending ? 'Publishing…' : `Publish answer key v${draft.version || '?'}`}
         </button>
-        <Link to={`/scenarios/${encodeURIComponent(scenarioKey)}`}>Cancel</Link>
+        <Link
+          to={`/scenarios/${encodeURIComponent(scenarioKey)}`}
+          onClick={() => {
+            setDirty(false);
+            clearDraft(storageKey);
+          }}
+        >
+          Cancel (discard the draft)
+        </Link>
         <span className="hint">The draft is kept in this tab until you publish or discard it.</span>
       </div>
     </form>

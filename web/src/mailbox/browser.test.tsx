@@ -3,7 +3,7 @@ import { http, HttpResponse } from 'msw';
 import { mockDb, server } from '../test/server';
 import { OPERATOR_SESSION, renderApp, sessionFor } from '../test/utils';
 import { buildMailboxes, mailboxTitle, personaNames } from './useRunMailboxes';
-import { formatVirtual, formatVirtualShort } from './time';
+import { formatVirtual, formatVirtualShort } from './mailFormat';
 import type { ParsedSnapshot } from './snapshot';
 
 const fail = (status: number, code = 'INTERNAL') =>
@@ -308,5 +308,50 @@ describe('mailbox helpers', () => {
     expect(formatVirtual('2026-03-02T09:05:00Z')).toBe('2 Mar 2026, 09:05 UTC');
     expect(formatVirtualShort('2026-03-02T09:05:00Z')).toBe('2 Mar, 09:05');
     expect(formatVirtualShort('garbage')).toBe('garbage');
+  });
+});
+
+describe('review fixes', () => {
+  it('the reading pane uses the listed message when the state snapshot does not have it yet', async () => {
+    const r = mockDb.runs.run_demo!;
+    server.use(
+      http.get('*/v1/runs/:id/state', () =>
+        HttpResponse.json({
+          mailboxes: r.mailboxes.map(({ id, email, owner_id }) => ({ id, email, owner_id })),
+          folders: r.mailboxes.flatMap((mb) => mb.folders.map((f) => ({ ...f, mailbox_id: mb.id }))),
+          messages: [],
+        }),
+      ),
+    );
+    const { user } = renderApp('/runs/run_demo?tab=mailboxes', sessionFor('evaluator'));
+    await screen.findByText(/20 message\(s\) loaded/);
+    await user.click(screen.getByRole('button', { name: 'Invoice 4471' }));
+    const view = await screen.findByTestId('message-view');
+    expect(view).toHaveTextContent('invoice-4471.pdf');
+    expect(screen.queryByText(/is not in this run/)).toBeNull();
+  });
+
+  it('warns about recipients outside the scenario and shows the server policy error', async () => {
+    server.use(
+      http.post('*/v1/runs/:id/mailboxes/:mb/inject', () =>
+        HttpResponse.json(
+          { error: { code: 'PERMISSION_DENIED', message: 'external delivery is denied by the scenario', details: {}, request_id: 'r9' } },
+          { status: 403 },
+        ),
+      ),
+    );
+    const { user } = renderApp('/runs/run_demo?tab=mailboxes', sessionFor('controller'));
+    await screen.findByText(/20 message\(s\) loaded/);
+    await user.click(screen.getByRole('button', { name: 'Inject email here' }));
+    const panel = await screen.findByTestId('compose-inject');
+    expect(within(panel).queryByTestId('compose-outside')).toBeNull();
+    await user.type(within(panel).getByLabelText(/Other recipients/), 'a@outside.test, b@outside.test');
+    expect(within(panel).getByTestId('compose-outside')).toHaveTextContent('a@outside.test, b@outside.test are outside the scenario');
+    await user.clear(within(panel).getByLabelText(/Other recipients/));
+    await user.type(within(panel).getByLabelText(/Other Cc addresses/), 'c@outside.test');
+    expect(within(panel).getByTestId('compose-outside')).toHaveTextContent('c@outside.test is outside the scenario');
+    await user.type(within(panel).getByLabelText('Text body'), 'x');
+    await user.click(within(panel).getByRole('button', { name: 'Deliver email' }));
+    expect(await within(panel).findByText('external delivery is denied by the scenario')).toBeInTheDocument();
   });
 });

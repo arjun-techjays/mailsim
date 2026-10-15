@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
-import { AUTHORING_META } from '../mocks/akeyMeta';
+import { AUTHORING_META } from '../mocks/authoring';
 import { CheckBuilder, type Pickers } from './CheckBuilder';
 import type { JsonSchema } from './schema';
 
@@ -85,7 +85,8 @@ describe('CheckBuilder', () => {
     await user.selectOptions(within(count).getByLabelText('Expected number'), 'eq');
     expect(value().count).toEqual({ eq: 1 });
     await user.clear(within(count).getByLabelText('Exactly'));
-    expect(value().count).toEqual({ eq: 0 });
+    expect(value().count).toEqual({});
+    expect(within(count).getByLabelText('Exactly')).toBeInTheDocument();
     await user.type(within(count).getByLabelText('Exactly'), '3');
     await user.selectOptions(within(count).getByLabelText('Expected number'), 'max');
     expect(value().count).toEqual({ max: 3 });

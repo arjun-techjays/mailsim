@@ -60,7 +60,7 @@ test.describe('mailbox browser, clock toolbar and activity', () => {
 
     // clock toolbar: advance 10 minutes delivers the scheduled follow-up
     const bar = run.toolbar();
-    await bar.getByRole('button', { name: 'Advance the clock 10 minutes' }).click();
+    await bar.getByRole('button', { name: /advance the clock 10 minutes/ }).click();
     const result = bar.getByTestId('toolbar-result');
     await expect(result).toContainText('Scheduled events fired: evt_vendor_followup.');
     await expect(result).toContainText('1 persona reply delivered.');

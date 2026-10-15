@@ -31,3 +31,12 @@ export function clearDraft(key: string): void {
     // ignore
   }
 }
+
+/** Removes every answer-key draft of this tab (called when the session connects or disconnects). */
+export function clearAllDrafts(): void {
+  try {
+    for (const k of Object.keys(sessionStorage)) if (k.startsWith(PREFIX)) sessionStorage.removeItem(k);
+  } catch {
+    // ignore
+  }
+}

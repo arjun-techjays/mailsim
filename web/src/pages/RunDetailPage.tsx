@@ -146,13 +146,12 @@ export function RunDetailPage() {
               <MailboxBrowser
                 run={run.data}
                 snapshot={snapshot}
-                version={state.dataUpdatedAt}
                 error={state.error}
                 selection={{ mailbox: params.get('mailbox'), folder: params.get('folder'), message: params.get('message') }}
                 onChange={(n) => go({ mailbox: n.mailbox, folder: n.folder, message: n.message })}
               />
             )}
-            {tab === 'activity' && <ActivityPanel run={run.data} />}
+            {tab === 'activity' && <ActivityPanel key={run.data.id} run={run.data} />}
             {tab === 'trace' && <EventTimeline runId={runId} highlightSeq={seq && /^\d+$/.test(seq) ? Number(seq) : null} />}
             {tab === 'actions' && <ActionsTable runId={runId} highlight={params.get('action')} />}
             {tab === 'artifacts' && <ArtifactsTable runId={runId} highlight={params.get('ref')} />}

@@ -8,6 +8,8 @@ import type { PersonaOption } from './CheckBuilder';
 export interface ScenarioContext {
   personas: PersonaOption[];
   events: string[];
+  /** Labels seen on messages of the newest run (suggestions for `label`). */
+  labels: string[];
   source: 'scenario' | 'run' | 'none';
   loading: boolean;
 }
@@ -26,6 +28,12 @@ export function personaOptions(list: unknown): PersonaOption[] {
     .filter((p) => p.id);
 }
 
+/** Distinct labels on the messages of a run state snapshot, sorted. */
+export function labelsOf(messages: unknown): string[] {
+  const all = rows(messages).flatMap((m) => (Array.isArray(m.labels) ? m.labels : []));
+  return [...new Set(all.filter((l): l is string => typeof l === 'string'))].sort();
+}
+
 /** `latestVersion` 0 = the scenario has no published version. */
 export function useScenarioContext(scenarioKey: string, latestVersion: number): ScenarioContext {
   const api = useApi();
@@ -40,23 +48,24 @@ export function useScenarioContext(scenarioKey: string, latestVersion: number): 
   const runs = useQuery({
     queryKey: ['runs', 'for-scenario', scenarioKey],
     queryFn: () => api.listRuns(null, { scenario_key: scenarioKey }),
-    enabled: !controller,
     retry: false,
   });
   const runId = runs.data?.items[0]?.id;
   const state = useQuery({
     queryKey: ['run', runId, 'state'],
     queryFn: () => api.state(runId as string),
-    enabled: !controller && !!runId,
+    enabled: !!runId,
     retry: false,
   });
 
+  const labels = labelsOf(state.data?.messages);
   if (controller) {
     const body = (doc.data?.document?.scenario ?? {}) as Row;
     const personas = personaOptions(body.personas);
     return {
       personas,
       events: rows(body.events).map((e) => s(e.id)).filter(Boolean),
+      labels,
       source: personas.length > 0 ? 'scenario' : 'none',
       loading: doc.isLoading,
     };
@@ -65,6 +74,7 @@ export function useScenarioContext(scenarioKey: string, latestVersion: number): 
   return {
     personas,
     events: [],
+    labels,
     source: personas.length > 0 ? 'run' : 'none',
     loading: runs.isLoading || state.isLoading,
   };
