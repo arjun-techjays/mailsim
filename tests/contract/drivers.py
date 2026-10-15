@@ -134,3 +134,119 @@ class NeutralDriver:
 DRIVERS: list[type[NeutralDriver]] = [NeutralDriver]
 
 __all__ = ["ALL_CAPABILITIES", "DRIVERS", "ErrorCode", "MailboxDriver", "Msg", "NeutralDriver"]
+
+
+# ---- Wave 1 (WS-A): the neutral REST API, driven over HTTP with an agent key ----------------
+class RestError(Exception):
+    """A non-2xx REST response; `code` comes from the frozen error envelope."""
+
+    def __init__(self, status: int, body: dict[str, Any]) -> None:
+        self.status, self.body = status, body
+        self.code = str(body.get("error", {}).get("code", f"HTTP_{status}"))
+        super().__init__(f"{status} {self.code}: {body}")
+
+
+class RestDriver(NeutralDriver):
+    """`/v1/mailboxes/{id}/...` over HTTP (FastAPI TestClient), authenticated with an agent
+    key bound to this run and to `mailbox.mailbox_id`. For a mailbox that is not the
+    scenario's agent mailbox, the engine's agent guard then answers PERMISSION_DENIED, which is
+    what the isolation contract expects."""
+
+    name: ClassVar[str] = "rest"
+    capabilities: ClassVar[frozenset[str]] = ALL_CAPABILITIES
+
+    def __init__(self, mailbox: AgentMailbox) -> None:
+        from fastapi.testclient import TestClient
+
+        from mailsim.api.app import create_app
+        from mailsim.api.auth import issue_key, verify_key
+
+        # The facade exposes no public accessor for its engine/scope; the harness must share
+        # them with the app so both drivers act on the same canonical state.
+        engine, scope = mailbox._e, mailbox._scope
+        sf = engine._sf
+        with sf.begin() as s:
+            key = issue_key(s, tenant_id=scope.tenant_id, project_id=scope.project_id,
+                            role="agent", run_id=mailbox.run_id,
+                            mailbox_id=mailbox.mailbox_id).api_key  # fmt: skip
+            principal = verify_key(s, key)
+        assert (principal.run_id, principal.mailbox_id) == (mailbox.run_id, mailbox.mailbox_id)
+        app = create_app(engine=engine, session_factory=sf, blobs=engine.blobs)
+        self.http = TestClient(app, raise_server_exceptions=False)
+        self.http.headers["Authorization"] = f"Bearer {key}"
+        self.base = f"/v1/mailboxes/{mailbox.mailbox_id}"
+
+    def _call(self, method: str, path: str, **kw: Any) -> Any:
+        r = self.http.request(method, self.base + path, **kw)
+        if r.status_code >= 400:
+            raise RestError(r.status_code, r.json())
+        return r.json() if r.content else None
+
+    @staticmethod
+    def _rmsg(d: dict[str, Any]) -> Msg:
+        import json
+
+        return Msg(d["id"], d["id"], d["message_id_header"], d["thread_id"], d["subject"],
+                   _FOLDER[d["folder"]], frozenset(d["flags"]), frozenset(d["labels"]),
+                   d["in_reply_to"], json.dumps(d))  # fmt: skip
+
+    def _all(self, **params: Any) -> list[Msg]:
+        out, cursor = [], None
+        while True:
+            page = self._call("GET", "/messages", params={**params, "page_size": 500,
+                                                           **({"cursor": cursor} if cursor else {})})  # fmt: skip
+            out += [self._rmsg(d) for d in page["items"]]
+            cursor = page["next_cursor"]
+            if cursor is None:
+                return out
+
+    def list(self, folder: str | None = None) -> list[Msg]:
+        return self._all(**({"folder": folder} if folder else {}))
+
+    def page(self, size: int, cursor: str | None) -> tuple[list[Msg], str | None]:
+        params: dict[str, Any] = {"page_size": size, **({"cursor": cursor} if cursor else {})}
+        p = self._call("GET", "/messages", params=params)
+        return [self._rmsg(d) for d in p["items"]], p["next_cursor"]
+
+    def get(self, ref: str) -> Msg:
+        return self._rmsg(self._call("GET", f"/messages/{ref}"))
+
+    def thread(self, thread_ref: str) -> list[Msg]:
+        return [self._rmsg(d) for d in self._call("GET", f"/threads/{thread_ref}")]
+
+    def search(self, text: str) -> list[Msg]:
+        return self._all(q=text)
+
+    def send(self, to: list[str], subject: str, text: str) -> str:
+        out = self._call("POST", "/messages", json={"to": to, "subject": subject, "text": text})
+        return str(out["message_id_header"])
+
+    def reply(self, ref: str, text: str) -> None:
+        self._call("POST", f"/messages/{ref}/reply", json={"text": text})
+
+    def move(self, ref: str, folder: str) -> None:
+        self._call("PATCH", f"/messages/{ref}", json={"folder": folder})
+
+    def flag(self, ref: str, add: list[str]) -> None:
+        self._call("PATCH", f"/messages/{ref}", json={"add_flags": add})
+
+    def label(self, ref: str, add: list[str]) -> None:
+        self._call("PATCH", f"/messages/{ref}", json={"add_labels": add})
+
+    def delete(self, ref: str) -> None:
+        self._call("DELETE", f"/messages/{ref}")
+
+    def changes(self, since: int) -> tuple[list[str], int]:
+        ids: list[str] = []
+        while True:
+            feed = self._call("GET", "/changes", params={"since": since})
+            ids += [c["message_id"] for c in feed["changes"]]
+            since = int(feed["next_since"])
+            if not feed["has_more"]:
+                return ids, since
+
+    def error_code(self, exc: BaseException) -> str:
+        return exc.code if isinstance(exc, RestError) else super().error_code(exc)
+
+
+DRIVERS.append(RestDriver)

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -12,6 +13,13 @@ from mailsim.domain.models import CanonicalMessage
 
 class _M(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+# Request size caps (WS-A, additive): base64 of 5 MB per fixture / 25 MB raw MIME, 2 MB text.
+MAX_SOURCE_CHARS = 2 * 1024 * 1024
+MAX_FIXTURE_B64_CHARS = math.ceil(5 * 1024 * 1024 * 4 / 3) + 4
+MAX_RAW_B64_CHARS = math.ceil(25 * 1024 * 1024 * 4 / 3) + 4
+FixtureB64 = Annotated[str, Field(max_length=MAX_FIXTURE_B64_CHARS)]
 
 
 # ---- control plane ---------------------------------------------------------------------
@@ -29,9 +37,11 @@ class ProjectOut(_M):
 class ScenarioCreate(_M):
     """Scenario document (YAML text or parsed JSON) plus fixtures (path -> base64)."""
 
-    source: str | None = Field(default=None, description="YAML or JSON text")
+    source: str | None = Field(
+        default=None, description="YAML or JSON text", max_length=MAX_SOURCE_CHARS
+    )
     document: dict[str, Any] | None = None
-    fixtures: dict[str, str] = Field(
+    fixtures: dict[str, FixtureB64] = Field(
         default_factory=dict, description="relative path -> base64 bytes"
     )
 
@@ -63,7 +73,7 @@ class ValidationResult(_M):
 
 
 class AnswerKeyCreate(_M):
-    source: str | None = None
+    source: str | None = Field(default=None, max_length=MAX_SOURCE_CHARS)
     document: dict[str, Any] | None = None
 
 
@@ -129,6 +139,10 @@ class ActionOut(_M):
     input: dict[str, Any]
     result: dict[str, Any]
     outcome: str
+    id: int | None = None
+    virtual_time: str | None = None
+    seq_start: int | None = Field(default=None, description="first event sequence it caused")
+    seq_end: int | None = Field(default=None, description="last event sequence it caused")
 
 
 class ReplayOut(_M):
@@ -182,7 +196,7 @@ class InjectMessage(_M):
 class InjectRequest(_M):
     event_id: str | None = None
     message: InjectMessage | None = None
-    raw_base64: str | None = None
+    raw_base64: str | None = Field(default=None, max_length=MAX_RAW_B64_CHARS)
     delivery: dict[str, Any] = Field(default_factory=lambda: {"mode": "immediate"})
 
 
@@ -236,3 +250,49 @@ class FolderOut(_M):
     id: str
     name: str
     system_type: str | None
+
+
+# ---- additive (Wave 1, WS-A) -------------------------------------------------------------
+class IssuedCredential(_M):
+    """A newly issued sandbox API key. `api_key` is shown once and never stored in clear."""
+
+    api_key: str
+    key_id: str
+    role: Literal["controller", "evaluator", "agent"]
+
+
+class ProjectCreated(ProjectOut):
+    """`POST /v1/projects` response: the project plus its first controller/evaluator keys."""
+
+    credentials: list[IssuedCredential]
+
+
+class ChangeOut(_M):
+    sequence: int
+    type: str
+    message_id: str | None
+
+
+class ChangeFeed(_M):
+    """Agent mailbox change feed keyed by event sequence (resume from `next_since`)."""
+
+    changes: list[ChangeOut]
+    next_since: int
+    has_more: bool
+    latest_sequence: int
+    reset_since: bool
+
+
+class RunPage(PageOut):
+    items: list[RunOut]
+
+
+class MeOut(_M):
+    """The calling credential's identity (`GET /v1/me`)."""
+
+    role: Literal["controller", "evaluator", "agent"]
+    tenant_id: str
+    project_id: str
+    run_id: str | None
+    mailbox_id: str | None
+    key_id: str | None
