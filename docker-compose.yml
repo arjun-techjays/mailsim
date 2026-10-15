@@ -1,0 +1,39 @@
+# Phase 1: PostgreSQL for the engine + an optional sandboxed CLI container.
+# The `sandbox` network is internal (no egress): nothing attached only to it can reach
+# the public internet. PostgreSQL additionally joins `host-access` so developers/CI on the
+# host can connect to the published loopback port; the app service never does.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: mailsim
+      POSTGRES_PASSWORD: mailsim
+      POSTGRES_DB: mailsim
+    ports:
+      - "127.0.0.1:54329:5432"
+    networks: [sandbox, host-access]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mailsim"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  app:
+    profiles: ["app"]
+    build: .
+    environment:
+      MAILSIM_DATABASE_URL: postgresql+psycopg://mailsim:mailsim@postgres:5432/mailsim
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [sandbox]
+
+networks:
+  sandbox:
+    internal: true
+  host-access: {}
+
+volumes:
+  pgdata: {}

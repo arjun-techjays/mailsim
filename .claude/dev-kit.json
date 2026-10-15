@@ -1,0 +1,11 @@
+{
+  "stacks": ["python"],
+  "prHost": "github",
+  "gates": {
+    "coverage": { "mode": "required", "min": 95 },
+    "e2e": { "mode": "auto" }
+  },
+  "test": {
+    "coverageCommands": ["uv run pytest --cov=mailsim --cov-branch --cov-report=term-missing"]
+  }
+}
