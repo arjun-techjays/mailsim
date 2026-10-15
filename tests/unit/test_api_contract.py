@@ -116,7 +116,9 @@ def test_sim_errors_and_unexpected_errors_map_to_envelope():
     def auth():
         from fastapi import HTTPException
 
-        raise HTTPException(status_code=401, detail="no key")
+        raise HTTPException(
+            status_code=401, detail="no key", headers={"WWW-Authenticate": "Bearer"}
+        )
 
     c = TestClient(app, raise_server_exceptions=False)
     r = c.get("/v1/_boom/sim")
@@ -127,7 +129,9 @@ def test_sim_errors_and_unexpected_errors_map_to_envelope():
         "request_id": r.json()["error"]["request_id"]}  # fmt: skip
     assert "secret" not in r.text
     assert c.get("/v1/_boom/teapot").json()["error"]["code"] == "INVALID_REQUEST"
-    assert c.get("/v1/_boom/auth").json()["error"]["code"] == "UNAUTHENTICATED"
+    auth_resp = c.get("/v1/_boom/auth")
+    assert auth_resp.json()["error"]["code"] == "UNAUTHENTICATED"
+    assert auth_resp.headers["www-authenticate"] == "Bearer"
 
 
 def test_openapi_document_is_frozen(tmp_path):

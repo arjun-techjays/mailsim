@@ -88,7 +88,10 @@ def install_error_handlers(app: FastAPI) -> None:
         code = {401: UNAUTHENTICATED, 403: str(ErrorCode.PERMISSION_DENIED),
                 404: str(ErrorCode.NOT_FOUND), 405: str(ErrorCode.UNSUPPORTED_OPERATION)}.get(
             exc.status_code, str(ErrorCode.INVALID_REQUEST))  # fmt: skip
-        return envelope(request, exc.status_code, code, str(exc.detail))
+        response = envelope(request, exc.status_code, code, str(exc.detail))
+        for name, value in (exc.headers or {}).items():  # e.g. WWW-Authenticate on 401
+            response.headers[name] = value
+        return response
 
     @app.exception_handler(Exception)
     async def _internal(request: Request, exc: Exception) -> JSONResponse:
