@@ -111,12 +111,13 @@ function errorFromResponse(res: Response, text: string): ApiError {
   });
 }
 
-export async function apiRequest<T>(
+async function send(
   cfg: ApiConfig,
   method: 'GET' | 'POST' | 'PATCH',
   path: string,
-  opts: RequestOptions = {},
-): Promise<T> {
+  opts: RequestOptions,
+  accept: string,
+): Promise<{ res: Response; text: string }> {
   const timeoutMs = cfg.timeoutMs ?? defaultTimeoutMs();
   const controller = new AbortController();
   let timedOut = false;
@@ -127,7 +128,7 @@ export async function apiRequest<T>(
   const onOuterAbort = () => controller.abort();
   opts.signal?.addEventListener('abort', onOuterAbort);
 
-  const headers: Record<string, string> = { Accept: 'application/json' };
+  const headers: Record<string, string> = { Accept: accept };
   if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
   if (opts.idempotent) headers['Idempotency-Key'] = newIdempotencyKey();
@@ -165,6 +166,16 @@ export async function apiRequest<T>(
   }
 
   if (!res.ok) throw errorFromResponse(res, text);
+  return { res, text };
+}
+
+export async function apiRequest<T>(
+  cfg: ApiConfig,
+  method: 'GET' | 'POST' | 'PATCH',
+  path: string,
+  opts: RequestOptions = {},
+): Promise<T> {
+  const { res, text } = await send(cfg, method, path, opts, 'application/json');
   if (res.status === 204 || text === '') return undefined as T;
   try {
     return JSON.parse(text) as T;
@@ -177,4 +188,14 @@ export async function apiRequest<T>(
       requestId: res.headers.get('x-request-id'),
     });
   }
+}
+
+/** GET a non-JSON resource (e.g. report exports) as text, with the same auth/timeout/errors. */
+export async function apiText(
+  cfg: ApiConfig,
+  path: string,
+  query?: Record<string, QueryValue>,
+): Promise<{ text: string; contentType: string }> {
+  const { res, text } = await send(cfg, 'GET', path, { query }, '*/*');
+  return { text, contentType: res.headers.get('content-type') ?? 'application/octet-stream' };
 }

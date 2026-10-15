@@ -17,6 +17,7 @@ test.describe('run controls', () => {
 
     await run.advance(600);
     await expect(run.controlResult()).toContainText('fired evt_vendor_followup');
+    await expect(run.controlResult()).toContainText('1 persona reply delivered');
     await expect(page.getByTestId('run-virtual-time')).toHaveText('2026-03-02T09:12:00Z');
 
     await page.getByRole('button', { name: 'Scheduler tick' }).click();

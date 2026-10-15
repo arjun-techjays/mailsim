@@ -19,7 +19,7 @@ export async function detectRole(cfg: ApiConfig): Promise<Role> {
   const api = createApi(cfg);
   try {
     const me = await api.me();
-    if (ROLES.includes(me?.role as Role)) return me.role as Role;
+    if (me && ROLES.includes(me.role)) return me.role;
   } catch (e) {
     if (!(isApiError(e) && e.status != null && ABSENT.has(e.status))) throw e;
   }

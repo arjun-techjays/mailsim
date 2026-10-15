@@ -67,6 +67,16 @@ test.describe('evaluation (evaluator)', () => {
     await expect(ev.report()).toContainText('FAILED');
   });
 
+  test('report export downloads (JUnit) with the evaluator key', async ({ page }) => {
+    const ev = new EvaluationPage(page);
+    await ev.goto('run_demo');
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.getByRole('button', { name: 'Download JUnit XML' }).click(),
+    ]);
+    expect(download.suggestedFilename()).toBe('run_demo-eval_1.xml');
+  });
+
   test('empty evaluation list', async ({ page }) => {
     const ev = new EvaluationPage(page);
     await ev.goto('run_empty');

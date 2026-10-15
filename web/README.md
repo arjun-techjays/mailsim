@@ -39,8 +39,10 @@ First-time Playwright setup: `npx playwright install chromium`.
 Fault injection: scenario search `boom` returns a 500 envelope, `slow` never answers (the client
 times out after `VITE_REQUEST_TIMEOUT_MS`, 4 s in mock mode), run `run_boom` returns 500, run
 `run_empty` has no events and no evaluations. Mock state lives in memory and resets on a full page
-reload. The mock also implements the planned additive endpoints (`GET /v1/me`, `GET /v1/runs`,
-event filters `type`/`actor`/`epoch`, `id`/`virtual_time`/`seq_start`/`seq_end` on actions).
+reload. The mock follows the generated schemas, including `GET /v1/me` (MeOut), `GET /v1/runs` (RunPage),
+event filters `type`/`actor`/`epoch`, ActionOut `id`/`virtual_time`/`seq_start`/`seq_end`,
+`ClockResult.persona_replies` and the evaluation report export (json/junit/markdown). It has no
+agent-facing mailbox routes because the dashboard never uses agent keys.
 
 > **Never deploy a `--mode mock` build.** It contains the MSW worker and fake data, and is written
 > to `dist-mock/` (not `dist/`) so it cannot be mistaken for the production bundle. CI/deploy
@@ -53,6 +55,12 @@ MAILSIM_API_URL=http://127.0.0.1:8000 \
 MAILSIM_CONTROLLER_KEY=... MAILSIM_EVALUATOR_KEY=... MAILSIM_AGENT_KEY=... \
 npm run e2e:real
 ```
+
+It creates one run through the UI and evaluations of that run, and otherwise only reads. It covers
+connect + role via `/v1/me` for all three keys, the agent-key page (no requests), scenarios, start
+run, runs list, run detail (advance clock, trace filter, state mailbox inspector), evaluation with
+per-assertion diff and report download, and build comparison. An agent key can be minted with
+`POST /v1/scenarios/{key}/runs` (controller) using `agent_credentials[0].api_key`.
 
 `playwright.real.config.ts` starts Vite in development mode with the `/v1` proxy (so the API needs
 no CORS) and runs `e2e/real/*.spec.ts`. Without `MAILSIM_API_URL` every test is skipped; tests that

@@ -35,13 +35,9 @@ export type MessagePage = S['MessagePage'];
 export type FolderOut = S['FolderOut'];
 export type ErrorEnvelope = S['ErrorEnvelope'];
 export type ErrorBody = S['ErrorBody'];
+export type MeOut = S['MeOut'];
+export type RunPage = S['RunPage'];
+export type ReportFormat = 'json' | 'junit' | 'markdown';
 
 export type Role = 'controller' | 'evaluator' | 'agent';
 
-/** ActionOut plus the optional fields WS-A is adding (id, virtual_time, seq_start, seq_end). */
-export type ActionRecord = ActionOut & {
-  id?: string | null;
-  virtual_time?: string | null;
-  seq_start?: number | null;
-  seq_end?: number | null;
-};

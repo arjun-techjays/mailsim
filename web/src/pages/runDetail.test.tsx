@@ -157,7 +157,7 @@ describe('Run detail', () => {
   });
 
   it('actions table highlights by action id, and artifacts', async () => {
-    const { user } = renderApp('/runs/run_demo?tab=actions&action=act_4', sessionFor('evaluator'));
+    const { user } = renderApp('/runs/run_demo?tab=actions&action=4', sessionFor('evaluator'));
     expect(await screen.findByTestId('actions-table')).toBeInTheDocument();
     expect(rows('actions-table')).toHaveLength(4);
     expect(screen.getByTestId('highlighted-action')).toHaveTextContent('modify_labels');

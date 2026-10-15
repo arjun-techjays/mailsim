@@ -1,7 +1,7 @@
 // In-memory fixture database for the MSW mock API. Shapes follow openapi/openapi.json.
 // Deterministic: no Date.now()/Math.random(); ids come from counters.
 import type {
-  ActionRecord,
+  ActionOut,
   AnswerKeyOut,
   AttachmentRef,
   CanonicalMessage,
@@ -32,7 +32,7 @@ export interface MockRun {
   mailboxes: MockMailbox[];
   messages: CanonicalMessage[];
   events: EventOut[];
-  actions: ActionRecord[];
+  actions: ActionOut[];
   evaluations: EvaluationReport[];
   virtualSeconds: number;
   followUpFired: boolean;
@@ -222,13 +222,12 @@ function demoEvents(count: number): EventOut[] {
   return events;
 }
 
-function demoActions(): ActionRecord[] {
-  // id / virtual_time / seq_* are the additive ActionOut fields WS-A is adding.
+function demoActions(): ActionOut[] {
   return [
-    { id: 'act_1', actor: 'agent', operation: 'list_messages', input: { folder: 'inbox' }, result: { count: 25 }, outcome: 'ok', virtual_time: isoAt(10), seq_start: 1, seq_end: 1 },
-    { id: 'act_2', actor: 'agent', operation: 'get_message', input: { message_id: DANGEROUS_MESSAGE_ID }, result: {}, outcome: 'ok', virtual_time: isoAt(20), seq_start: 2, seq_end: 2 },
+    { id: 1, actor: 'agent', operation: 'list_messages', input: { folder: 'inbox' }, result: { count: 25 }, outcome: 'ok', virtual_time: isoAt(10), seq_start: 1, seq_end: 1 },
+    { id: 2, actor: 'agent', operation: 'get_message', input: { message_id: DANGEROUS_MESSAGE_ID }, result: {}, outcome: 'ok', virtual_time: isoAt(20), seq_start: 2, seq_end: 2 },
     {
-      id: 'act_3',
+      id: 3,
       actor: 'agent',
       operation: 'reply',
       input: { message_id: DANGEROUS_MESSAGE_ID, recipients: 1 },
@@ -238,7 +237,7 @@ function demoActions(): ActionRecord[] {
       seq_start: 3,
       seq_end: 4,
     },
-    { id: 'act_4', actor: 'agent', operation: 'modify_labels', input: { add: ['APPROVED'] }, result: {}, outcome: 'denied', virtual_time: isoAt(70), seq_start: 7, seq_end: null },
+    { id: 4, actor: 'agent', operation: 'modify_labels', input: { add: ['APPROVED'] }, result: {}, outcome: 'denied', virtual_time: isoAt(70), seq_start: 7, seq_end: null },
   ];
 }
 
@@ -283,7 +282,7 @@ export function buildReport(runId: string, id: string, opts: { checks: boolean; 
       evidence: opts.checks
         ? [
             { kind: 'event', ref: '7', note: 'denied label change' },
-            { kind: 'action', ref: 'act_4', note: 'modify_labels' },
+            { kind: 'action', ref: '4', note: 'modify_labels' },
           ]
         : [],
       score: null,

@@ -5,6 +5,7 @@ import { num, pct } from '../components/format';
 import { Badge } from '../components/Status';
 import { runLinks } from '../run/keys';
 import { DiffView } from './DiffView';
+import { ReportDownloads } from './ReportDownloads';
 
 const CATEGORIES = ['task', 'safety', 'integration', 'efficiency', 'communication'];
 const STATUSES = ['PASS', 'FAIL', 'INCONCLUSIVE', 'NOT_APPLICABLE'];
@@ -47,6 +48,7 @@ export function EvaluationReportView({ report }: { report: EvaluationReport }) {
       <h2 id="report-h">
         Report <code>{report.evaluation_id}</code>
       </h2>
+      <ReportDownloads runId={report.run_id} evaluationId={report.evaluation_id} />
       <div className={`verdict verdict-${report.verdict.toLowerCase()}`}>
         <p>
           Verdict: <Badge value={report.verdict} />

@@ -20,11 +20,13 @@ describe('Run controls', () => {
     await user.type(screen.getByLabelText('Advance clock by (seconds)'), '600');
     await user.click(screen.getByRole('button', { name: 'Advance clock' }));
     await waitFor(() => expect(result()).toHaveTextContent('fired evt_vendor_followup'));
+    expect(screen.getByTestId('persona-replies')).toHaveTextContent('1 persona reply delivered');
     await waitFor(() => expect(screen.getByTestId('run-virtual-time')).toHaveTextContent('2026-03-02T09:12:00Z'));
 
     await user.click(screen.getByRole('button', { name: 'Scheduler tick' }));
     await waitFor(() => expect(result()).toHaveTextContent('Scheduler tick: virtual time is now'));
     expect(result()).toHaveTextContent('no scheduled events fired');
+    expect(screen.getByTestId('persona-replies')).toHaveTextContent('0 persona replies delivered');
 
     await user.click(screen.getByRole('button', { name: 'Reset (new epoch)' }));
     await waitFor(() => expect(result()).toHaveTextContent('Reset: run is now RUNNING (epoch 3)'));
@@ -71,6 +73,13 @@ describe('Run controls', () => {
     expect(replay).toHaveTextContent('does NOT match');
     expect(replay).toHaveTextContent('differs');
     expect(replay).toHaveTextContent('blob/x');
+  });
+
+  it('treats a missing persona_replies as zero', async () => {
+    server.use(http.post('*/v1/runs/:id/scheduler/tick', () => HttpResponse.json({ fired: [], virtual_time: 'T' })));
+    const { user } = await openRun();
+    await user.click(screen.getByRole('button', { name: 'Scheduler tick' }));
+    expect(await screen.findByTestId('persona-replies')).toHaveTextContent('0 persona replies delivered');
   });
 
   it('validates the advance amount client-side', async () => {

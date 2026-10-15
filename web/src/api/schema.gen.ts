@@ -21,6 +21,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/keys/{key_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke Api Key
+         * @description Revoke any key of the caller's project (including agent keys and the caller's own).
+         *     Keys of other projects or tenants answer NOT_FOUND.
+         */
+        delete: operations["revoke_api_key_v1_keys__key_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mailboxes/{mailbox_id}/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Changes
+         * @description Mailbox change feed after event `since`; resume from `next_since` while `has_more`.
+         *     `reset_since` true means the run was reset: resynchronise fully.
+         */
+        get: operations["changes_v1_mailboxes__mailbox_id__changes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/mailboxes/{mailbox_id}/folders": {
         parameters: {
             query?: never;
@@ -45,10 +87,18 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Messages */
+        /**
+         * List Messages
+         * @description List (or with `q`, search subject/body/sender) ordered by (created_at, id).
+         *     Follow `next_cursor` until it is null; under a fixed state no item is skipped or repeated.
+         */
         get: operations["list_messages_v1_mailboxes__mailbox_id__messages_get"];
         put?: never;
-        /** Send */
+        /**
+         * Send
+         * @description Send to simulated mailboxes only. External recipients follow the scenario's rule
+         *     (deny/sink/event); nothing is ever delivered outside the sandbox.
+         */
         post: operations["send_v1_mailboxes__mailbox_id__messages_post"];
         delete?: never;
         options?: never;
@@ -67,10 +117,23 @@ export interface paths {
         get: operations["get_message_v1_mailboxes__mailbox_id__messages__message_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Message
+         * @description Permanently delete a message (to move it to Trash, PATCH `folder: trash`).
+         */
+        delete: operations["delete_message_v1_mailboxes__mailbox_id__messages__message_id__delete"];
         options?: never;
         head?: never;
-        /** Patch Message */
+        /**
+         * Patch Message
+         * @description Move and/or change labels and flags.
+         *
+         *     The folder is resolved (404 if unknown) before anything is written. The changes are then
+         *     applied as SEPARATE agent writes, in this order: move, labels, flags. Each counts against
+         *     the write budget, and if a later step fails (e.g. an unknown flag, or the budget runs out)
+         *     the earlier steps stay applied: the error response means "possibly partially applied";
+         *     GET the message to see its state.
+         */
         patch: operations["patch_message_v1_mailboxes__mailbox_id__messages__message_id__patch"];
         trace?: never;
     };
@@ -108,6 +171,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Me
+         * @description Identity of the calling credential (any role).
+         */
+        get: operations["me_v1_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects": {
         parameters: {
             query?: never;
@@ -117,7 +200,13 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create Project */
+        /**
+         * Create Project
+         * @description Create a project in the caller's TENANT (tenant-wide: any controller key of the tenant
+         *     may do this). The response carries the new project's first controller and evaluator keys
+         *     (shown once); the caller's own key stays bound to its own project. The very first
+         *     tenant/project/keys come from `python -m mailsim.serve bootstrap`.
+         */
         post: operations["create_project_v1_projects_post"];
         delete?: never;
         options?: never;
@@ -132,8 +221,32 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Project */
+        /**
+         * Get Project
+         * @description The caller's own project only (any other id answers NOT_FOUND).
+         */
         get: operations["get_project_v1_projects__project_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Runs
+         * @description Runs in the caller's project, newest first (by creation time, then id); filter by
+         *     `scenario_key` and/or `status`; follow `next_cursor` until it is null.
+         */
+        get: operations["list_runs_v1_runs_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -176,6 +289,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runs/{run_id}/agent-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Agent Credential
+         * @description Issue a new agent key for a run (e.g. after a lost or redacted response). Earlier agent
+         *     keys of the run are revoked.
+         */
+        post: operations["create_agent_credential_v1_runs__run_id__agent_credentials_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/runs/{run_id}/artifacts": {
         parameters: {
             query?: never;
@@ -183,7 +317,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Run Artifacts */
+        /**
+         * Run Artifacts
+         * @description Trace, raw MIME and attachment blobs; evaluation reports for evaluators only.
+         */
         get: operations["run_artifacts_v1_runs__run_id__artifacts_get"];
         put?: never;
         post?: never;
@@ -245,6 +382,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runs/{run_id}/evaluations/{evaluation_id}/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Evaluation Report
+         * @description Download one evaluation's report (JSON, JUnit XML or Markdown).
+         */
+        get: operations["evaluation_report_v1_runs__run_id__evaluations__evaluation_id__report_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/runs/{run_id}/events": {
         parameters: {
             query?: never;
@@ -252,7 +409,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Run Events */
+        /**
+         * Run Events
+         * @description Event trace in sequence order, optionally filtered by event `type`, `actor` and
+         *     `epoch`; follow `next_cursor` (with the same filters) until it is null.
+         */
         get: operations["run_events_v1_runs__run_id__events_get"];
         put?: never;
         post?: never;
@@ -271,7 +432,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Inject */
+        /**
+         * Inject
+         * @description Inject an inbound message into a simulated mailbox. Nothing ever leaves the sandbox:
+         *     the only delivery status is `delivered_to_simulated_mailbox`.
+         */
         post: operations["inject_v1_runs__run_id__mailboxes__mailbox_id__inject_post"];
         delete?: never;
         options?: never;
@@ -305,7 +470,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Reset Run */
+        /**
+         * Reset Run
+         * @description Restore the scenario baseline (new epoch). The run is READY again; start it.
+         */
         post: operations["reset_run_v1_runs__run_id__reset_post"];
         delete?: never;
         options?: never;
@@ -374,7 +542,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** State */
+        /**
+         * State
+         * @description Canonical mailbox state. `at_sequence` (state as of that event) is evaluator-only.
+         */
         get: operations["state_v1_runs__run_id__state_get"];
         put?: never;
         post?: never;
@@ -391,10 +562,18 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Scenarios */
+        /**
+         * List Scenarios
+         * @description Scenarios in the caller's project; `tag` matches the latest version's tags, `q` is a
+         *     case-insensitive substring of the key or the latest title.
+         */
         get: operations["list_scenarios_v1_scenarios_get"];
         put?: never;
-        /** Create Scenario */
+        /**
+         * Create Scenario
+         * @description Publish a scenario version from YAML/JSON text or a parsed document plus base64
+         *     fixtures. Inline evaluation assertions are split off into an evaluator-only answer key.
+         */
         post: operations["create_scenario_v1_scenarios_post"];
         delete?: never;
         options?: never;
@@ -446,7 +625,10 @@ export interface paths {
         /** List Answer Keys */
         get: operations["list_answer_keys_v1_scenarios__scenario_key__answer_keys_get"];
         put?: never;
-        /** Create Answer Key */
+        /**
+         * Create Answer Key
+         * @description Publish a hidden answer-key version. The response is metadata only.
+         */
         post: operations["create_answer_key_v1_scenarios__scenario_key__answer_keys_post"];
         delete?: never;
         options?: never;
@@ -463,7 +645,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create Run */
+        /**
+         * Create Run
+         * @description Create (and by default start) an isolated run. The agent's key is returned ONCE here;
+         *     an idempotent replay returns it redacted (mint another with
+         *     `POST /v1/runs/{run_id}/agent-credentials`).
+         */
         post: operations["create_run_v1_scenarios__scenario_key__runs_post"];
         delete?: never;
         options?: never;
@@ -480,7 +667,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Validate Scenario */
+        /**
+         * Validate Scenario
+         * @description Validate schema, references, fixtures and assertions without storing anything.
+         */
         post: operations["validate_scenario_v1_scenarios__scenario_key__validate_post"];
         delete?: never;
         options?: never;
@@ -517,6 +707,8 @@ export interface components {
         ActionOut: {
             /** Actor */
             actor: string;
+            /** Id */
+            id?: number | null;
             /** Input */
             input: {
                 [key: string]: unknown;
@@ -529,6 +721,18 @@ export interface components {
             result: {
                 [key: string]: unknown;
             };
+            /**
+             * Seq End
+             * @description last event sequence it caused
+             */
+            seq_end?: number | null;
+            /**
+             * Seq Start
+             * @description first event sequence it caused
+             */
+            seq_start?: number | null;
+            /** Virtual Time */
+            virtual_time?: string | null;
         };
         /** Address */
         Address: {
@@ -788,10 +992,41 @@ export interface components {
              */
             passed: number;
         };
+        /**
+         * ChangeFeed
+         * @description Agent mailbox change feed keyed by event sequence (resume from `next_since`).
+         */
+        ChangeFeed: {
+            /** Changes */
+            changes: components["schemas"]["ChangeOut"][];
+            /** Has More */
+            has_more: boolean;
+            /** Latest Sequence */
+            latest_sequence: number;
+            /** Next Since */
+            next_since: number;
+            /** Reset Since */
+            reset_since: boolean;
+        };
+        /** ChangeOut */
+        ChangeOut: {
+            /** Message Id */
+            message_id: string | null;
+            /** Sequence */
+            sequence: number;
+            /** Type */
+            type: string;
+        };
         /** ClockResult */
         ClockResult: {
             /** Fired */
             fired: string[];
+            /**
+             * Persona Replies
+             * @description persona messages delivered by the persona runtime in this step
+             * @default 0
+             */
+            persona_replies: number;
             /** Virtual Time */
             virtual_time: string;
         };
@@ -1009,6 +1244,42 @@ export interface components {
             /** Message Id */
             message_id: string;
         };
+        /**
+         * IssuedCredential
+         * @description A newly issued sandbox API key. `api_key` is shown once and never stored in clear.
+         */
+        IssuedCredential: {
+            /** Api Key */
+            api_key: string;
+            /** Key Id */
+            key_id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "controller" | "evaluator" | "agent";
+        };
+        /**
+         * MeOut
+         * @description The calling credential's identity (`GET /v1/me`).
+         */
+        MeOut: {
+            /** Key Id */
+            key_id: string | null;
+            /** Mailbox Id */
+            mailbox_id: string | null;
+            /** Project Id */
+            project_id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "controller" | "evaluator" | "agent";
+            /** Run Id */
+            run_id: string | null;
+            /** Tenant Id */
+            tenant_id: string;
+        };
         /** MessagePage */
         MessagePage: {
             /** Items */
@@ -1033,6 +1304,25 @@ export interface components {
         ProjectCreate: {
             /** Name */
             name: string;
+        };
+        /**
+         * ProjectCreated
+         * @description `POST /v1/projects` response: the project plus its first controller/evaluator keys.
+         */
+        ProjectCreated: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Credentials */
+            credentials: components["schemas"]["IssuedCredential"][];
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Tenant Id */
+            tenant_id: string;
         };
         /** ProjectOut */
         ProjectOut: {
@@ -1119,6 +1409,13 @@ export interface components {
             status: string;
             /** Virtual Time */
             virtual_time: string | null;
+        };
+        /** RunPage */
+        RunPage: {
+            /** Items */
+            items: components["schemas"]["RunOut"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
         };
         /**
          * ScenarioCreate
@@ -1276,6 +1573,69 @@ export interface operations {
             };
         };
     };
+    revoke_api_key_v1_keys__key_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                key_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    changes_v1_mailboxes__mailbox_id__changes_get: {
+        parameters: {
+            query?: {
+                since?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                mailbox_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChangeFeed"];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     folders_v1_mailboxes__mailbox_id__folders_get: {
         parameters: {
             query?: never;
@@ -1410,6 +1770,36 @@ export interface operations {
             };
         };
     };
+    delete_message_v1_mailboxes__mailbox_id__messages__message_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                mailbox_id: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     patch_message_v1_mailboxes__mailbox_id__messages__message_id__patch: {
         parameters: {
             query?: never;
@@ -1514,6 +1904,35 @@ export interface operations {
             };
         };
     };
+    me_v1_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeOut"];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     create_project_v1_projects_post: {
         parameters: {
             query?: never;
@@ -1533,7 +1952,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ProjectOut"];
+                    "application/json": components["schemas"]["ProjectCreated"];
                 };
             };
             /** @description Default Response */
@@ -1565,6 +1984,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ProjectOut"];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_runs_v1_runs_get: {
+        parameters: {
+            query?: {
+                scenario_key?: string | null;
+                status?: string | null;
+                cursor?: string | null;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunPage"];
                 };
             };
             /** @description Default Response */
@@ -1627,6 +2080,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ActionOut"][];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_agent_credential_v1_runs__run_id__agent_credentials_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentCredential"];
                 };
             };
             /** @description Default Response */
@@ -1809,11 +2293,50 @@ export interface operations {
             };
         };
     };
+    evaluation_report_v1_runs__run_id__evaluations__evaluation_id__report_get: {
+        parameters: {
+            query?: {
+                format?: "json" | "junit" | "markdown";
+            };
+            header?: never;
+            path: {
+                run_id: string;
+                evaluation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "application/xml": unknown;
+                    "text/markdown; charset=utf-8": unknown;
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     run_events_v1_runs__run_id__events_get: {
         parameters: {
             query?: {
                 cursor?: string | null;
                 page_size?: number;
+                type?: string | null;
+                actor?: string | null;
+                epoch?: number | null;
             };
             header?: never;
             path: {

@@ -1,5 +1,9 @@
-import { apiRequest, type ApiConfig, type RequestOptions } from './client';
+import { apiRequest, apiText, type ApiConfig, type RequestOptions } from './client';
 import type {
+  ActionOut,
+  MeOut,
+  ReportFormat,
+  RunPage,
   AnswerKeyOut,
   ArtifactOut,
   BuildComparison,
@@ -15,7 +19,6 @@ import type {
   RunOut,
   ScenarioOut,
 } from './types';
-import type { ActionRecord } from './types';
 
 const seg = encodeURIComponent;
 
@@ -25,11 +28,6 @@ export interface EventFilters {
   epoch?: string;
 }
 
-/** Shape of the planned GET /v1/me; only `role` is relied upon. */
-export interface Me {
-  role?: unknown;
-  [key: string]: unknown;
-}
 
 /** One function per OpenAPI operation the dashboard uses. */
 export function createApi(cfg: ApiConfig) {
@@ -41,14 +39,14 @@ export function createApi(cfg: ApiConfig) {
 
   return {
     health: () => get<Record<string, string>>('/v1/health'),
-    /** Additive endpoint (may be absent: 404/501). */
-    me: () => get<Me>('/v1/me'),
-    /** Additive endpoint (may be absent: 404/501). Accepts a page or a bare array. */
-    listRuns: async (cursor: string | null): Promise<{ items: RunOut[]; next_cursor: string | null }> => {
-      const out = await get<RunOut[] | { items?: RunOut[]; next_cursor?: string | null }>('/v1/runs', { cursor });
-      if (Array.isArray(out)) return { items: out, next_cursor: null };
-      return { items: out?.items ?? [], next_cursor: out?.next_cursor ?? null };
-    },
+    /** Caller identity (older servers without it answer 404/501; callers fall back). */
+    me: () => get<MeOut>('/v1/me'),
+    /** Runs of the caller's project, newest first. */
+    listRuns: (cursor: string | null, filters: { scenario_key?: string; status?: string } = {}) =>
+      get<RunPage>('/v1/runs', { cursor, ...filters }),
+    /** Evaluation report export; returned as text for download. */
+    report: (runId: string, evaluationId: string, format: ReportFormat) =>
+      apiText(cfg, `${run(runId)}/evaluations/${seg(evaluationId)}/report`, { format }),
 
     // scenarios
     listScenarios: (filters: { tag?: string; q?: string } = {}, signal?: AbortSignal) =>
@@ -82,7 +80,7 @@ export function createApi(cfg: ApiConfig) {
     inject: (id: string, mailboxId: string, body: InjectRequest) =>
       post<InjectResult>(`${run(id)}/mailboxes/${seg(mailboxId)}/inject`, body, true),
     state: (id: string) => get<Record<string, unknown>>(`${run(id)}/state`),
-    actions: (id: string) => get<ActionRecord[]>(`${run(id)}/actions`),
+    actions: (id: string) => get<ActionOut[]>(`${run(id)}/actions`),
 
     // evaluation (evaluator role)
     listEvaluations: (id: string) => get<EvaluationReport[]>(`${run(id)}/evaluations`),

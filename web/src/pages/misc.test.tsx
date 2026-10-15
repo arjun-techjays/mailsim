@@ -13,17 +13,6 @@ describe('Runs page', () => {
     expect(table).toHaveTextContent('READY');
   });
 
-  it('paginates the run list and shows empty/more errors', async () => {
-    const run = { id: 'r1', status: 'RUNNING', epoch: 1, virtual_time: null, agent_actions: 0, replay_of: null };
-    server.use(
-      http.get('*/v1/runs', ({ request }) =>
-        new URL(request.url).searchParams.get('cursor') ? HttpResponse.error() : HttpResponse.json([run]),
-      ),
-    );
-    renderApp('/runs', sessionFor('controller'));
-    expect(await screen.findByTestId('runs-table')).toHaveTextContent('r1');
-    expect(screen.queryByRole('button', { name: 'Load more runs' })).toBeNull();
-  });
 
   it('load more runs and its failure', async () => {
     const run = (id: string) => ({ id, status: 'RUNNING', epoch: 1, virtual_time: 'T', agent_actions: 0, replay_of: null, agent_build: 'b' });
@@ -42,8 +31,22 @@ describe('Runs page', () => {
     expect(await screen.findByText(/Could not load more runs/)).toBeInTheDocument();
   });
 
-  it('empty run list (page without fields)', async () => {
-    server.use(http.get('*/v1/runs', () => HttpResponse.json({})));
+  it('renders runs without scenario or build', async () => {
+    server.use(
+      http.get('*/v1/runs', () =>
+        HttpResponse.json({
+          items: [{ id: 'r9', status: 'READY', epoch: 1, virtual_time: null, agent_actions: 0, replay_of: null, agent_build: null }],
+          next_cursor: null,
+        }),
+      ),
+    );
+    renderApp('/runs', sessionFor('controller'));
+    const row = (await screen.findByRole('link', { name: 'r9' })).closest('tr') as HTMLElement;
+    expect(within(row).getAllByText('—')).toHaveLength(3);
+  });
+
+  it('empty run list', async () => {
+    server.use(http.get('*/v1/runs', () => HttpResponse.json({ items: [], next_cursor: null })));
     renderApp('/runs', sessionFor('controller'));
     expect(await screen.findByText('No runs yet.')).toBeInTheDocument();
   });

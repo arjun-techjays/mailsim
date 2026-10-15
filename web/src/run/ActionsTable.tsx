@@ -11,7 +11,7 @@ export function ActionsTable({ runId, highlight }: { runId: string; highlight: s
   const api = useApi();
   const q = useQuery({ queryKey: runKeys.actions(runId), queryFn: () => api.actions(runId) });
   const row = useRef<HTMLTableRowElement>(null);
-  const matched = !!highlight && !!q.data?.some((a) => a.id === highlight);
+  const matched = !!highlight && !!q.data?.some((a) => a.id != null && String(a.id) === highlight);
   useEffect(() => {
     if (matched) row.current?.focus();
   }, [matched]);
@@ -44,7 +44,7 @@ export function ActionsTable({ runId, highlight }: { runId: string; highlight: s
           </thead>
           <tbody>
             {q.data.map((a, i) => {
-              const hl = matched && a.id === highlight;
+              const hl = matched && a.id != null && String(a.id) === highlight;
               return (
                 <tr
                   key={a.id ?? i}

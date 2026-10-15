@@ -23,7 +23,11 @@ function OutcomeView({ outcome }: { outcome: Outcome }) {
     return (
       <p>
         {outcome.label}: virtual time is now <strong>{outcome.result.virtual_time}</strong>;{' '}
-        {outcome.result.fired.length > 0 ? `fired ${outcome.result.fired.join(', ')}` : 'no scheduled events fired'}.
+        {outcome.result.fired.length > 0 ? `fired ${outcome.result.fired.join(', ')}` : 'no scheduled events fired'};{' '}
+        <span data-testid="persona-replies">
+          {outcome.result.persona_replies ?? 0} persona repl{(outcome.result.persona_replies ?? 0) === 1 ? 'y' : 'ies'} delivered
+        </span>
+        .
       </p>
     );
   }

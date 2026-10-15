@@ -8,6 +8,9 @@
 import { delay, http, HttpResponse, type HttpResponseResolver } from 'msw';
 import type {
   BuildComparison,
+  ClockResult,
+  MeOut,
+  RunPage,
   CanonicalMessage,
   EvaluationRequest,
   InjectRequest,
@@ -158,33 +161,36 @@ export function createHandlers(db: MockDb = createMockDb()) {
     };
   }
 
-  const agentMailbox = (request: Request, mailboxId: string) => {
-    const who = auth(request, 'agent');
-    if (who instanceof Response) return who;
-    if (who.mailboxId !== mailboxId) return fail(403, 'PERMISSION_DENIED', 'agent credentials are bound to one mailbox');
-    const r = db.runs[who.runId as string] as MockRun;
-    return r;
-  };
-
   return [
     http.get('*/v1/health', () => ok({ status: 'ok', version: 'mock' })),
     // Additive endpoint planned by WS-A; shape beyond `role` is not relied upon.
     http.get('*/v1/me', ({ request }) => {
       const header = request.headers.get('authorization') ?? '';
       const key = header.startsWith('Bearer ') ? header.slice(7) : '';
-      if (!db.keys[key]) return fail(401, 'UNAUTHENTICATED', 'missing or invalid API key');
-      const who = auth(request, db.keys[key].role === 'agent' ? 'agent' : 'inspector');
+      const who = auth(request, db.keys[key]?.role === 'agent' ? 'agent' : 'inspector');
       if (who instanceof Response) return who;
-      return ok({ role: who.role, project_id: who.project, run_id: who.runId ?? null, mailbox_id: who.mailboxId ?? null });
+      const me: MeOut = {
+        role: who.role,
+        tenant_id: 'ten_mock',
+        project_id: who.project,
+        run_id: who.runId ?? null,
+        mailbox_id: who.mailboxId ?? null,
+        key_id: `key_${key}`,
+      };
+      return ok(me);
     }),
-    // Additive endpoint planned by WS-A: runs of the caller's project, newest first.
     http.get('*/v1/runs', ({ request }) => {
       const who = auth(request, 'inspector');
       if (who instanceof Response) return who;
+      const url = new URL(request.url);
+      const scenarioKey = url.searchParams.get('scenario_key');
+      const status = url.searchParams.get('status');
       const items = Object.values(db.runs)
         .map((r) => r.run)
+        .filter((r) => (!scenarioKey || r.scenario_key === scenarioKey) && (!status || r.status === status))
         .reverse();
-      return ok({ items, next_cursor: null });
+      const page: RunPage = { items, next_cursor: null };
+      return ok(page);
     }),
 
     // ---- scenarios ------------------------------------------------------------------------
@@ -381,7 +387,8 @@ export function createHandlers(db: MockDb = createMockDb()) {
           });
           event(r, 'message.delivered', 'system', 'email.receive', { message_id: 'msg_followup_1' });
         }
-        return ok({ fired, virtual_time: r.run.virtual_time });
+        const result: ClockResult = { fired, virtual_time: r.run.virtual_time as string, persona_replies: fired.length };
+        return ok(result);
       }),
     ),
     http.post(
@@ -390,7 +397,8 @@ export function createHandlers(db: MockDb = createMockDb()) {
         const inactive = requireActive(r);
         if (inactive) return inactive;
         event(r, 'scheduler.tick', 'controller', 'scheduler.tick', {});
-        return ok({ fired: [], virtual_time: r.run.virtual_time });
+        const result: ClockResult = { fired: [], virtual_time: r.run.virtual_time as string, persona_replies: 0 };
+        return ok(result);
       }),
     ),
     http.post(
@@ -468,34 +476,24 @@ export function createHandlers(db: MockDb = createMockDb()) {
         return last ? ok(last) : fail(404, 'NOT_FOUND', 'run has no evaluation');
       }),
     ),
-
-    // ---- agent mailbox ----------------------------------------------------------------------------
-    http.get('*/v1/mailboxes/:mailboxId/folders', ({ request, params }) => {
-      const r = agentMailbox(request, String(params.mailboxId));
-      if (r instanceof Response) return r;
-      return ok(r.mailboxes.find((m) => m.id === params.mailboxId)?.folders ?? []);
-    }),
-    http.get('*/v1/mailboxes/:mailboxId/messages', ({ request, params }) => {
-      const r = agentMailbox(request, String(params.mailboxId));
-      if (r instanceof Response) return r;
-      const url = new URL(request.url);
-      const folder = url.searchParams.get('folder');
-      const offset = Number(url.searchParams.get('cursor') ?? 0);
-      const size = Number(url.searchParams.get('page_size') ?? 50);
-      const all = r.messages.filter((m) => m.mailbox_id === params.mailboxId && (!folder || m.folder === folder));
-      const next = offset + size < all.length ? String(offset + size) : null;
-      return ok({ items: all.slice(offset, offset + size), next_cursor: next });
-    }),
-    http.get('*/v1/mailboxes/:mailboxId/messages/:messageId', ({ request, params }) => {
-      const r = agentMailbox(request, String(params.mailboxId));
-      if (r instanceof Response) return r;
-      const m = r.messages.find((x) => x.mailbox_id === params.mailboxId && x.id === params.messageId);
-      return m ? ok(m) : fail(404, 'NOT_FOUND', 'message not found');
-    }),
-    http.get('*/v1/mailboxes/:mailboxId/threads/:threadId', ({ request, params }) => {
-      const r = agentMailbox(request, String(params.mailboxId));
-      if (r instanceof Response) return r;
-      return ok(r.messages.filter((x) => x.mailbox_id === params.mailboxId && x.thread_id === params.threadId));
-    }),
+    http.get(
+      '*/v1/runs/:runId/evaluations/:evaluationId/report',
+      runRoute('evaluator', (r, request, params) => {
+        const report = r.evaluations.find((e) => e.evaluation_id === params.evaluationId);
+        if (!report) return fail(404, 'NOT_FOUND', 'evaluation not found');
+        const format = new URL(request.url).searchParams.get('format') ?? 'json';
+        if (format === 'junit') {
+          return new HttpResponse(`<testsuite name="${report.scenario_key}" tests="${report.outcomes.length}"/>`, {
+            headers: { 'content-type': 'application/xml' },
+          });
+        }
+        if (format === 'markdown') {
+          return new HttpResponse(`# ${report.evaluation_id}\n\nVerdict: ${report.verdict}\n`, {
+            headers: { 'content-type': 'text/markdown; charset=utf-8' },
+          });
+        }
+        return ok(report);
+      }),
+    ),
   ];
 }
