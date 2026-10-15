@@ -105,23 +105,33 @@ other value clears it). Other extended properties are not supported.
   ErrorAccessDenied`, no send-as). Non-empty `attachments`, `replyTo`, `internetMessageHeaders`,
   `mentions`, `multiValueExtendedProperties` and an `importance` other than `normal` answer `501
   ErrorNotSupported`. Display names on recipients are not kept (the engine stores addresses).
+  The mailbox's own address (for `/me`, `/users/{upn}`, send-as checks and reply-all) comes from
+  `AgentMailbox.mailbox_info()` and is recorded as an agent read.
 - `PATCH /messages/{id}`: `isRead`, `flag.flagStatus` (`complete` clears the flag),
   `categories` (replaces the set), the replied marker above, and, on drafts only, `subject`,
   `body` and the recipient lists. Changes are applied as separate engine writes in the order
   content, flags, categories; if a later one fails the earlier ones stay applied (GET to see the
   state). Content changes on a non-draft answer `400 ErrorInvalidRequest`. A content change
   keeps the draft's flags (`isRead`, `flag`, replied marker) and categories unless the same PATCH
-  changes them.
+  changes them. Carrying them over is done with extra `flag` / `label` operations after the
+  `draft` update, so under a policy that allows `draft` but not `flag`/`label` the PATCH can
+  apply partially (content updated, then `403`); GET the draft to see its state.
 - Draft-to-sent: `POST /messages/{id}/send` removes the draft from Drafts, places the sent copy
   in Sent Items (new id) and delivers it to the simulated recipients. Sending a non-draft
   answers `409 ErrorIrresolvableConflict`.
-- `reply`/`replyAll` (`comment`) and `forward` (`comment` + `toRecipients`, top level or inside
-  `message`) run as exactly one engine `reply` / `forward` operation: threading headers,
-  `ANSWERED` on the original, the scenario's `allowed_operations` for that operation, its
-  `after_agent_action` triggers (e.g. `send_reply`) and one unit of action budget. The engine's
-  forward keeps the original's attachments. A `message` object carrying any other property
-  (subject, body, cc, ...) answers `501 ErrorNotSupported` instead of being emulated with draft +
-  send; use `createReply`/`createForward`, PATCH the draft, then `send` it.
+- `reply`/`replyAll` and `forward` run as exactly one engine `reply` / `forward` operation:
+  threading headers (`In-Reply-To`/`References` always from the original), `ANSWERED` on the
+  original (reply), the scenario's `allowed_operations` for that operation, its
+  `after_agent_action` triggers (e.g. `send_reply`) and one unit of action budget.
+  - `reply`/`replyAll` take `comment` and a `message` whose `toRecipients`, `ccRecipients`,
+    `bccRecipients`, `subject` and `body` override the derived reply (a body is sent after the
+    comment; an HTML body keeps the comment as a leading paragraph). External recipients are
+    refused (`403 ErrorMessageSubmissionBlocked`) before anything is written.
+  - `forward` takes `comment` + `toRecipients` (top level or inside `message`); the engine's
+    forward keeps the original's attachments.
+  - Any other `message` property (attachments, importance, a forward subject/body, ...) answers
+    `501 ErrorNotSupported` rather than being emulated with draft + send; use
+    `createReply`/`createForward`, PATCH the draft, then `send` it.
 - `createReply` -> PATCH -> `POST .../send` is recorded by the engine as `draft`, `draft`, `send`
   operations (not `reply`): scenario permissions and `send_reply` triggers see a `send`.
 - `createReply`/`createReplyAll` address the draft as Outlook does (sender; plus the other To/Cc

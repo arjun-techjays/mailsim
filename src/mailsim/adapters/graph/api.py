@@ -17,6 +17,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from functools import cmp_to_key
+from html import escape
 from typing import Annotated, Any, NoReturn, TypeVar
 from urllib.parse import quote, urlencode
 
@@ -38,7 +39,6 @@ from mailsim.domain.errors import (
 from mailsim.domain.models import SYSTEM_FOLDERS, CanonicalMessage
 from mailsim.engine.facades import AgentMailbox, facade_for
 from mailsim.providers.ids import graph_id
-from mailsim.store import models as store_models
 
 PREFIX = "/graph/v1.0"
 BASES = ("/me", "/users/{user_id}")
@@ -95,13 +95,9 @@ class Ctx:
         return self.mb.mailbox_id
 
     def email(self) -> str:
-        """The credential's own mailbox address (identity only, never other mailboxes)."""
+        """The credential's own mailbox address (from the facade; cached per request)."""
         if self._email is None:
-            with app_state(self.request, "session_factory")() as session:
-                row = session.get(store_models.Mailbox, (self.mailbox_id, self.mb.run_id))
-            if row is None:  # pragma: no cover - verify_key only issues keys for real mailboxes
-                raise NotFound("mailbox not found")
-            self._email = row.email
+            self._email = str(self.mb.mailbox_info()["email"])
         return self._email
 
     def is_me(self, ref: str) -> bool:
@@ -826,13 +822,26 @@ def _engine_only(message: Mapping[str, Any], allowed: tuple[str, ...]) -> None:
         )
 
 
+REPLY_OVERRIDES = ("toRecipients", "ccRecipients", "bccRecipients", "subject", "body")
+
+
 def _reply(
     message_id: str, ctx: Ctx, payload: dict[str, Any] | None, *, reply_all: bool
 ) -> Response:
+    """One engine `reply`; `message` recipients/subject/body override the derived reply."""
     data, message = _action(ctx, payload)
-    _engine_only(message, ())
+    _engine_only(message, REPLY_OVERRIDES)
     comment = _comment(data)
-    ctx.mb.reply(resolve_message(ctx, message_id), text=comment, reply_all=reply_all)
+    to, cc, bcc = (_addresses(message, n) for n in REPLY_OVERRIDES[:3])
+    text, html = comment, None
+    content = _body(message)
+    if content is not None:
+        text = f"{comment}\n\n{content[0]}" if comment else content[0]
+        html = content[1]
+        if html is not None and comment:
+            html = f"<p>{escape(comment)}</p>{html}"
+    ctx.mb.reply(resolve_message(ctx, message_id), text=text, reply_all=reply_all, to=to, cc=cc,
+                 bcc=bcc, subject=_subject(message), html=html)  # fmt: skip
     return accepted()
 
 

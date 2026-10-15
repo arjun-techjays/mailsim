@@ -417,17 +417,25 @@ def test_reply_family(world):
     world.post(f"/me/messages/{mid}/forward", {"comment": "fwd2", "message": {
         "toRecipients": [{"emailAddress": {"address": "vendor@example.test"}}]}}, 202)  # fmt: skip
     world.post(f"/me/messages/{mid}/reply", {"comment": "again", "message": {}}, 202)
-    for action, extra in (("reply", {}), ("replyAll", {}),
-                          ("forward", {"toRecipients": [{"emailAddress": {"address": "vendor@example.test"}}]})):  # fmt: skip
-        r = world.call("POST", f"/me/messages/{mid}/{action}",
-                       json={"comment": "x", "message": {"subject": "custom", **extra}})  # fmt: skip
-        assert err(r, 501, "ErrorNotSupported")["message"].startswith("message properties subject")
+    vendor = [{"emailAddress": {"address": "vendor@example.test"}}]
+    r = world.call("POST", f"/me/messages/{mid}/forward",
+                   json={"comment": "x", "message": {"subject": "custom", "toRecipients": vendor}})  # fmt: skip
+    assert err(r, 501, "ErrorNotSupported")["message"].startswith("message properties subject")
+    r = world.call("POST", f"/me/messages/{mid}/reply", json={"message": {"categories": ["x"]}})
+    err(r, 501, "ErrorNotSupported")
+    r = world.call("POST", f"/me/messages/{mid}/reply", json={"message": {"attachments": [
+        {"name": "a.txt", "contentBytes": "eA=="}]}})  # fmt: skip
+    err(r, 501, "ErrorNotSupported")
+    world.post(f"/me/messages/{mid}/reply", {"comment": "lead", "message": {
+        "subject": "custom reply", "body": {"contentType": "html", "content": "<b>x</b>"},
+        "toRecipients": vendor, "ccRecipients": [], "bccRecipients": []}}, 202)  # fmt: skip
+    world.post(f"/me/messages/{group['id']}/replyAll", {"message": {
+        "body": {"contentType": "text", "content": "plain"}}}, 202)  # fmt: skip
     sent = {m["subject"]: m for m in world.messages("sentitems", **{"$expand": "attachments"})}
-    assert {"Re: Invoice INV-001", "Re: group", "Fwd: Invoice INV-001"} <= set(sent)
-    assert (
-        "custom" not in sent
-        and world.messages("drafts", **{"$filter": "subject eq 'custom'"}) == []
-    )
+    assert {"Re: Invoice INV-001", "Re: group", "Fwd: Invoice INV-001", "custom reply"} <= set(sent)
+    assert sent["custom reply"]["body"]["content"] == "<p>lead</p><b>x</b>"
+    assert "custom" not in sent
+    assert world.messages("drafts", **{"$filter": "startswith(subject,'custom')"}) == []
     assert sent["Fwd: Invoice INV-001"]["attachments"], "direct forward keeps attachments"
     got = world.get(f"/me/messages/{mid}", params={"$expand": ANSWERED})
     assert got["singleValueExtendedProperties"][0]["value"] == "102"
@@ -591,3 +599,45 @@ def test_attachment_expansion_caps_the_page(world):
     err(world.call("GET", "/me/messages", params={"$top": "\u00b2"}), 400, "ErrorInvalidRequest")
     err(world.call("GET", "/me/messages", params={"$filter": "(" * 40 + "isRead eq true" + ")" * 40}),
         400, "ErrorInvalidRequest")  # fmt: skip
+
+
+def test_reply_overrides_are_one_engine_reply(env, tmp_path, world):
+    """Shipped finance scenario: a Graph reply with message overrides is ONE `reply`
+    (permitted, ANSWERED, arms send_reply); an external cc is blocked with no state change."""
+    example = write_variant(tmp_path, lambda s: s.update(version=4), "example4.yaml")
+    run = world.ctl.create_run(env.version(example))
+    world.ctl.start_run(run)
+    with env.session_factory.begin() as s:
+        from mailsim.api.auth import issue_key
+
+        key = issue_key(s, tenant_id=env.scope.tenant_id, project_id=env.scope.project_id,
+                        role="agent", run_id=run,
+                        mailbox_id=world.ctl.mailbox_id_for(run, "finance_manager")).api_key  # fmt: skip
+    hdr = {"Authorization": f"Bearer {key}"}
+    inv = next(m for m in world.get("/me/messages", headers=hdr)["value"]
+               if m["subject"] == "Invoice INV-001")  # fmt: skip
+    before = len(world.ev.events(run))
+    blocked = world.call("POST", f"/me/messages/{inv['id']}/reply", headers=hdr, json={
+        "comment": "x", "message": {"ccRecipients": [
+            {"emailAddress": {"address": "someone@real-domain.example"}}]}})  # fmt: skip
+    err(blocked, 403, "ErrorMessageSubmissionBlocked")
+    new = {e["type"] for e in world.ev.events(run)[before:]}
+    assert new <= {"agent.action_counted"}, new
+    assert world.get("/me/mailFolders/sentitems/messages", headers=hdr)["value"] == []
+    world.post(f"/me/messages/{inv['id']}/reply", {"comment": "checking", "message": {
+        "subject": "Re: INV-001 verification",
+        "toRecipients": [{"emailAddress": {"address": "vendor@example.test"}}]}}, 202,
+        headers=hdr)  # fmt: skip
+    replies = [a["outcome"] for a in world.ctl.actions(run)
+               if a["actor"] == "agent" and a["operation"] not in ("read", "search")]  # fmt: skip
+    assert replies == ["EXTERNAL_DELIVERY_BLOCKED", "ok"]
+    assert {a["operation"] for a in world.ctl.actions(run)
+            if a["actor"] == "agent" and a["operation"] not in ("read", "search")} == {"reply"}  # fmt: skip
+    got = world.get(f"/me/messages/{inv['id']}", headers=hdr, params={"$expand": ANSWERED})
+    assert got["singleValueExtendedProperties"][0]["value"] == "102"
+    assert "event.armed" in {e["type"] for e in world.ev.events(run)}
+    sent = world.get("/me/mailFolders/sentitems/messages", headers=hdr,
+                     params={"$select": "subject,internetMessageHeaders"})["value"]  # fmt: skip
+    headers = {h["name"]: h["value"] for h in sent[0]["internetMessageHeaders"]}
+    assert sent[0]["subject"] == "Re: INV-001 verification"
+    assert headers["In-Reply-To"] == "<invoice-001@example.test>"
