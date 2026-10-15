@@ -1,0 +1,30 @@
+import { createContext, useContext } from 'react';
+import type { Api } from '../api/endpoints';
+import type { Role } from '../api/types';
+import type { Session } from './storage';
+
+export interface SessionValue {
+  session: Session | null;
+  api: Api | null;
+  connect: (session: Session) => void;
+  disconnect: () => void;
+}
+
+export const SessionContext = createContext<SessionValue | null>(null);
+
+export function useSession(): SessionValue {
+  const v = useContext(SessionContext);
+  if (!v) throw new Error('useSession must be used inside <SessionProvider>');
+  return v;
+}
+
+/** The API client for the connected session. Only call under <RequireSession>. */
+export function useApi(): Api {
+  const { api } = useSession();
+  if (!api) throw new Error('not connected');
+  return api;
+}
+
+export function useRole(): Role | null {
+  return useSession().session?.role ?? null;
+}
