@@ -79,13 +79,16 @@ describe('local no-auth mode in the dashboard', () => {
   it('a launch link skips the key screen and acts as controller + evaluator', async () => {
     mockDb.localNoAuth = true;
     openLaunchLink();
+    sessionStorage.setItem('mailsim.answerKeyDraft:k:1', '{"secret":true}'); // from an earlier session
     const { router } = renderApp('/', null, { probe: true });
     expect(screen.getByText('Checking the API…')).toBeInTheDocument();
-    await waitFor(() => expect(router.state.location.pathname).toBe('/scenarios'));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Test your email agent' })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/');
     expect(screen.getByTestId('session-role')).toHaveTextContent('operator (local no-auth)');
     expect(screen.getByTestId('local-no-auth-banner')).toHaveTextContent('Agent interfaces still require agent keys');
     expect(screen.queryByRole('button', { name: 'Disconnect' })).not.toBeInTheDocument();
     expect(loadSession()?.localToken).toBe(MOCK_LOCAL_TOKEN);
+    expect(sessionStorage.getItem('mailsim.answerKeyDraft:k:1')).toBeNull(); // drafts never cross sessions
 
     await act(() => router.navigate(`/scenarios/${KEY}`));
     expect(await screen.findByRole('link', { name: 'Start a run' })).toBeInTheDocument();

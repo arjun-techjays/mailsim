@@ -12,8 +12,8 @@ evaluated. With an agent key the dashboard shows an explanatory page and makes n
 | Command | What it does |
 | --- | --- |
 | `npm ci` | Clean install (Node 22, npm 10; `.npmrc` sets `legacy-peer-deps`, see below) |
-| `npm run dev:mock` | Dev server with the MSW mock API (no backend needed) on http://localhost:5173 |
-| `MAILSIM_API_URL=http://127.0.0.1:8000 npm run dev` | Dev server against a real API (Vite proxies `/v1` to `MAILSIM_API_URL`) |
+| `npm run dev:mock` | Dev server with the MSW mock API (no backend needed) on http://127.0.0.1:5173 |
+| `MAILSIM_API_URL=http://127.0.0.1:8000 npm run dev` | Dev server against a real API (Vite proxies `/v1`, `/gmail`, `/upload/gmail`, `/graph` and `/mcp` to `MAILSIM_API_URL`) |
 | `npm run gen:api` | Regenerate `src/api/schema.gen.ts` from `../openapi/openapi.json` (commit the result) |
 | `npm run lint` / `npm run typecheck` | ESLint (incl. `jsx-a11y` strict) / `tsc --noEmit` |
 | `npm test` | Vitest + Testing Library with v8 coverage (thresholds: 95% lines/branches/functions/statements) |
@@ -22,6 +22,11 @@ evaluated. With an agent key the dashboard shows an explanatory page and makes n
 | `npm run e2e:real` | Playwright against a real API, no MSW (see below) |
 
 First-time Playwright setup: `npx playwright install chromium`.
+
+The dev and preview servers listen on **127.0.0.1 only** (`server.host` / `preview.host` in
+`vite.config.ts`) and the proxies send no `X-Forwarded-*` headers. Do not pass `--host` (or
+`--host 0.0.0.0`) while a real API is behind the proxy: anyone on the network could then reach
+the API, the agent interfaces and, in local no-auth mode, the operator routes through it.
 
 ### Mock mode
 

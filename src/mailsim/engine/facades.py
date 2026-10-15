@@ -213,6 +213,10 @@ class Controller:
     def actions(self, run_id: str) -> list[dict[str, Any]]:
         return self._e.actions(self.scope, run_id)
 
+    def actions_page(self, run_id: str, *, after_id: int = 0,
+                     limit: int = 100) -> list[dict[str, Any]]:  # fmt: skip
+        return self._e.actions_page(self.scope, run_id, after_id=after_id, limit=limit)
+
     def state(self, run_id: str) -> dict[str, Any]:
         """Canonical mailbox state (spec 7.2). Contains no answer key."""
         return self._e.state(self.scope, run_id)
@@ -254,6 +258,10 @@ class EvaluatorView:
 
     def actions(self, run_id: str) -> list[dict[str, Any]]:
         return self._e.actions(self.scope, run_id)
+
+    def actions_page(self, run_id: str, *, after_id: int = 0,
+                     limit: int = 100) -> list[dict[str, Any]]:  # fmt: skip
+        return self._e.actions_page(self.scope, run_id, after_id=after_id, limit=limit)
 
     def scenario_spec(self, run_id: str) -> dict[str, Any]:
         return self._e.scenario_spec(self.scope, run_id)

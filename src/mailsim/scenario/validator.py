@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -12,7 +13,12 @@ from mailsim.domain.clock import parse_ts
 from mailsim.domain.errors import InvalidRequest, SimError
 from mailsim.mime.limits import MimeLimits
 from mailsim.mime.parse import parse_mime
-from mailsim.scenario.answer_key import AnswerKeyBody, find_leaks, secret_strings
+from mailsim.scenario.answer_key import (
+    AnswerAssertion,
+    AnswerKeyBody,
+    find_leaks,
+    secret_strings,
+)
 from mailsim.scenario.schema import (
     AGENT_OPERATIONS,
     TRIGGER_ACTIONS,
@@ -21,6 +27,39 @@ from mailsim.scenario.schema import (
 )
 
 MAX_FIXTURE_BYTES = 5 * 1024 * 1024
+_INDEX = re.compile(r"\[(\d+)\]")
+_ASSERTION = re.compile(r"^(.*\bassertions\.\d+)\.([^.]+)")
+_ASSERTION_FIELDS = frozenset(AnswerAssertion.model_fields)
+MAX_ADDRESS_CHARS = 254
+_SCENARIO_ID = re.compile(r"[a-z0-9][a-z0-9._-]*")
+_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+_ID_RULE = ("use letters, digits, '.', '_' or '-' (starting with a letter or digit), at most "
+            "64 characters")  # fmt: skip
+_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+_DOMAIN = re.compile(rf"{_LABEL}(?:\.{_LABEL})+")
+_ADDRESS = re.compile(rf"[A-Za-z0-9.!#$%&'*+/=?^_`{{|}}~-]+@{_LABEL}(?:\.{_LABEL})+")
+
+
+def is_domain(value: str) -> bool:
+    """A DNS name with at least two labels (persona / organization domains)."""
+    return len(value) <= MAX_ADDRESS_CHARS and _DOMAIN.fullmatch(value) is not None
+
+
+def is_address(value: str) -> bool:
+    """One bare addr-spec: ASCII local part and domain labels; no display name, whitespace,
+    control characters, angle brackets or commas (header-injection safe)."""
+    return len(value) <= MAX_ADDRESS_CHARS and _ADDRESS.fullmatch(value) is not None
+
+
+def dotted(path: str) -> str:
+    """Form-mappable paths: ``scenario.personas[1].email`` -> ``scenario.personas.1.email``;
+    errors inside an assertion's `check:` block (validated by the assertion as a whole) get
+    their ``check`` segment back: ``...assertions.0.count.min`` -> ``...0.check.count.min``."""
+    path = _INDEX.sub(r".\1", path)
+    match = _ASSERTION.match(path)
+    if match and match.group(2) not in _ASSERTION_FIELDS:
+        path = f"{match.group(1)}.check.{match.group(2)}{path[match.end() :]}"
+    return path
 
 
 @dataclass
@@ -46,7 +85,10 @@ class ValidationReport:
         if self.errors:
             raise InvalidRequest(
                 "scenario validation failed",
-                details={"errors": [str(e) for e in self.errors]},
+                details={
+                    "errors": [str(e) for e in self.errors],
+                    "issues": [{"path": dotted(e.path), "message": e.message} for e in self.errors],
+                },
             )
 
 
@@ -80,6 +122,38 @@ def _dupes(values: list[str]) -> list[str]:
         if v in seen and v not in out:
             out.append(v)
         seen.add(v)
+    return out
+
+
+def validate_authoring(body: ScenarioBody) -> list[Issue]:
+    """Format rules for scenarios being AUTHORED (validate, drafts, publish). Runs of versions
+    published before these rules existed only get `validate_semantics`, so stored specs
+    keep working."""
+    out: list[Issue] = []
+
+    def err(path: str, msg: str) -> None:
+        out.append(Issue(path, msg))
+
+    if len(body.id) > 100 or not _SCENARIO_ID.fullmatch(body.id):
+        err("scenario.id", "use lowercase letters, digits, '.', '_' or '-' (starting with a "
+            "letter or digit), at most 100 characters")  # fmt: skip
+    if not body.title.strip():
+        err("scenario.title", "must not be empty")
+    for i, p in enumerate(body.personas):
+        if len(p.id) > 64 or not _ID.fullmatch(p.id):
+            err(f"scenario.personas[{i}].id", _ID_RULE)
+        if not p.role.strip():
+            err(f"scenario.personas[{i}].role", "must not be empty")
+    for i, ev in enumerate(body.events):
+        if len(ev.id) > 64 or not _ID.fullmatch(ev.id):
+            err(f"scenario.events[{i}].id", _ID_RULE)
+    for i, p in enumerate(body.personas):
+        if "@" in p.email and not is_address(p.email):  # no "@": validate_semantics reports it
+            err(f"scenario.personas[{i}].email",
+                "not an email address: use a plain local@domain.tld (ASCII, no spaces, names, "
+                "brackets or commas, at most 254 characters)")  # fmt: skip
+    if not is_domain(body.organization.domain):
+        err("scenario.organization.domain", "not a domain name (labels of letters, digits, '-')")
     return out
 
 
@@ -248,6 +322,7 @@ def validate_scenario(
             return None
 
     sem = validate_semantics(report.doc.scenario, fixture_check)
+    sem.errors[:0] = validate_authoring(report.doc.scenario)
     if base_dir is not None:
         raws = []
         for mb in report.doc.scenario.mailboxes:

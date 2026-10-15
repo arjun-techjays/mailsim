@@ -6,6 +6,8 @@ import { useApi } from '../auth/session';
 import { BarChart } from '../components/BarChart';
 import { RequireRole } from '../components/Gates';
 import { ErrorDisplay } from '../components/ErrorDisplay';
+import { PageIntro } from '../components/PageIntro';
+import { WhatIsThis } from '../guide/Concepts';
 import { delta, num, pct, splitList } from '../components/format';
 import { Empty, Loading } from '../components/Status';
 import { usePageTitle } from '../hooks/usePageTitle';
@@ -18,7 +20,9 @@ interface Params {
 
 function ComparisonView({ data }: { data: BuildComparison }) {
   const builds = Object.keys(data.builds);
-  if (builds.length === 0) return <Empty>No evaluated runs for these builds.</Empty>;
+  if (builds.length === 0) {
+    return <Empty>No evaluated runs for these builds. Start runs with an agent build id and evaluate them first.</Empty>;
+  }
   const assertions = [...new Set(builds.flatMap((b) => Object.keys(data.builds[b]?.per_assertion_pass_rate ?? {})))].sort();
   const d = (b: string, metric: string) => (b === data.baseline ? 'baseline' : delta(data.deltas?.[b]?.[metric]));
 
@@ -157,6 +161,18 @@ export function ComparePage() {
       <h1>
         Build comparison: <code>{key}</code>
       </h1>
+      <PageIntro
+        next={[
+          { to: `/scenarios/${encodeURIComponent(key)}/start`, label: 'Start another run' },
+          { to: '/runs', label: 'Runs' },
+        ]}
+      >
+        <p>
+          Accuracy of each agent build on this scenario, aggregated over repeated evaluated runs, so you can tell whether
+          a change to your agent helped. Give runs an agent build id when you start them.
+        </p>
+        <WhatIsThis term="agent-build" />
+      </PageIntro>
       <RequireRole roles={['evaluator']} what="Build comparison">
         <CompareContent scenarioKey={key} />
       </RequireRole>

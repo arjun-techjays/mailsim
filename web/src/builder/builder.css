@@ -1,0 +1,259 @@
+/* Scenario builder (UX-F1). Colours only through the shared tokens in styles.css so the
+   light/dark themes apply; fallbacks are the light values. */
+
+.b-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  margin: 8px 0 12px;
+  padding: 8px 0;
+  background: var(--bg, #fff);
+  border-bottom: 1px solid var(--border, #c4c4c4);
+}
+.b-primary {
+  font-weight: 700;
+  background: var(--fg, #1a1a1a);
+  color: var(--bg, #fff);
+  border-color: var(--fg, #1a1a1a);
+}
+.b-status-valid {
+  background: var(--ok-bg, #e3f4e6);
+  color: var(--ok-fg, #14532d);
+}
+.b-status-invalid,
+.b-status-error {
+  background: var(--error-bg, #fdecea);
+  color: var(--error-fg, #8a1c11);
+}
+.b-status-validating {
+  background: var(--panel, #f5f6f8);
+  color: var(--fg, #1a1a1a);
+}
+.b-notice {
+  margin: 8px 0;
+}
+.b-summary summary {
+  cursor: pointer;
+}
+.b-summary ul {
+  margin: 6px 0 0;
+  padding-left: 1.2em;
+}
+.b-summary button.link {
+  color: var(--error-fg, #8a1c11);
+}
+
+.b-layout {
+  display: grid;
+  grid-template-columns: minmax(11rem, 14rem) minmax(0, 1fr);
+  gap: 16px 24px;
+  align-items: start;
+}
+.b-layout.b-with-yaml {
+  grid-template-columns: minmax(11rem, 14rem) minmax(0, 1fr) minmax(0, 1fr);
+}
+@media (max-width: 1100px) {
+  .b-layout.b-with-yaml {
+    grid-template-columns: minmax(11rem, 14rem) minmax(0, 1fr);
+  }
+  .b-layout.b-with-yaml > :last-child {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 720px) {
+  .b-layout,
+  .b-layout.b-with-yaml {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.b-nav ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: sticky;
+  top: 8px;
+}
+.b-nav-item {
+  width: 100%;
+  min-height: 36px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  border-color: var(--border, #c4c4c4);
+  background: var(--bg, #fff);
+  color: var(--fg, #1a1a1a);
+}
+.b-nav-item[aria-current='step'] {
+  background: var(--panel, #f5f6f8);
+  border-color: var(--fg, #1a1a1a);
+  border-left-width: 4px;
+  font-weight: 700;
+}
+
+.b-section > h2 {
+  margin-top: 0;
+}
+.b-section .field,
+.b-compose .field {
+  margin: 10px 0;
+  max-width: 44rem;
+}
+.b-section textarea,
+.b-compose textarea {
+  width: 100%;
+}
+.b-help {
+  font-size: 0.92em;
+}
+.b-card {
+  border: 1px solid var(--border, #c4c4c4);
+  border-radius: 6px;
+  padding: 8px 16px 12px;
+  margin: 12px 0;
+  background: var(--bg, #fff);
+}
+.b-card > legend,
+.b-card > h3 {
+  font-weight: 700;
+}
+.b-item {
+  border-left: 3px solid var(--border, #c4c4c4);
+  padding: 4px 0 8px 12px;
+  margin: 8px 0;
+}
+.b-item h5 {
+  margin: 4px 0;
+}
+.b-checks {
+  margin: 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.b-checks > legend {
+  font-weight: 600;
+}
+.b-chips {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+}
+.b-chips li {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 10px;
+  border: 1px solid var(--border, #c4c4c4);
+  border-radius: 999px;
+  background: var(--panel, #f5f6f8);
+}
+.b-chip-remove {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0 6px;
+  border-radius: 999px;
+  line-height: 1;
+}
+.b-tight {
+  margin: 0;
+}
+.b-messages {
+  padding-left: 1.4em;
+}
+.b-message {
+  margin: 8px 0 12px;
+}
+.b-badge-note {
+  margin-left: 8px;
+}
+.b-compose {
+  border: 2px solid var(--focus, #1d4ed8);
+  border-radius: 6px;
+  padding: 8px 16px;
+  margin: 12px 0;
+}
+.b-pager {
+  margin-top: 24px;
+}
+
+.b-yaml {
+  position: sticky;
+  top: 8px;
+}
+.b-yaml h2 {
+  margin-top: 0;
+}
+.b-yaml-text {
+  width: 100%;
+  min-height: 60vh;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.88em;
+  line-height: 1.4;
+  white-space: pre;
+  overflow: auto;
+}
+
+.b-start {
+  margin: 16px 0;
+}
+.b-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 16px;
+}
+.b-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  padding: 16px;
+  border: 1px solid var(--border, #c4c4c4);
+  border-radius: 8px;
+  background: var(--panel, #f5f6f8);
+  color: var(--fg, #1a1a1a);
+}
+.b-choice strong {
+  font-size: 1.1em;
+}
+
+.b-dialog {
+  max-width: 34rem;
+  padding: 16px 20px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #c4c4c4);
+  background: var(--bg, #fff);
+  color: var(--fg, #1a1a1a);
+}
+.b-dialog::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+.b-dialog h2 {
+  margin-top: 0;
+}
+
+.b-published {
+  background: var(--ok-bg, #e3f4e6);
+  color: var(--ok-fg, #14532d);
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  padding: 8px 16px;
+  margin: 12px 0;
+}
+.b-published a {
+  color: inherit;
+  font-weight: 600;
+}
+.b-checks .checkbox input,
+.b-checks .radio input {
+  flex: none;
+}

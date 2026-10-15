@@ -10,11 +10,12 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import Request
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from mailsim.api import schemas as s
 from mailsim.auth.principal import Principal
-from mailsim.domain.errors import PermissionDenied, UnsupportedOperation
+from mailsim.domain.errors import NotFound, PermissionDenied, UnsupportedOperation
 from mailsim.engine.facades import AgentMailbox, Controller, EvaluatorView, facade_for
 from mailsim.store import models as m
 from mailsim.store import repos
@@ -103,3 +104,27 @@ def run_out(request: Request, principal: Principal, run_id: str) -> s.RunOut:
         replay_of=info["replay_of"], scenario_key=scenario.key, scenario_version=sv.version,
         agent_build=build,
     )  # fmt: skip
+
+
+def scenario_version(
+    session: Session, principal: Principal, key: str, version: int | None
+) -> m.ScenarioVersion:
+    """A scenario version of the caller's project (latest when `version` is None) or 404."""
+    stmt = (
+        select(m.ScenarioVersion)
+        .join(m.Scenario, m.Scenario.id == m.ScenarioVersion.scenario_id)
+        .where(
+            m.Scenario.tenant_id == principal.tenant_id,
+            m.Scenario.project_id == principal.project_id,
+            m.Scenario.key == key,
+        )  # fmt: skip
+    )
+    if version is not None:
+        stmt = stmt.where(m.ScenarioVersion.version == version)
+    row = session.execute(
+        stmt.order_by(m.ScenarioVersion.version.desc()).limit(1)
+    ).scalar_one_or_none()
+    if row is None:
+        suffix = f" version {version}" if version is not None else ""
+        raise NotFound(f"scenario {key}{suffix} not found")
+    return row

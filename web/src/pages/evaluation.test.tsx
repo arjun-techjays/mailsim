@@ -16,6 +16,8 @@ describe('Evaluation page', () => {
     expect(report).toHaveTextContent('5120 / 840');
     expect(report).toHaveTextContent('on (source: request)');
     expect(report).toHaveTextContent('sha256:ak2');
+    const repro = within(report).getByRole('region', { name: 'Reproducibility details', hidden: true });
+    expect(repro).toHaveAttribute('tabindex', '0');
 
     const failing = screen.getByTestId('assertion-no-unverified-approval');
     const diff = within(failing).getByTestId('assertion-diff');
@@ -95,7 +97,7 @@ describe('Evaluation page', () => {
       ),
     );
     renderApp('/runs/r/evaluations', sessionFor('evaluator'));
-    expect(await screen.findByText('This run has not been evaluated yet.')).toBeInTheDocument();
+    expect(await screen.findByText(/This run has not been evaluated yet\./)).toBeInTheDocument();
     expect(screen.queryByTestId('evaluation-report')).toBeNull();
   });
 
@@ -162,7 +164,7 @@ describe('Evaluation page', () => {
     renderApp('/runs/run_demo/evaluations', sessionFor('controller'));
     expect(await screen.findByTestId('role-gate')).toHaveTextContent('Evaluation results requires an evaluator key');
     expect(screen.getByTestId('role-gate')).toHaveTextContent('connected as controller');
-    expect(seen).toEqual([]);
+    expect(seen.filter((u) => !u.endsWith('/v1/system/status'))).toEqual([]); // header status pill only
     server.events.removeAllListeners();
   });
 });

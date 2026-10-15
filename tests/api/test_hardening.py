@@ -12,7 +12,6 @@ from sqlalchemy.orm import sessionmaker
 from mailsim.api import limits
 from mailsim.api import schemas as s
 from mailsim.api.idempotency import REPLAYED_HEADER
-from mailsim.api.routers import control
 from mailsim.store import models as m
 from mailsim.store.repos import Scope
 from tests.api.conftest import KEY, Api, FakeEvaluationService, open_agent, scenario_payload
@@ -108,7 +107,9 @@ def test_fixture_byte_caps(api, monkeypatch):
     body = err(api.call("POST", "/v1/scenarios", json=payload), 400, "INVALID_REQUEST")
     assert "too large" in body["message"]
     monkeypatch.undo()
-    monkeypatch.setattr(control, "MAX_FIXTURE_TOTAL_BYTES", 600)  # each fits, the sum does not
+    monkeypatch.setattr(
+        "mailsim.api.authoring.MAX_FIXTURE_TOTAL_BYTES", 600
+    )  # each fits, the sum does not
     body = err(api.call("POST", "/v1/scenarios", json=payload), 400, "INVALID_REQUEST")
     assert "in total" in body["message"]
 

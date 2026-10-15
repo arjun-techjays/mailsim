@@ -19,65 +19,6 @@ describe('Run detail', () => {
     expect(screen.getByTestId('run-summary')).toBeInTheDocument();
   });
 
-  it('mailbox inspector: pagination, folders, message, thread, raw MIME link and mailbox switch', async () => {
-    const { user, router } = renderApp('/runs/run_demo?tab=mailboxes', sessionFor('evaluator'));
-    expect(await screen.findByText('20 message(s) loaded, more available')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Load more messages' }));
-    expect(await screen.findByText('25 message(s) loaded')).toBeInTheDocument();
-
-    const folders = screen.getByRole('navigation', { name: 'Folders' });
-    await user.click(within(folders).getByRole('button', { name: 'sent' }));
-    expect(await screen.findByText('1 message(s) loaded')).toBeInTheDocument();
-    expect(within(folders).getByRole('button', { name: 'sent' })).toHaveAttribute('aria-pressed', 'true');
-    await user.click(within(folders).getByRole('button', { name: 'archive' }));
-    expect(await screen.findByText('No messages in this folder.')).toBeInTheDocument();
-    await user.click(within(folders).getByRole('button', { name: 'All folders' }));
-
-    await user.click((await screen.findAllByRole('button', { name: 'Invoice 4471' }))[0] as HTMLElement);
-    const view = await screen.findByTestId('message-view');
-    expect(within(view).getByRole('heading', { level: 3 })).toHaveTextContent('Invoice 4471');
-    expect(within(view).getByTestId('attachments')).toHaveTextContent('invoice-4471.pdf');
-    expect(within(view).getByTestId('attachments')).toHaveTextContent('47.1 KB');
-    expect(router.state.location.search).toContain('message=msg_invoice_1');
-    const thread = await within(view).findByTestId('thread');
-    expect(within(thread).getAllByRole('listitem')).toHaveLength(3);
-    expect(within(view).getByText('All headers')).toBeInTheDocument();
-
-    await user.click(within(thread).getAllByRole('button')[0] as HTMLElement);
-    await waitFor(() => expect(router.state.location.search).toContain('message=msg_html_1'));
-    const view2 = await screen.findByTestId('message-view');
-    await waitFor(() => expect(within(view2).getByRole('heading', { level: 3 })).toHaveTextContent('updated bank details'));
-    expect(within(view2).getByText('In-Reply-To')).toBeInTheDocument();
-    expect(within(view2).getByText('IMPORTANT')).toBeInTheDocument();
-    expect(document.querySelectorAll('script')).toHaveLength(0);
-
-    await user.click(within(view2).getByTestId('raw-mime-link'));
-    expect(router.state.location.search).toContain('tab=artifacts');
-    expect(await screen.findByTestId('highlighted-artifact')).toHaveTextContent('blob/raw/msg_html_1.eml');
-
-    await user.click(screen.getByRole('link', { name: 'Mailboxes' }));
-    await user.selectOptions(await screen.findByLabelText('Mailbox'), 'mbx_vendor');
-    expect(await screen.findByText('1 message(s) loaded')).toBeInTheDocument();
-    expect(router.state.location.search).toContain('mailbox=mbx_vendor');
-  });
-
-  it('message deep link picks the owning mailbox; unknown ids show an error', async () => {
-    renderApp('/runs/run_demo?tab=mailboxes&message=msg_vendor_in_1', sessionFor('evaluator'));
-    expect(await screen.findByLabelText('Mailbox')).toHaveValue('mbx_vendor');
-    expect(await screen.findByTestId('message-view')).toHaveTextContent('verify the change by phone');
-  });
-
-  it('unknown message id', async () => {
-    renderApp('/runs/run_demo?tab=mailboxes&message=msg_nope', sessionFor('evaluator'));
-    expect(await screen.findByText(/Could not load message/)).toBeInTheDocument();
-  });
-
-  it('state errors and empty mailbox lists', async () => {
-    server.use(http.get('*/v1/runs/:id/state', () => HttpResponse.json({ mailboxes: [] })));
-    renderApp('/runs/run_demo?tab=mailboxes', sessionFor('evaluator'));
-    expect(await screen.findByText('This run has no mailboxes.')).toBeInTheDocument();
-  });
-
   it('state request failure', async () => {
     server.use(
       http.get('*/v1/runs/:id/state', () =>
@@ -178,7 +119,7 @@ describe('Run detail', () => {
     const { user } = renderApp('/runs/run_demo?tab=actions', sessionFor('evaluator'));
     expect(await screen.findByText('No actions recorded.')).toBeInTheDocument();
     await user.click(screen.getByRole('link', { name: 'Artifacts' }));
-    expect(await screen.findByText('No artifacts.')).toBeInTheDocument();
+    expect(await screen.findByText(/No artifacts yet\./)).toBeInTheDocument();
   });
 
   it('actions/artifacts errors', async () => {

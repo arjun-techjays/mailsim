@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from mailsim.domain.errors import InvalidRequest, SimError
+from mailsim.engine.context import use_interface
 from mailsim.engine.core import SimEngine
 from mailsim.scenario.loader import load_scenario
 from mailsim.scenario.service import create_scenario_version
@@ -73,7 +74,8 @@ def _scope(session_factory: Any, project_id: str) -> repos.Scope:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        return _dispatch(args)
+        with use_interface("cli"):
+            return _dispatch(args)
     except SimError as exc:
         _emit(exc.to_dict(), sys.stderr)
         return 2

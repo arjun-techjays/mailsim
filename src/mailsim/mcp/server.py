@@ -31,6 +31,7 @@ from mailsim.api.auth import InvalidCredential, verify_key
 from mailsim.api.errors import INTERNAL, UNAUTHENTICATED
 from mailsim.auth.principal import Principal
 from mailsim.domain.errors import ErrorCode, PermissionDenied, SimError
+from mailsim.engine.context import with_interface
 from mailsim.engine.facades import facade_for
 from mailsim.mcp.tools import TOOLS_BY_NAME, Deps, tools_for
 
@@ -149,9 +150,11 @@ def build_server(
     session_factory: Any = None,
     evaluation_service: Any = None,
     persona_runtime_factory: Callable[[Any], Any] | None = None,
+    interface: str | None = None,
 ) -> Server[Any]:
     """An MCP server over ``engine`` (a SimEngine, typed loosely: interfaces never import
-    ``engine.core``). ``session_factory`` defaults to ``engine.session_factory``."""
+    ``engine.core``). ``session_factory`` defaults to ``engine.session_factory``.
+    ``interface`` (``mcp_http`` / ``mcp_stdio``) is recorded on the actions tool calls cause."""
     deps = Deps(
         session_factory=session_factory or getattr(engine, "session_factory", None),
         evaluation_service=evaluation_service,
@@ -168,7 +171,10 @@ def build_server(
     async def on_call_tool(
         ctx: ServerRequestContext[Any], params: types.CallToolRequestParams
     ) -> types.CallToolResult:
-        call = functools.partial(service.call_tool, ctx.request, params.name, params.arguments)
+        tool = (
+            service.call_tool if interface is None else with_interface(interface, service.call_tool)
+        )
+        call = functools.partial(tool, ctx.request, params.name, params.arguments)
         return await anyio.to_thread.run_sync(call)
 
     def input_schema(name: str) -> dict[str, Any] | None:

@@ -5,6 +5,7 @@ import { hasRole, useApi, useRole } from '../auth/session';
 import { rememberRun } from '../auth/storage';
 import { ShowFor } from '../components/Gates';
 import { ErrorDisplay } from '../components/ErrorDisplay';
+import { PageIntro } from '../components/PageIntro';
 import { Badge, Loading } from '../components/Status';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { parseSnapshot } from '../mailbox/snapshot';
@@ -14,11 +15,15 @@ import { EventTimeline } from '../run/EventTimeline';
 import { InjectForm } from '../run/InjectForm';
 import { runKeys } from '../run/keys';
 import { RunControls } from '../run/RunControls';
-import { RunMailboxes } from '../run/RunMailboxes';
+// ---- mailbox browser, activity & toolbar (UX-F2)
+import { MailboxBrowser } from '../mailbox/MailboxBrowser';
+import { ActivityPanel } from '../run/ActivityPanel';
+import { RunToolbar } from '../run/RunToolbar';
 
 const TABS = [
   ['overview', 'Overview'],
   ['mailboxes', 'Mailboxes'],
+  ['activity', 'Activity'],
   ['trace', 'Event trace'],
   ['actions', 'Actions'],
   ['artifacts', 'Artifacts'],
@@ -62,6 +67,25 @@ export function RunDetailPage() {
       <h1>
         Run <code>{runId}</code>
       </h1>
+      {/* ---- run intro + connect (UX-F3) */}
+      <PageIntro
+        next={[
+          { to: `/runs/${encodeURIComponent(runId)}/evaluations`, label: 'Evaluate and read results' },
+          { to: '/concepts#virtual-clock', label: 'How the virtual clock works' },
+        ]}
+      >
+        <p>
+          One isolated execution of a scenario. Connect your agent to its mailbox, advance the virtual clock so scheduled
+          mail arrives and personas reply, and watch the trace; then evaluate it.
+        </p>
+      </PageIntro>
+      <ShowFor roles={['controller']}>
+        <p>
+          <Link className="button primary" to={`/runs/${encodeURIComponent(runId)}/connect`} data-testid="connect-agent-link">
+            Connect your agent
+          </Link>
+        </p>
+      </ShowFor>
       {run.isPending ? (
         <Loading label="Loading run…" />
       ) : run.isError ? (
@@ -110,6 +134,7 @@ export function RunDetailPage() {
               </Link>
             </ShowFor>
           </div>
+          {tab !== 'overview' && hasRole(role, ['controller']) && <RunToolbar run={run.data} />}
           <nav aria-label="Run sections" className="tabs">
             <ul>
               {TABS.map(([t, label]) => (
@@ -138,16 +163,15 @@ export function RunDetailPage() {
                 <p className="notice">Run controls (start, cancel, reset, replay, clock, inject) require a controller key.</p>
               ))}
             {tab === 'mailboxes' && (
-              <RunMailboxes
-                runId={runId}
+              <MailboxBrowser
+                run={run.data}
                 snapshot={snapshot}
-                version={state.dataUpdatedAt}
                 error={state.error}
-                mailboxParam={params.get('mailbox')}
-                messageParam={params.get('message')}
-                onChange={(n) => go({ mailbox: n.mailbox, message: n.message })}
+                selection={{ mailbox: params.get('mailbox'), folder: params.get('folder'), message: params.get('message') }}
+                onChange={(n) => go({ mailbox: n.mailbox, folder: n.folder, message: n.message })}
               />
             )}
+            {tab === 'activity' && <ActivityPanel key={run.data.id} run={run.data} />}
             {tab === 'trace' && <EventTimeline runId={runId} highlightSeq={seq && /^\d+$/.test(seq) ? Number(seq) : null} />}
             {tab === 'actions' && <ActionsTable runId={runId} highlight={params.get('action')} />}
             {tab === 'artifacts' && <ArtifactsTable runId={runId} highlight={params.get('ref')} />}

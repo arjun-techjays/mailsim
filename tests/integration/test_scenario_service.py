@@ -61,3 +61,36 @@ def test_scenario_versions_are_scoped(env, session_factory):
     with session_factory.begin() as s, pytest.raises(NotFound):
         create_scenario_version(s, repos.Scope("ten_x", "prj_x"), loaded, env.blobs)
     _ = (copy, yaml)
+
+
+def test_runs_of_versions_published_before_the_strict_authoring_rules_still_start(env):
+    """Format rules apply at authoring time only: stored specs that predate them still run."""
+    from mailsim.scenario.loader import LoadedScenario, fixture_manifest
+    from mailsim.scenario.schema import ScenarioDoc, canonical_dict, spec_hash
+    from mailsim.scenario.validator import ValidationReport, validate_scenario
+    from mailsim.store.repos import get_run
+    from tests.scenarios import EXAMPLE_DIR, example_dict
+
+    data = example_dict()
+    body = data["scenario"]
+    body["id"] = "Legacy.Key"
+    body["organization"]["domain"] = "localhost"
+    body["events"][0]["id"] = "-legacy event"
+    body["personas"][1]["email"] = "vendor@localhost"
+    assert validate_scenario(data, EXAMPLE_DIR).errors  # refused when authored today
+    doc = ScenarioDoc.model_validate(data)
+    spec = canonical_dict(doc)
+    fixtures = {
+        im.fixture: (EXAMPLE_DIR / im.fixture).read_bytes()
+        for mb in doc.scenario.mailboxes
+        for im in mb.initial_messages
+    }
+    assert fixture_manifest(fixtures)
+    loaded = LoadedScenario(doc, spec, spec_hash(spec), b"", EXAMPLE_DIR, fixtures,
+                            ValidationReport(doc=doc))  # fmt: skip
+    with env.session_factory.begin() as s:
+        version = create_scenario_version(s, env.scope, loaded, env.blobs).id
+    run_id = env.engine.create_run(env.scope, version)
+    env.engine.start_run(env.scope, run_id)
+    with env.session_factory() as s:
+        assert get_run(s, env.scope, run_id).status == "RUNNING"

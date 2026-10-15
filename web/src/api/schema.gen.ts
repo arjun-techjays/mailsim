@@ -191,6 +191,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/meta/authoring": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Authoring Meta
+         * @description Schemas and enumerations for the scenario builder and the answer-key editor.
+         */
+        get: operations["authoring_meta_v1_meta_authoring_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/projects": {
         parameters: {
             query?: never;
@@ -289,6 +309,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runs/{run_id}/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run Activity
+         * @description Recorded actions (newest last) with the interface each came through, for polling.
+         */
+        get: operations["run_activity_v1_runs__run_id__activity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/runs/{run_id}/agent-credentials": {
         parameters: {
             query?: never;
@@ -358,6 +398,66 @@ export interface paths {
         put?: never;
         /** Advance */
         post: operations["advance_v1_runs__run_id__clock_advance_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{run_id}/connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run Connection
+         * @description How an agent connects to this run (endpoints, mailbox, key ids; never key secrets).
+         */
+        get: operations["run_connection_v1_runs__run_id__connection_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{run_id}/connection-tests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Connection Test
+         * @description Make a real call through the chosen interface with the given agent key, server-side.
+         *
+         *     Always 200 with `ok` and a summary (400 only for a malformed request, 404 for a run outside
+         *     the caller's project). A key that is not a live agent key of this run is not tried at all:
+         *     ok=false with `details.reason` invalid_key (error_code UNAUTHENTICATED: unknown, revoked,
+         *     expired), not_agent_key or other_run (PERMISSION_DENIED; which run is never said). A probe
+         *     that is made is recorded in the run's activity like any agent call of that interface. The request body
+         *     (and so the key) is never logged, and the key never appears in the result.
+         *
+         *     `error_code` when `ok` is false:
+         *     - REST, MCP (HTTP): the /v1 envelope code (UNAUTHENTICATED, RUN_NOT_ACTIVE,
+         *       PERMISSION_DENIED, ...)
+         *     - Gmail: the neutral code in `error.details[0].reason` (UNAUTHENTICATED, RUN_NOT_ACTIVE,
+         *       ...), else `error.status`
+         *     - Graph: Graph's own code (InvalidAuthenticationToken; ErrorPreconditionFailed for a run
+         *       that is not running; ErrorAccessDenied ...)
+         *     - IMAP: AUTHENTICATIONFAILED; SMTP: AUTHENTICATION_FAILED (credentials refused), or the
+         *       engine's code when it refused a valid key (RUN_NOT_ACTIVE, PERMISSION_DENIED)
+         *     - IMAP/SMTP listener not running: LISTENER_DOWN
+         *     - gmail / graph / mcp_http not mounted: null (summary "... is not served by this server")
+         *     - unexpected failure: INTERNAL
+         */
+        post: operations["connection_test_v1_runs__run_id__connection_tests_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -596,6 +696,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/scenario-drafts/compose-eml": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Compose Eml
+         * @description Build an .eml fixture from a composed message (threading headers, attachments).
+         *     `date` defaults to the current UTC time, `message_id` to `<uuid@domain of from>`, the path
+         *     to `fixtures/<subject slug>-<id prefix>.eml`. CR/LF in any header field: 400.
+         */
+        post: operations["compose_eml_v1_scenario_drafts_compose_eml_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/scenario-drafts/inspect-eml": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Inspect Eml
+         * @description Summarise an uploaded .eml for display in the form.
+         */
+        post: operations["inspect_eml_v1_scenario_drafts_inspect_eml_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/scenario-drafts/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Validate Draft
+         * @description Validate an unsaved scenario (schema, references, fixtures). Stores nothing.
+         *
+         *     Issues carry dotted paths (`scenario.personas.1.email`; `<source>` for text that does not
+         *     parse). Malformed requests (both or neither of source/document, bad fixture base64 or
+         *     paths) answer 400 INVALID_REQUEST.
+         */
+        post: operations["validate_draft_v1_scenario_drafts_validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/scenarios": {
         parameters: {
             query?: never;
@@ -668,9 +834,55 @@ export interface paths {
         put?: never;
         /**
          * Create Answer Key
-         * @description Publish a hidden answer-key version. The response is metadata only.
+         * @description Publish a hidden answer-key version (controller or evaluator). The response is
+         *     metadata only.
          */
         post: operations["create_answer_key_v1_scenarios__scenario_key__answer_keys_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/scenarios/{scenario_key}/answer-keys/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Validate Answer Key
+         * @description Schema + leak guard for an unsaved answer key. Stores nothing.
+         *
+         *     Errors: dotted schema paths (`answer_key.assertions.0.check`), `answer_key.scenario` for a
+         *     key of another scenario, `answer_key.scenario_versions` for unknown versions, and
+         *     `leak:<scenario version>` when grading prose appears in content the agent can read (the
+         *     leaked text is cut to 60 characters). 404 when the scenario does not exist.
+         */
+        post: operations["validate_answer_key_v1_scenarios__scenario_key__answer_keys_validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/scenarios/{scenario_key}/answer-keys/{version}/document": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Answer Key Document
+         * @description Evaluator-only: the full answer key, for editing.
+         */
+        get: operations["answer_key_document_v1_scenarios__scenario_key__answer_keys__version__document_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -719,6 +931,88 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/scenarios/{scenario_key}/versions/{version}/document": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Scenario Version Document
+         * @description A published version's (agent-facing) document and fixtures, for editing or cloning.
+         */
+        get: operations["scenario_version_document_v1_scenarios__scenario_key__versions__version__document_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/system/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * System Status
+         * @description Server mode, LLM provider and which interfaces/listeners are up.
+         */
+        get: operations["system_status_v1_system_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tools/json-to-yaml": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Json To Yaml
+         * @description Render a document as YAML (stable key order: the form's order).
+         */
+        post: operations["json_to_yaml_v1_tools_json_to_yaml_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/tools/yaml-to-json": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Yaml To Json
+         * @description Parse YAML/JSON text (safe loader, same limits as publishing). Problems are reported in
+         *     `error` (path "line N", 1-based, when the parser knows the line, else "<source>"; the
+         *     message has the details), never as HTTP errors.
+         */
+        post: operations["yaml_to_json_v1_tools_yaml_to_json_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -754,6 +1048,11 @@ export interface components {
             input: {
                 [key: string]: unknown;
             };
+            /**
+             * Interface
+             * @description interface the action came through
+             */
+            interface?: string | null;
             /** Operation */
             operation: string;
             /** Outcome */
@@ -774,6 +1073,42 @@ export interface components {
             seq_start?: number | null;
             /** Virtual Time */
             virtual_time?: string | null;
+        };
+        /** ActivityItem */
+        ActivityItem: {
+            /** Actor */
+            actor: string;
+            /** Id */
+            id: number;
+            /** Input */
+            input: {
+                [key: string]: unknown;
+            };
+            /**
+             * Interface
+             * @description rest|gmail|graph|mcp_http|mcp_stdio|imap|smtp|dashboard|cli, or None for older rows
+             */
+            interface: string | null;
+            /** Operation */
+            operation: string;
+            /** Outcome */
+            outcome: string;
+            /** Result */
+            result: {
+                [key: string]: unknown;
+            };
+            /** Virtual Time */
+            virtual_time: string | null;
+        };
+        /** ActivityPage */
+        ActivityPage: {
+            /** Items */
+            items: components["schemas"]["ActivityItem"][];
+            /**
+             * Next After Id
+             * @description poll again with after_id=<this>
+             */
+            next_after_id: number | null;
         };
         /** Address */
         Address: {
@@ -810,6 +1145,31 @@ export interface components {
             /** Source */
             source?: string | null;
         };
+        /**
+         * AnswerKeyDocument
+         * @description Evaluator-only: the full answer key (assertions included).
+         */
+        AnswerKeyDocument: {
+            /** Document */
+            document: {
+                [key: string]: unknown;
+            };
+            /** Scenario Key */
+            scenario_key: string;
+            /** Spec Hash */
+            spec_hash: string;
+            /** Version */
+            version: number;
+        };
+        /** AnswerKeyDraft */
+        AnswerKeyDraft: {
+            /** Document */
+            document?: {
+                [key: string]: unknown;
+            } | null;
+            /** Source */
+            source?: string | null;
+        };
         /** AnswerKeyOut */
         AnswerKeyOut: {
             /**
@@ -832,6 +1192,22 @@ export interface components {
             spec_hash: string;
             /** Version */
             version: number;
+        };
+        /**
+         * AnswerKeyValidation
+         * @description Schema errors (with paths) and leak-guard findings (path "leak:<scenario version>").
+         */
+        AnswerKeyValidation: {
+            /** Document */
+            document?: {
+                [key: string]: unknown;
+            } | null;
+            /** Errors */
+            errors: components["schemas"]["ValidationIssue"][];
+            /** Ok */
+            ok: boolean;
+            /** Warnings */
+            warnings: components["schemas"]["ValidationIssue"][];
         };
         /** ArtifactOut */
         ArtifactOut: {
@@ -898,6 +1274,20 @@ export interface components {
             /** Type */
             type: string;
         };
+        /** AssertionTypeInfo */
+        AssertionTypeInfo: {
+            /**
+             * Check Schema
+             * @description JSON Schema of this type's `check:` block (None: rubric only)
+             */
+            check_schema: {
+                [key: string]: unknown;
+            } | null;
+            /** Default Category */
+            default_category: string;
+            /** Type */
+            type: string;
+        };
         /** AttachmentRef */
         AttachmentRef: {
             /** Blob Ref */
@@ -919,6 +1309,56 @@ export interface components {
             mime_type: string;
             /** Size */
             size: number;
+        };
+        /**
+         * AuthoringMeta
+         * @description Everything a form-based editor needs to offer choices instead of free text.
+         */
+        AuthoringMeta: {
+            /** Agent Operations */
+            agent_operations: string[];
+            /**
+             * Answer Key Schema
+             * @description JSON Schema of an answer key
+             */
+            answer_key_schema: {
+                [key: string]: unknown;
+            };
+            /** Assertion Types */
+            assertion_types: components["schemas"]["AssertionTypeInfo"][];
+            /** Behavior Modes */
+            behavior_modes: string[];
+            /** Categories */
+            categories: string[];
+            /** External Delivery Modes */
+            external_delivery_modes: string[];
+            /** Flags */
+            flags: string[];
+            /**
+             * Folders
+             * @description system folder types usable in checks
+             */
+            folders: string[];
+            /** Invariants */
+            invariants: string[];
+            /**
+             * Scenario Schema
+             * @description JSON Schema of a scenario document
+             */
+            scenario_schema: {
+                [key: string]: unknown;
+            };
+            /** Schema Versions */
+            schema_versions: string[];
+            /** Severities */
+            severities: string[];
+            /**
+             * Trigger Actions
+             * @description values for after_agent_action triggers
+             */
+            trigger_actions: string[];
+            /** Trigger Types */
+            trigger_types: string[];
         };
         /**
          * BuildComparison
@@ -1071,6 +1511,133 @@ export interface components {
             /** Virtual Time */
             virtual_time: string;
         };
+        /** ComposeAttachment */
+        ComposeAttachment: {
+            /** Content B64 */
+            content_b64: string;
+            /**
+             * Content Type
+             * @default application/octet-stream
+             */
+            content_type: string;
+            /** Filename */
+            filename: string;
+        };
+        /**
+         * ComposeMessage
+         * @description A message composed in a form, built into an RFC 5322 .eml fixture by the server.
+         */
+        ComposeMessage: {
+            /** Attachments */
+            attachments?: components["schemas"]["ComposeAttachment"][];
+            /** Cc */
+            cc?: string[];
+            /**
+             * Date
+             * @description ISO 8601; default: current UTC time; clients should send the scenario clock start
+             */
+            date?: string | null;
+            /**
+             * Fixture Path
+             * @description default: fixtures/<subject slug>-<id>.eml
+             */
+            fixture_path?: string | null;
+            /** From */
+            from: string;
+            /** Html */
+            html?: string | null;
+            /**
+             * In Reply To
+             * @description Message-ID of an earlier message
+             */
+            in_reply_to?: string | null;
+            /**
+             * Message Id
+             * @description default: generated <...@domain>
+             */
+            message_id?: string | null;
+            /** References */
+            references?: string[];
+            /**
+             * Subject
+             * @default
+             */
+            subject: string;
+            /** Text */
+            text?: string | null;
+            /** To */
+            to: string[];
+        };
+        /** ComposedFixture */
+        ComposedFixture: {
+            /** Content B64 */
+            content_b64: string;
+            /** Message Id */
+            message_id: string;
+            /** Path */
+            path: string;
+            /** Size */
+            size: number;
+        };
+        /** ConnectionTestRequest */
+        ConnectionTestRequest: {
+            /** Api Key */
+            api_key: string;
+            /**
+             * Interface
+             * @enum {string}
+             */
+            interface: "rest" | "gmail" | "graph" | "mcp_http" | "mcp_stdio" | "imap" | "smtp";
+        };
+        /**
+         * ConnectionTestResult
+         * @description Always HTTP 200. A key that is not a live agent key of the run gives ok=false with
+         *     error_code UNAUTHENTICATED (details.reason invalid_key) or PERMISSION_DENIED (not_agent_key,
+         *     other_run). Listener not running: LISTENER_DOWN. The key is never echoed.
+         */
+        ConnectionTestResult: {
+            /** Details */
+            details?: {
+                [key: string]: unknown;
+            };
+            /** Error Code */
+            error_code?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            /**
+             * Interface
+             * @enum {string}
+             */
+            interface: "rest" | "gmail" | "graph" | "mcp_http" | "mcp_stdio" | "imap" | "smtp";
+            /** Ok */
+            ok: boolean;
+            /**
+             * Status Code
+             * @description HTTP/IMAP/SMTP status if any
+             */
+            status_code?: number | null;
+            /**
+             * Summary
+             * @description human-readable outcome
+             */
+            summary: string;
+        };
+        /**
+         * DraftValidation
+         * @description Live validation: never stores anything. `document` is the parsed document (if any).
+         */
+        DraftValidation: {
+            /** Document */
+            document?: {
+                [key: string]: unknown;
+            } | null;
+            /** Errors */
+            errors: components["schemas"]["ValidationIssue"][];
+            /** Ok */
+            ok: boolean;
+            /** Warnings */
+            warnings: components["schemas"]["ValidationIssue"][];
+        };
         /** Efficiency */
         Efficiency: {
             /**
@@ -1103,6 +1670,40 @@ export interface components {
              * @default 0
              */
             virtual_duration_seconds: number;
+        };
+        /** EmlInspect */
+        EmlInspect: {
+            /** Content B64 */
+            content_b64: string;
+        };
+        /**
+         * EmlSummary
+         * @description What an uploaded .eml contains (to show it in the form).
+         */
+        EmlSummary: {
+            /** Attachments */
+            attachments: string[];
+            /** Cc */
+            cc: string[];
+            /** Date */
+            date: string | null;
+            /** From */
+            from: string | null;
+            /** In Reply To */
+            in_reply_to: string | null;
+            /** Message Id */
+            message_id: string | null;
+            /**
+             * References
+             * @description Message-IDs, oldest first
+             */
+            references?: string[];
+            /** Subject */
+            subject: string;
+            /** Text Preview */
+            text_preview: string;
+            /** To */
+            to: string[];
         };
         /** ErrorBody */
         ErrorBody: {
@@ -1230,6 +1831,26 @@ export interface components {
             /** Ref */
             ref: string;
         };
+        /** FolderCountOut */
+        FolderCountOut: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** System Type */
+            system_type: string | null;
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
+            /**
+             * Unread
+             * @description messages without the SEEN flag
+             * @default 0
+             */
+            unread: number;
+        };
         /** FolderOut */
         FolderOut: {
             /** Id */
@@ -1285,6 +1906,42 @@ export interface components {
             /** Message Id */
             message_id: string;
         };
+        /** InterfaceEndpoint */
+        InterfaceEndpoint: {
+            /**
+             * Available
+             * @description served by this server / listener running
+             */
+            available: boolean;
+            /**
+             * Base Url
+             * @description service base URL for HTTP interfaces: <origin>/v1, <origin>/gmail/v1, <origin>/graph/v1.0, <origin>/mcp
+             */
+            base_url?: string | null;
+            /**
+             * Command
+             * @description mcp_stdio argv
+             */
+            command?: string[] | null;
+            /** Host */
+            host?: string | null;
+            /**
+             * Interface
+             * @enum {string}
+             */
+            interface: "rest" | "gmail" | "graph" | "mcp_http" | "mcp_stdio" | "imap" | "smtp";
+            /** Note */
+            note?: string | null;
+            /** Port */
+            port?: number | null;
+            /** Tls */
+            tls?: ("none" | "starttls") | null;
+            /**
+             * Username
+             * @description IMAP/SMTP login (mailbox address)
+             */
+            username?: string | null;
+        };
         /**
          * IssuedCredential
          * @description A newly issued sandbox API key. `api_key` is shown once and never stored in clear.
@@ -1300,14 +1957,71 @@ export interface components {
              */
             role: "controller" | "evaluator" | "agent";
         };
+        /** JsonToYaml */
+        JsonToYaml: {
+            /** Document */
+            document: {
+                [key: string]: unknown;
+            };
+        };
+        /** KeyInfo */
+        KeyInfo: {
+            /** Created At */
+            created_at: string;
+            /** Expires At */
+            expires_at?: string | null;
+            /** Key Id */
+            key_id: string;
+            /**
+             * Prefix
+             * @description the <prefix> of msk_<prefix>_... (not secret)
+             */
+            prefix: string;
+            /**
+             * Revoked
+             * @default false
+             */
+            revoked: boolean;
+        };
+        /** ListenerStatus */
+        ListenerStatus: {
+            /** Host */
+            host?: string | null;
+            /** Port */
+            port?: number | null;
+            /** Running */
+            running: boolean;
+            /**
+             * Tls
+             * @default none
+             * @enum {string}
+             */
+            tls: "none" | "starttls";
+        };
         /** MailboxOut */
         MailboxOut: {
             /** Email */
             email: string;
+            /** Folders */
+            folders?: components["schemas"]["FolderCountOut"][];
             /** Id */
             id: string;
+            /**
+             * Is Agent
+             * @default false
+             */
+            is_agent: boolean;
+            /**
+             * Name
+             * @description persona display name
+             */
+            name?: string | null;
             /** Owner Id */
             owner_id: string;
+            /** Persona Id */
+            persona_id?: string | null;
+            /** Role */
+            role?: string | null;
         };
         /**
          * MeOut
@@ -1356,6 +2070,17 @@ export interface components {
             /** Remove Labels */
             remove_labels?: string[];
         };
+        /**
+         * ParsedDocument
+         * @description `document` is None when the text does not parse; `error` then says where.
+         */
+        ParsedDocument: {
+            /** Document */
+            document?: {
+                [key: string]: unknown;
+            } | null;
+            error?: components["schemas"]["ValidationIssue"] | null;
+        };
         /** ProjectCreate */
         ProjectCreate: {
             /** Name */
@@ -1394,6 +2119,11 @@ export interface components {
             /** Tenant Id */
             tenant_id: string;
         };
+        /** RenderedYaml */
+        RenderedYaml: {
+            /** Source */
+            source: string;
+        };
         /** ReplayOut */
         ReplayOut: {
             /** Event Count */
@@ -1418,6 +2148,29 @@ export interface components {
             reply_all: boolean;
             /** Text */
             text: string;
+        };
+        /**
+         * RunConnection
+         * @description How an agent connects to this run. Never contains a key (keys are shown once).
+         */
+        RunConnection: {
+            /**
+             * Agent Keys
+             * @description this run's agent keys (no secrets)
+             */
+            agent_keys: components["schemas"]["KeyInfo"][];
+            /** Interfaces */
+            interfaces: components["schemas"]["InterfaceEndpoint"][];
+            /** Mailbox Address */
+            mailbox_address: string;
+            /** Mailbox Id */
+            mailbox_id: string;
+            /** Persona Id */
+            persona_id: string;
+            /** Run Id */
+            run_id: string;
+            /** Run Status */
+            run_status: string;
         };
         /** RunCreate */
         RunCreate: {
@@ -1495,6 +2248,22 @@ export interface components {
              */
             source?: string | null;
         };
+        /**
+         * ScenarioDraft
+         * @description A scenario being edited: YAML/JSON text OR a document, plus fixtures (path -> base64).
+         */
+        ScenarioDraft: {
+            /** Document */
+            document?: {
+                [key: string]: unknown;
+            } | null;
+            /** Fixtures */
+            fixtures?: {
+                [key: string]: string;
+            };
+            /** Source */
+            source?: string | null;
+        };
         /** ScenarioOut */
         ScenarioOut: {
             /** Id */
@@ -1504,6 +2273,30 @@ export interface components {
             latest_version: components["schemas"]["ScenarioVersionOut"] | null;
             /** Versions */
             versions: number[];
+        };
+        /**
+         * ScenarioVersionDocument
+         * @description A published version for editing/cloning: the stored (agent-facing) document, which never
+         *     contains answer-key assertions, plus its fixtures.
+         */
+        ScenarioVersionDocument: {
+            /** Document */
+            document: {
+                [key: string]: unknown;
+            };
+            /**
+             * Fixtures
+             * @description relative path -> base64 bytes
+             */
+            fixtures: {
+                [key: string]: string;
+            };
+            /** Scenario Key */
+            scenario_key: string;
+            /** Spec Hash */
+            spec_hash: string;
+            /** Version */
+            version: number;
         };
         /** ScenarioVersionOut */
         ScenarioVersionOut: {
@@ -1560,6 +2353,26 @@ export interface components {
          * @enum {string}
          */
         Status: "PASS" | "FAIL" | "INCONCLUSIVE" | "NOT_APPLICABLE";
+        /** SystemStatus */
+        SystemStatus: {
+            /**
+             * Interfaces
+             * @description interfaces this server serves
+             */
+            interfaces: ("rest" | "gmail" | "graph" | "mcp_http" | "mcp_stdio" | "imap" | "smtp")[];
+            /** Listeners */
+            listeners: {
+                [key: string]: components["schemas"]["ListenerStatus"];
+            };
+            /** Llm Model */
+            llm_model?: string | null;
+            /** Llm Provider */
+            llm_provider: string;
+            /** Local No Auth */
+            local_no_auth: boolean;
+            /** Version */
+            version: string;
+        };
         /** TrialStats */
         TrialStats: {
             /** Mean Accuracy */
@@ -1598,6 +2411,11 @@ export interface components {
          * @enum {string}
          */
         Verdict: "PASSED" | "FAILED" | "INCONCLUSIVE";
+        /** YamlToJson */
+        YamlToJson: {
+            /** Source */
+            source: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -1989,6 +2807,35 @@ export interface operations {
             };
         };
     };
+    authoring_meta_v1_meta_authoring_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthoringMeta"];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     create_project_v1_projects_post: {
         parameters: {
             query?: never;
@@ -2149,6 +2996,40 @@ export interface operations {
             };
         };
     };
+    run_activity_v1_runs__run_id__activity_get: {
+        parameters: {
+            query?: {
+                after_id?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityPage"];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     create_agent_credential_v1_runs__run_id__agent_credentials_post: {
         parameters: {
             query?: never;
@@ -2268,6 +3149,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ClockResult"];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    run_connection_v1_runs__run_id__connection_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunConnection"];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    connection_test_v1_runs__run_id__connection_tests_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectionTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionTestResult"];
                 };
             };
             /** @description Default Response */
@@ -2722,6 +3669,105 @@ export interface operations {
             };
         };
     };
+    compose_eml_v1_scenario_drafts_compose_eml_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ComposeMessage"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposedFixture"];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    inspect_eml_v1_scenario_drafts_inspect_eml_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmlInspect"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmlSummary"];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    validate_draft_v1_scenario_drafts_validate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScenarioDraft"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DraftValidation"];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     list_scenarios_v1_scenarios_get: {
         parameters: {
             query?: {
@@ -2921,6 +3967,73 @@ export interface operations {
             };
         };
     };
+    validate_answer_key_v1_scenarios__scenario_key__answer_keys_validate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenario_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnswerKeyDraft"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnswerKeyValidation"];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    answer_key_document_v1_scenarios__scenario_key__answer_keys__version__document_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenario_key: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnswerKeyDocument"];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     create_run_v1_scenarios__scenario_key__runs_post: {
         parameters: {
             query?: never;
@@ -2980,6 +4093,133 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ValidationResult"];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    scenario_version_document_v1_scenarios__scenario_key__versions__version__document_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenario_key: string;
+                version: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioVersionDocument"];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    system_status_v1_system_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SystemStatus"];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    json_to_yaml_v1_tools_json_to_yaml_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["JsonToYaml"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RenderedYaml"];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    yaml_to_json_v1_tools_yaml_to_json_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["YamlToJson"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParsedDocument"];
                 };
             };
             /** @description Default Response */

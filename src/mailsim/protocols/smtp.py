@@ -33,6 +33,7 @@ from aiosmtpd.smtp import MISSING, SMTP, AuthResult, Envelope, Session
 
 from mailsim.domain.errors import SimError
 from mailsim.domain.models import CanonicalMessage
+from mailsim.engine.context import with_interface
 from mailsim.mime.limits import MimeLimits
 from mailsim.mime.parse import ParsedMessage, parse_mime
 from mailsim.protocols.auth import AgentSession, Authenticator, AuthFailed
@@ -120,7 +121,8 @@ class SandboxHandler:
 
     async def _login(self, login: bytes, password: bytes) -> AuthResult:
         try:
-            agent = await asyncio.to_thread(self.auth.login, login.decode("utf-8", "replace"),
+            agent = await asyncio.to_thread(with_interface("smtp", self.auth.login),
+                                            login.decode("utf-8", "replace"),
                                             password.decode("utf-8", "replace"))  # fmt: skip
         except AuthFailed as exc:
             log.info("SMTP AUTH failed: %s", exc.reason)
@@ -187,7 +189,7 @@ class SandboxHandler:
             return agent
         raw = envelope.original_content or b""
         rcpts = [str(r).lower() for r in envelope.rcpt_tos]
-        return await asyncio.to_thread(self.deliver, agent, raw, rcpts)
+        return await asyncio.to_thread(with_interface("smtp", self.deliver), agent, raw, rcpts)
 
     def deliver(self, agent: AgentSession, raw: bytes, rcpts: list[str]) -> str:
         try:

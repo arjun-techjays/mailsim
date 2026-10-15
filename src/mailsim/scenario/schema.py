@@ -106,6 +106,7 @@ class BehaviorSpec(_Strict):
 
 class PersonaSpec(_Strict):
     id: str
+    name: str | None = None  # display name (cosmetic; used in From/To display names)
     email: str
     role: str
     knowledge: list[str] = Field(default_factory=list)

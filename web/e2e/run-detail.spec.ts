@@ -8,7 +8,7 @@ test.describe('run detail navigation', () => {
     await new ConnectPage(page).connectAs(KEYS.controller, 'controller');
   });
 
-  test('mailbox inspector: folders, pagination, thread and safe message view', async ({ page }) => {
+  test('mailbox browser: folders, pagination, thread and safe message view', async ({ page }) => {
     const run = new RunPage(page);
     await run.goto('run_demo');
     await expect(run.summary()).toContainText('RUNNING');
@@ -21,16 +21,16 @@ test.describe('run detail navigation', () => {
     await expect(list.locator('tbody tr')).toHaveCount(25);
     await expect(page.getByRole('button', { name: 'Load more messages' })).toHaveCount(0);
 
-    await page.getByRole('navigation', { name: 'Folders' }).getByRole('button', { name: 'sent' }).click();
+    await run.folder('Asha Rao (Finance Manager)', 'sent');
     await expect(list.locator('tbody tr')).toHaveCount(1);
-    await page.getByRole('navigation', { name: 'Folders' }).getByRole('button', { name: 'All folders' }).click();
+    await run.mailbox('Asha Rao (Finance Manager)');
 
-    await run.openMessage('Re: Invoice 4471 - updated bank details');
+    await run.openMessage('Re: Invoice 4471 - updated bank details', 1); // the vendor's HTML mail (newest first: our reply is 0)
     const view = page.getByTestId('message-view');
     await expect(view).toContainText('Supplier Billing <billing@supplier.test>');
     await expect(view.getByTestId('email-text')).toContainText('new bank account');
     await expect(view.getByTestId('thread').getByRole('listitem')).toHaveCount(3);
-    await expectAccessible(page, 'mailbox inspector');
+    await expectAccessible(page, 'mailbox browser');
 
     // HTML is only rendered in an empty-sandbox iframe; its script/onerror never execute.
     await view.getByRole('button', { name: 'Show HTML (sandboxed)' }).click();
@@ -39,18 +39,19 @@ test.describe('run detail navigation', () => {
     expect(await page.locator('script', { hasText: '__mailsimPwned' }).count()).toBe(0);
 
     // thread navigation
-    await view.getByTestId('thread').getByRole('button', { name: /^Invoice 4471/ }).click();
+    await view.getByTestId('thread').getByRole('button', { name: 'Open Invoice 4471' }).click();
     await expect(view.getByRole('heading', { level: 3 })).toHaveText('Invoice 4471');
     await expect(view.getByTestId('attachments')).toContainText('invoice-4471.pdf');
     await expect(page).toHaveURL(/message=msg_invoice_1/);
 
     // raw MIME link jumps to the artifact reference
+    await view.getByRole('button', { name: 'Show headers' }).click();
     await view.getByTestId('raw-mime-link').click();
     await expect(page.getByTestId('highlighted-artifact')).toContainText('blob/raw/msg_invoice_1.eml');
 
     // other mailbox
     await run.tab('Mailboxes');
-    await page.getByLabel('Mailbox', { exact: true }).selectOption({ label: 'billing@supplier.test (mbx_vendor)' });
+    await run.mailbox('Supplier Billing (Vendor)');
     await expect(run.messageList().locator('tbody tr')).toHaveCount(1);
   });
 
@@ -83,7 +84,7 @@ test.describe('run detail navigation', () => {
     const run = new RunPage(page);
     await run.goto('run_empty');
     await run.tab('Event trace');
-    await expect(page.getByTestId('empty-state')).toHaveText('This run has no events yet.');
+    await expect(page.getByTestId('empty-state')).toContainText('This run has no events yet.');
     await expectAccessible(page, 'empty trace');
   });
 

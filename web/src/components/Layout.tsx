@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useSession } from '../auth/session';
+import { AgentKeyProvider } from '../connect/AgentKeyProvider';
+import { ThemeToggle } from '../theme/ThemeToggle';
+import { StatusPill } from './StatusPill';
 
 /** Moves focus to <main> and announces the new page title after client-side navigation. */
 function useRouteAnnouncer(): [string, RefObject<HTMLElement | null>] {
@@ -23,36 +26,56 @@ export function Layout() {
   const { session, disconnect, rejected } = useSession();
   const navigate = useNavigate();
   const [announcement, main] = useRouteAnnouncer();
-  const operator = session && session.role !== 'agent';
+  const operator = !!session && session.role !== 'agent';
   const localNoAuth = session?.role === 'operator';
   const reconnect = () => {
     disconnect();
     navigate('/connect');
   };
+  // Held agent keys belong to one dashboard session: a new provider (empty store) for every
+  // session identity, so a key never survives Disconnect / reconnect. Not secret: the key's
+  // public prefix only.
+  const sessionScope = session ? `${session.baseUrl}|${session.role}|${session.apiKey.slice(0, 16)}` : 'none';
   return (
-    <>
+    <AgentKeyProvider key={sessionScope}>
       <a className="skip-link" href="#main">
         Skip to main content
       </a>
       <header className="app-header">
-        <span className="brand">mailsim</span>
-        <nav aria-label="Main">
-          <ul>
-            {operator && (
-              <>
-                <li>
-                  <NavLink to="/scenarios">Scenarios</NavLink>
-                </li>
-                <li>
-                  <NavLink to="/runs">Runs</NavLink>
-                </li>
-              </>
-            )}
-            <li>
-              <NavLink to="/connect">Connect</NavLink>
-            </li>
-          </ul>
-        </nav>
+        <div className="header-row">
+          <Link to="/" className="brand">
+            mailsim
+          </Link>
+          <nav aria-label="Main" className="primary-nav">
+            <ul>
+              {operator && (
+                <>
+                  <li>
+                    <NavLink to="/" end>
+                      Home
+                    </NavLink>
+                  </li>
+                  <li>
+                    <NavLink to="/scenarios">Scenarios</NavLink>
+                  </li>
+                  <li>
+                    <NavLink to="/runs">Runs</NavLink>
+                  </li>
+                </>
+              )}
+              <li>
+                <NavLink to="/concepts">Concepts</NavLink>
+              </li>
+              <li>
+                <NavLink to="/connect">Connect</NavLink>
+              </li>
+            </ul>
+          </nav>
+          <div className="header-tools">
+            {operator && <StatusPill />}
+            <ThemeToggle />
+          </div>
+        </div>
         {session && (
           <div className="session" data-testid="session-info">
             <span>
@@ -103,6 +126,6 @@ export function Layout() {
       <div className="visually-hidden" role="status" aria-live="polite" data-testid="route-announcer">
         {announcement}
       </div>
-    </>
+    </AgentKeyProvider>
   );
 }

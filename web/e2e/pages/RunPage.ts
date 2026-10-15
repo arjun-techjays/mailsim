@@ -8,7 +8,7 @@ export class RunPage {
     await expect(this.page.getByRole('heading', { level: 1 })).toContainText(runId);
   }
 
-  async tab(name: 'Overview' | 'Mailboxes' | 'Event trace' | 'Actions' | 'Artifacts') {
+  async tab(name: 'Overview' | 'Mailboxes' | 'Activity' | 'Event trace' | 'Actions' | 'Artifacts') {
     await this.page.getByRole('navigation', { name: 'Run sections' }).getByRole('link', { name }).click();
   }
 
@@ -20,8 +20,23 @@ export class RunPage {
     return this.page.getByTestId('message-list');
   }
 
-  async openMessage(subject: string) {
-    await this.messageList().getByRole('button', { name: subject, exact: true }).first().click();
+  /** Selects a mailbox (all folders) in the mailbox browser by its title. */
+  async mailbox(title: string) {
+    await this.page.getByRole('navigation', { name: 'Mailboxes and folders' }).getByRole('button', { name: new RegExp(`^${title.replace(/[()]/g, '\\$&')}`) }).click();
+  }
+
+  async folder(mailboxTitle: string, folder: string) {
+    const nav = this.page.getByRole('navigation', { name: 'Mailboxes and folders' });
+    await nav.getByRole('list', { name: `Folders of ${mailboxTitle}` }).getByRole('button', { name: new RegExp(`^${folder},`) }).click();
+  }
+
+  toolbar() {
+    return this.page.getByTestId('run-toolbar');
+  }
+
+  /** Opens the `nth` message (newest first) with this subject. */
+  async openMessage(subject: string, nth = 0) {
+    await this.messageList().getByRole('button', { name: subject, exact: true }).nth(nth).click();
     await expect(this.page.getByTestId('message-view').getByRole('heading', { level: 3 })).toHaveText(subject);
   }
 

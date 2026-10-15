@@ -48,7 +48,7 @@ describe('Runs page', () => {
   it('empty run list', async () => {
     server.use(http.get('*/v1/runs', () => HttpResponse.json({ items: [], next_cursor: null })));
     renderApp('/runs', sessionFor('controller'));
-    expect(await screen.findByText('No runs yet.')).toBeInTheDocument();
+    expect(await screen.findByText(/No runs yet\./)).toBeInTheDocument();
   });
 
   it('other list errors are shown with the session list', async () => {

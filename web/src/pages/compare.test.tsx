@@ -51,7 +51,7 @@ describe('Build comparison', () => {
     expect(screen.getByRole('img', { name: /Mean accuracy by build/ })).toHaveAccessibleName(/b1: n\/a \(2 runs\)/);
     await user.type(screen.getByLabelText('Baseline build'), 'none');
     await user.click(screen.getByRole('button', { name: 'Compare' }));
-    expect(await screen.findByText('No evaluated runs for these builds.')).toBeInTheDocument();
+    expect(await screen.findByText(/No evaluated runs for these builds\./)).toBeInTheDocument();
     await user.clear(screen.getByLabelText('Baseline build'));
     await user.click(screen.getByRole('button', { name: 'Compare' }));
     expect(await screen.findByText('No per-assertion data.')).toBeInTheDocument();

@@ -80,9 +80,10 @@ describe('Connect page and session', () => {
     expect(loadSession()).toBeNull();
   });
 
-  it('home redirects controllers to scenarios', async () => {
+  it('home shows the getting-started checklist to controllers', async () => {
     renderApp('/', sessionFor('controller'));
-    expect(await screen.findByRole('heading', { level: 1, name: 'Scenarios' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Test your email agent' })).toBeInTheDocument();
+    expect(screen.getByTestId('checklist')).toBeInTheDocument();
   });
 
   it('home without a session goes to connect', async () => {

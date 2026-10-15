@@ -3,6 +3,8 @@ side effect), 2xx for the right role. The matrix must cover every route the app 
 
 from __future__ import annotations
 
+import base64
+
 import pytest
 
 from mailsim.api.auth import hash_key, revoke_key
@@ -13,6 +15,7 @@ pytestmark = pytest.mark.db
 
 C, E, A = "controller", "evaluator", "agent"
 ANSWER_KEY = (EXAMPLE_DIR / "answer_key.yaml").read_text()
+EML = base64.b64encode((EXAMPLE_DIR / "fixtures" / "invoice-001.eml").read_bytes()).decode()
 
 # (method, path template, allowed roles, json body or None, success status)
 ROUTES: list[tuple[str, str, set[str], object, int]] = [
@@ -22,7 +25,7 @@ ROUTES: list[tuple[str, str, set[str], object, int]] = [
     ("GET", "/v1/scenarios", {C, E}, None, 200),
     ("GET", "/v1/scenarios/{key}", {C, E}, None, 200),
     ("POST", "/v1/scenarios/{key}/validate", {C}, "scenario", 200),
-    ("POST", "/v1/scenarios/{key}/answer-keys", {C}, {"source": ANSWER_KEY}, 201),
+    ("POST", "/v1/scenarios/{key}/answer-keys", {C, E}, {"source": ANSWER_KEY}, 201),
     ("GET", "/v1/scenarios/{key}/answer-keys", {E}, None, 200),
     ("POST", "/v1/scenarios/{key}/runs", {C}, {}, 201),
     ("GET", "/v1/scenarios/{key}/accuracy?builds=a&builds=b", {E}, None, 200),
@@ -58,15 +61,30 @@ ROUTES: list[tuple[str, str, set[str], object, int]] = [
     ("DELETE", "/v1/keys/{keyid}", {C}, None, 204),
     ("GET", "/v1/me", {C, E, A}, None, 200),
     ("GET", "/v1/runs?status=RUNNING&page_size=1", {C, E}, None, 200),
+    # UX story (api/routers/ux.py)
+    ("GET", "/v1/meta/authoring", {C, E}, None, 200),
+    ("GET", "/v1/system/status", {C, E}, None, 200),
+    ("POST", "/v1/tools/yaml-to-json", {C, E}, {"source": "a: 1"}, 200),
+    ("POST", "/v1/tools/json-to-yaml", {C, E}, {"document": {"a": 1}}, 200),
+    ("POST", "/v1/scenario-drafts/validate", {C}, "scenario", 200),
+    ("POST", "/v1/scenario-drafts/compose-eml", {C},
+     {"from": "vendor@example.test", "to": ["finance@example.test"], "text": "x"}, 200),
+    ("POST", "/v1/scenario-drafts/inspect-eml", {C}, {"content_b64": EML}, 200),
+    ("GET", "/v1/scenarios/{key}/versions/{ver}/document", {C}, None, 200),
+    ("POST", "/v1/scenarios/{key}/answer-keys/validate", {C, E}, {"source": ANSWER_KEY}, 200),
+    ("GET", "/v1/scenarios/{key}/answer-keys/{akv}/document", {E}, None, 200),
+    ("GET", "/v1/runs/{run}/connection", {C}, None, 200),
+    ("POST", "/v1/runs/{run}/connection-tests", {C}, "connection-test", 200),
+    ("GET", "/v1/runs/{run}/activity?after_id=0&limit=5", {C, E}, None, 200),
 ]  # fmt: skip
 
 
 def test_matrix_covers_every_route():
-    from mailsim.api.routers import control, mailbox, simulator
+    from mailsim.api.routers import control, mailbox, simulator, ux
 
     served = {
         (method, route.path)
-        for module in (control, simulator, mailbox)
+        for module in (control, simulator, mailbox, ux)
         for route in module.router.routes
         for method in route.methods - {"HEAD"}
     }
@@ -76,7 +94,8 @@ def test_matrix_covers_every_route():
         for name, real in (("{project}", "{project_id}"), ("{key}", "{scenario_key}"),
                            ("{ready}", "{run_id}"), ("{run}", "{run_id}"), ("{mbx}", "{mailbox_id}"),
                            ("{msg}", "{message_id}"), ("{thread}", "{thread_id}"),
-                           ("evl_1", "{evaluation_id}"), ("{keyid}", "{key_id}")):  # fmt: skip
+                           ("evl_1", "{evaluation_id}"), ("{keyid}", "{key_id}"),
+                           ("{ver}", "{version}"), ("{akv}", "{version}")):  # fmt: skip
             template = template.replace(name, real)
         listed.add((method, template))
     assert listed == served
@@ -94,7 +113,7 @@ class World:
                          expect=200).json()["items"][0]  # fmt: skip
         self.values = {"project": api.project_id, "key": KEY, "run": run, "ready": ready,
                        "mbx": mbx, "msg": first["id"], "thread": first["thread_id"],
-                       "keyid": _key_id(api, self.agent_key)}  # fmt: skip
+                       "keyid": _key_id(api, self.agent_key), "ver": 1, "akv": 1}  # fmt: skip
         self.keys = {**api.keys, A: self.agent_key}
 
     def url(self, path: str) -> str:
@@ -110,15 +129,18 @@ def _key_id(api: Api, key: str) -> str:
         return s.scalar(select(m.ApiKey.id).where(m.ApiKey.key_hash == hash_key(key)))
 
 
-def _body(body: object, api: Api) -> object:
-    return scenario_payload(api.tmp_path / "scn" / "scenario.yaml") if body == "scenario" else body
+def _body(body: object, w: World) -> object:
+    if body == "connection-test":  # the world's own agent key, tested via the stdio check
+        return {"interface": "mcp_stdio", "api_key": w.agent_key}
+    path = w.api.tmp_path / "scn" / "scenario.yaml"
+    return scenario_payload(path) if body == "scenario" else body
 
 
 @pytest.mark.parametrize(("method", "path", "allowed", "body", "status"), ROUTES,
                          ids=[f"{m} {p}" for m, p, *_ in ROUTES])  # fmt: skip
 def test_route_role_matrix(api, method, path, allowed, body, status):
     w = World(api)
-    url, payload = w.url(path), _body(body, api)
+    url, payload = w.url(path), _body(body, w)
     kwargs = {"json": payload} if payload is not None else {}
 
     r = api.call(method, url, role=None, **kwargs)

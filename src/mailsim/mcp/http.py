@@ -68,6 +68,7 @@ class McpEndpoint:
             session_factory=session_factory,
             evaluation_service=getattr(state, "evaluation_service", None),
             persona_runtime_factory=getattr(state, "persona_runtime_factory", None),
+            interface="mcp_http",
         )
         manager = StreamableHTTPSessionManager(app=server, stateless=True, json_response=True)
         async with manager.run():

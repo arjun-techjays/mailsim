@@ -5,6 +5,10 @@ export const runKeys = {
   actions: (id: string) => ['run', id, 'actions'] as const,
   artifacts: (id: string) => ['run', id, 'artifacts'] as const,
   evaluations: (id: string) => ['run', id, 'evaluations'] as const,
+  // ---- mailbox browser & activity (UX-F2)
+  mailboxes: (id: string) => ['run', id, 'mailboxes'] as const,
+  inspect: (id: string) => ['run', id, 'inspect'] as const,
+  agentOwner: (id: string) => ['run', id, 'agent-owner'] as const,
 };
 
 /** Link helpers for deep links inside the run detail page (used by evidence links). */

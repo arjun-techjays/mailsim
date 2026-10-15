@@ -3,8 +3,12 @@ import { Link, useParams } from 'react-router-dom';
 import { useApi } from '../auth/session';
 import { ShowFor } from '../components/Gates';
 import { ErrorDisplay } from '../components/ErrorDisplay';
+import { PageIntro } from '../components/PageIntro';
+import { WhatIsThis } from '../guide/Concepts';
 import { Empty, Loading } from '../components/Status';
 import { usePageTitle } from '../hooks/usePageTitle';
+import { PublishedNotice } from '../builder/PublishedNotice'; // builder (UX-F1)
+import { AnswerKeySavedNotice, EditAnswerKeyLink, NewAnswerKeyLink } from '../answerkey/AnswerKeyLinks'; // UX-F2
 
 function AnswerKeys({ scenarioKey }: { scenarioKey: string }) {
   const api = useApi();
@@ -13,12 +17,17 @@ function AnswerKeys({ scenarioKey }: { scenarioKey: string }) {
     <section aria-labelledby="ak-h">
       <h2 id="ak-h">Answer-key versions</h2>
       <p className="hint">Evaluator only. Metadata only: grading content is never shown here or to agents.</p>
+      <WhatIsThis term="answer-key" />
+      <NewAnswerKeyLink scenarioKey={scenarioKey} />
       {q.isPending ? (
         <Loading />
       ) : q.isError ? (
         <ErrorDisplay error={q.error} title="Could not load answer keys" />
       ) : q.data.length === 0 ? (
-        <Empty>No answer keys yet.</Empty>
+        <Empty>
+          No answer keys yet. Without one, runs of this scenario cannot be graded.{' '}
+          <Link to={`/scenarios/${encodeURIComponent(scenarioKey)}/answer-key`}>Write the answer key</Link>
+        </Empty>
       ) : (
         <table data-testid="answer-keys">
           <thead>
@@ -28,6 +37,7 @@ function AnswerKeys({ scenarioKey }: { scenarioKey: string }) {
               <th scope="col">Compatible scenario versions</th>
               <th scope="col">Spec hash</th>
               <th scope="col">Created</th>
+              <th scope="col">Edit</th>
             </tr>
           </thead>
           <tbody>
@@ -40,6 +50,9 @@ function AnswerKeys({ scenarioKey }: { scenarioKey: string }) {
                   <code>{k.spec_hash}</code>
                 </td>
                 <td>{k.created_at}</td>
+                <td>
+                  <EditAnswerKeyLink scenarioKey={scenarioKey} version={k.version} />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -63,6 +76,19 @@ export function ScenarioDetailPage() {
       <h1>
         Scenario <code>{key}</code>
       </h1>
+      <PageIntro
+        next={[
+          { to: '/runs', label: 'Runs' },
+          { to: '/concepts#persona', label: 'How personas and mailboxes fit together' },
+        ]}
+      >
+        <p>
+          The published versions of this scenario. Start a run to give your agent a fresh copy of its personas’
+          mailboxes; the answer key (evaluators only) decides how runs are graded.
+        </p>
+      </PageIntro>
+      <PublishedNotice scenarioKey={key} /> {/* builder (UX-F1) */}
+      <AnswerKeySavedNotice scenarioKey={key} />
       {q.isPending ? (
         <Loading />
       ) : q.isError ? (
@@ -75,6 +101,24 @@ export function ScenarioDetailPage() {
                 Start a run
               </Link>
             </ShowFor>
+            {/* ---- builder (UX-F1) */}
+            {q.data.latest_version && (
+              <ShowFor roles={['controller']}>
+                <Link
+                  className="button"
+                  to={`/scenarios/${encodeURIComponent(key)}/edit?from=${q.data.latest_version.version}`}
+                >
+                  Edit (new version)
+                </Link>
+                <Link
+                  className="button"
+                  to={`/scenarios/${encodeURIComponent(key)}/clone?from=${q.data.latest_version.version}`}
+                >
+                  Clone
+                </Link>
+              </ShowFor>
+            )}
+            {/* ---- end builder (UX-F1) */}
             <ShowFor roles={['evaluator']}>
               <Link className="button" to={`/scenarios/${encodeURIComponent(key)}/compare`}>
                 Compare builds
@@ -99,7 +143,7 @@ export function ScenarioDetailPage() {
                 <dd>{q.data.latest_version.created_at}</dd>
               </dl>
             ) : (
-              <Empty>No published version.</Empty>
+              <Empty>No published version. Publish one before starting runs.</Empty>
             )}
           </section>
           <section aria-labelledby="versions-h">

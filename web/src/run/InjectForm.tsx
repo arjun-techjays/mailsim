@@ -1,11 +1,8 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
-import type { InjectRequest, InjectResult } from '../api/types';
-import { useApi } from '../auth/session';
 import { ErrorDisplay } from '../components/ErrorDisplay';
 import { splitList } from '../components/format';
 import type { SnapshotMailbox } from '../mailbox/snapshot';
-import { runKeys } from './keys';
+import { useInjectMutation } from './simActions';
 
 import { validateInject, type Errors, type Fields } from './injectValidation';
 
@@ -21,8 +18,6 @@ const LABELS: Record<keyof Fields, string> = {
 };
 
 export function InjectForm({ runId, mailboxes }: { runId: string; mailboxes: SnapshotMailbox[] }) {
-  const api = useApi();
-  const qc = useQueryClient();
   const [f, setF] = useState<Fields>({
     mailbox: mailboxes[0]?.id ?? '',
     from: '',
@@ -34,14 +29,7 @@ export function InjectForm({ runId, mailboxes }: { runId: string; mailboxes: Sna
     eventId: '',
   });
   const [errors, setErrors] = useState<Errors>({});
-  const [result, setResult] = useState<InjectResult | null>(null);
-
-  const mutation = useMutation({
-    mutationFn: (body: InjectRequest) => api.inject(runId, f.mailbox, body),
-    onMutate: () => setResult(null),
-    onSuccess: (r) => setResult(r),
-    onSettled: () => qc.invalidateQueries({ queryKey: runKeys.all(runId) }),
-  });
+  const { mutation, result } = useInjectMutation(runId);
 
   const set = (k: keyof Fields) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
 
@@ -51,6 +39,8 @@ export function InjectForm({ runId, mailboxes }: { runId: string; mailboxes: Sna
     setErrors(errs);
     if (Object.keys(errs).length > 0) return;
     mutation.mutate({
+      mailboxId: f.mailbox,
+      body: {
       event_id: f.eventId.trim() || null,
       message: {
         from: f.from.trim(),
@@ -61,6 +51,7 @@ export function InjectForm({ runId, mailboxes }: { runId: string; mailboxes: Sna
         html: f.html || null,
       },
       delivery: { mode: 'immediate' },
+      },
     });
   };
 

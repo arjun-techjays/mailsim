@@ -46,7 +46,8 @@ for (const role of ['controller', 'evaluator', 'agent'] as const) {
     const calls = trackApi(page);
     await new ConnectPage(page).connect(key as string);
     await expect(page.getByTestId('detected-role')).toHaveText(role);
-    expect(calls).toEqual(['GET /v1/me']); // no probing fallback needed
+    // no probing fallback needed (the header status pill may also ask /v1/system/status)
+    expect(calls.filter((c) => c !== 'GET /v1/system/status')).toEqual(['GET /v1/me']);
     await expectAccessible(page, `connect (${role})`);
   });
 }
@@ -108,14 +109,16 @@ test('controller: run detail, advance clock, trace and state mailbox inspector',
   await expect(rows).toHaveCount(1);
 
   await run.tab('Mailboxes');
-  const mailbox = page.getByLabel('Mailbox', { exact: true });
-  const finance = mailbox.locator('option', { hasText: /^finance@/ });
-  await mailbox.selectOption((await finance.getAttribute('value')) as string);
+  // mailbox browser (UX-F2): the agent's mailbox is listed with its badge
+  const nav = page.getByRole('navigation', { name: 'Mailboxes and folders' });
+  await expect(nav.getByRole('button', { name: /finance@example\.test/ })).toContainText('Agent under test');
+  await run.mailbox('Finance Manager');
   const first = run.messageList().locator('tbody tr').first();
-  await first.getByRole('button').click();
+  await first.getByRole('button').first().click();
   const view = page.getByTestId('message-view');
   await expect(view).toBeVisible();
-  await expect(view).toContainText('Message-ID');
+  await view.getByRole('button', { name: 'Show headers' }).click();
+  await expect(view.getByTestId('message-headers')).toContainText('Message-ID');
   await expect(view.getByTestId('thread')).toBeVisible();
   await expectAccessible(page, 'mailbox inspector (real)');
 });

@@ -32,7 +32,7 @@ test('production build works under the strict CSP and security headers', async (
   const run = new RunPage(page);
   await run.goto('run_demo');
   await run.tab('Mailboxes');
-  await run.openMessage('Re: Invoice 4471 - updated bank details');
+  await run.openMessage('Re: Invoice 4471 - updated bank details', 1); // the vendor's HTML mail (newest first: our reply is 0)
   await page.getByRole('button', { name: 'Show HTML (sandboxed)' }).click();
   const frame = page.frameLocator('[data-testid="email-html-frame"]');
   await expect(frame.getByText('new bank account')).toBeVisible();
@@ -63,4 +63,47 @@ test('the policy is enforced (inline script blocked) and the violation watcher s
   await page.addScriptTag({ content: 'window.__inlineRan = true;' }).catch(() => undefined);
   expect(await page.evaluate(() => (window as unknown as { __inlineRan?: boolean }).__inlineRan)).toBeUndefined();
   await expect.poll(() => violations.length).toBeGreaterThan(0);
+});
+
+// ---- connect & guide (UX-F3)
+test('home, connect-your-agent and dark mode work under the strict CSP without inline styles', async ({ page }) => {
+  const violations = watchCsp(page);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await new ConnectPage(page).connectAs(KEYS.controller, 'controller');
+  await page.goto('/');
+  await expect(page.getByTestId('step-4-state')).toHaveText('Done');
+  expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(18, 20, 23)');
+  expect(await page.locator('[style]').count()).toBe(0);
+
+  await expect(page.getByTestId('step-4').getByRole('link', { name: 'Connect your agent' })).toHaveAttribute('href', '/runs/run_empty/connect');
+  await page.goto('/runs/run_demo/connect'); // the RUNNING demo run (mk_agent belongs to it)
+  await page.getByLabel('Saved agent key').fill(KEYS.agent);
+  await page.getByRole('button', { name: 'Use this key' }).click();
+  await page.getByRole('radio', { name: /Microsoft Graph/ }).check();
+  await page.getByRole('button', { name: 'Test Microsoft Graph connection' }).click();
+  await expect(page.getByTestId('test-ok-graph')).toBeVisible();
+  await page.getByRole('button', { name: 'Mint a new agent key' }).click();
+  await expect(page.getByRole('alertdialog')).toBeVisible();
+  expect(await page.locator('[style]').count()).toBe(0);
+  await page.getByLabel('Theme').selectOption('light');
+  expect(await page.evaluate(() => getComputedStyle(document.body).backgroundColor)).toBe('rgb(255, 255, 255)');
+  await expectAccessible(page, 'connect (csp build)');
+  expect(violations).toEqual([]);
+});
+
+test('answer-key editor, mailbox browser and activity work under the strict CSP', async ({ page }) => {
+  const violations = watchCsp(page);
+  await new ConnectPage(page).connectAs(KEYS.evaluator, 'evaluator');
+  await page.goto('/scenarios/finance.invoice-bank-change/answer-key?from=2');
+  await expect(page.locator('.ak-card')).toHaveCount(3);
+  await expect(page.getByTestId('validation-status')).toContainText('No problems found');
+  await page.getByRole('button', { name: 'YAML' }).click();
+  await expect(page.getByLabel('Answer key as YAML')).toHaveValue(/answer_key:/);
+  const run = new RunPage(page);
+  await run.goto('run_demo');
+  await run.tab('Mailboxes');
+  await run.openMessage('Invoice 4471');
+  await run.tab('Activity');
+  await expect(page.getByTestId('activity-table')).toBeVisible();
+  expect(violations).toEqual([]);
 });

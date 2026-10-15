@@ -49,6 +49,9 @@ describe('small components', () => {
     const { container, rerender } = render(<JsonBlock value={{ a: 1 }} label="Payload" />);
     expect(screen.getByText('Payload')).toBeInTheDocument();
     expect(container.querySelector('pre')).toHaveTextContent('"a": 1');
+    const region = screen.getByRole('region', { name: 'Payload' });
+    expect(region).toBe(container.querySelector('pre'));
+    expect(region).toHaveAttribute('tabindex', '0');
     rerender(<JsonBlock value={{}} label="Payload" />);
     expect(screen.getByText('—')).toBeInTheDocument();
     rerender(<JsonBlock value={null} label="Payload" />);
@@ -82,5 +85,26 @@ describe('small components', () => {
     write.mockRejectedValueOnce(new Error('denied'));
     await user.click(screen.getByRole('button', { name: 'Copy key' }));
     expect(screen.getByRole('status')).toHaveTextContent('Copy failed');
+  });
+});
+
+describe('PageIntro', () => {
+  it('renders the explanation and next-step links', async () => {
+    const { render, screen } = await import('@testing-library/react');
+    const { MemoryRouter } = await import('react-router-dom');
+    const { PageIntro } = await import('./PageIntro');
+    render(
+      <MemoryRouter>
+        <PageIntro next={[{ to: '/runs', label: 'Start a run' }]}>Scenarios describe a world.</PageIntro>
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId('page-intro')).toHaveTextContent('Scenarios describe a world.');
+    expect(screen.getByRole('link', { name: 'Start a run' })).toHaveAttribute('href', '/runs');
+    render(
+      <MemoryRouter>
+        <PageIntro>Alone</PageIntro>
+      </MemoryRouter>,
+    );
+    expect(screen.getAllByTestId('page-intro')[1]?.querySelector('nav')).toBeNull();
   });
 });

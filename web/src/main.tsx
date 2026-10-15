@@ -2,6 +2,9 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import './styles.css';
+import { applyTheme, loadThemePref } from './theme/theme';
+
+applyTheme(loadThemePref()); // before first paint (no inline script: strict CSP)
 
 async function enableMocks(): Promise<void> {
   if (import.meta.env.MODE !== 'mock') return;

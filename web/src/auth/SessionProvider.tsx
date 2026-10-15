@@ -7,6 +7,7 @@ import { detectLocalNoAuth } from './detectRole';
 import { takeLaunchToken } from './launchToken';
 import { SessionContext, type SessionValue } from './session';
 import { loadSession, saveSession, type Session } from './storage';
+import { clearAllDrafts } from '../answerkey/draftStorage';
 
 const is401 = (e: unknown) => isApiError(e) && e.status === 401;
 
@@ -38,6 +39,7 @@ export function SessionProvider({ children, initial, probe = initial === undefin
       if (mode === 'operator' && launchToken) {
         const operator: Session = { baseUrl, apiKey: '', role: 'operator', localToken: launchToken };
         queryClient.clear();
+        clearAllDrafts();
         saveSession(operator);
         setSession(operator);
       }
@@ -66,6 +68,7 @@ export function SessionProvider({ children, initial, probe = initial === undefin
   const connect = useCallback(
     (next: Session) => {
       queryClient.clear(); // never show data fetched with another key/role
+      clearAllDrafts(); // answer-key drafts never outlive the session that wrote them
       saveSession(next);
       setRejected(false);
       setProbing(false);
@@ -76,6 +79,7 @@ export function SessionProvider({ children, initial, probe = initial === undefin
   );
   const disconnect = useCallback(() => {
     queryClient.clear();
+    clearAllDrafts();
     saveSession(null);
     setRejected(false);
     setSession(null);

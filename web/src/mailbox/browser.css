@@ -1,0 +1,246 @@
+/* Mailbox browser, run toolbar and activity panel (UX-F2). Colours only via the shared CSS
+   variables from styles.css, so light and dark themes follow automatically. */
+.mb-browser {
+  display: grid;
+  grid-template-columns: minmax(13rem, 16rem) minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .mb-browser {
+    grid-template-columns: minmax(13rem, 16rem) minmax(0, 1fr);
+  }
+  .mb-pane {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 720px) {
+  .mb-browser {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.mb-nav h3,
+.mb-messages h3 {
+  margin: 0 0 8px;
+  font-size: 1.05em;
+}
+.mb-mailboxes,
+.mb-folders {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.mb-mailbox {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px;
+  margin-bottom: 8px;
+  background: var(--bg);
+}
+.mb-mailbox.mb-current {
+  border-width: 2px;
+  border-color: var(--focus);
+}
+.mb-mailbox-button {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: none;
+  background: none;
+  padding: 4px;
+}
+.mb-mailbox-button[aria-pressed='true'] {
+  background: var(--panel);
+  color: var(--fg);
+}
+.mb-mailbox-name {
+  font-weight: 700;
+}
+.mb-mailbox-email,
+.mb-counts {
+  color: var(--muted);
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+.mb-agent-badge {
+  align-self: flex-start;
+  background: var(--ok-bg);
+  color: var(--ok-fg);
+}
+.mb-folders {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mb-folders button {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  border: none;
+  background: none;
+  padding: 4px 8px;
+  min-height: 28px;
+  border-radius: 4px;
+}
+.mb-folders button[aria-pressed='true'] {
+  background: var(--fg);
+  color: var(--bg);
+}
+.mb-count {
+  font-variant-numeric: tabular-nums;
+}
+.mb-who {
+  margin-top: 0;
+}
+.mb-list {
+  display: table;
+}
+.mb-list td,
+.mb-list th {
+  padding: 6px;
+}
+.mb-unread th button,
+.mb-unread td {
+  font-weight: 700;
+}
+.mb-date {
+  white-space: nowrap;
+}
+.mb-status {
+  white-space: nowrap;
+  width: 3.5rem;
+}
+.mb-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--link);
+  margin-right: 4px;
+}
+.mb-icon {
+  margin-right: 4px;
+}
+.mb-pane {
+  border-left: 1px solid var(--border);
+  padding-left: 16px;
+  min-width: 0;
+  position: sticky;
+  top: 0;
+  max-height: 100vh;
+  overflow-y: auto;
+}
+@media (max-width: 1100px) {
+  .mb-pane {
+    position: static;
+    max-height: none;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    padding: 12px 0 0;
+  }
+}
+.mb-reading h3 {
+  margin-top: 0;
+}
+.mb-headers {
+  margin: 8px 0;
+  padding: 8px;
+  background: var(--panel);
+  border-radius: 4px;
+}
+.mb-headers h5 {
+  margin: 8px 0 4px;
+}
+.mb-attachments ul {
+  padding-left: 1.1em;
+}
+.mb-att-name {
+  font-weight: 600;
+}
+.mb-thread ol {
+  padding-left: 1.4em;
+}
+.mb-thread-item {
+  margin-bottom: 8px;
+}
+.mb-thread-current {
+  color: var(--muted);
+}
+.mb-snippet {
+  margin: 2px 0 0;
+}
+.mb-placeholder {
+  padding: 16px;
+  background: var(--panel);
+  border-radius: 4px;
+}
+.mb-compose fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* run toolbar */
+.rt-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: flex-end;
+  padding: 8px 12px;
+  margin: 8px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+}
+.rt-toolbar h2 {
+  font-size: 1em;
+  margin: 0;
+  flex-basis: 100%;
+}
+.rt-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.rt-group input {
+  min-width: 0;
+  width: 7rem;
+}
+.rt-result {
+  flex-basis: 100%;
+}
+.rt-result ul {
+  margin: 4px 0;
+  padding-left: 1.1em;
+}
+
+/* activity */
+.act-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+}
+.act-table {
+  display: table;
+}
+.act-iface {
+  white-space: nowrap;
+}
+.act-summary {
+  overflow-wrap: anywhere;
+}
+.badge-ok {
+  background: var(--ok-bg);
+  color: var(--ok-fg);
+}
+.badge-denied,
+.badge-error-code {
+  background: var(--error-bg);
+  color: var(--error-fg);
+}

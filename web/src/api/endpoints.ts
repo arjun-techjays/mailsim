@@ -1,24 +1,51 @@
 import { apiRequest, apiText, type ApiConfig, type RequestOptions } from './client';
 import type {
+  // connect & status (UX-F3)
+  AgentCredential,
   ActionOut,
-  MeOut,
-  ReportFormat,
-  RunPage,
+  ActivityPage,
+  AnswerKeyDocument,
   AnswerKeyOut,
+  AnswerKeyValidation,
   ArtifactOut,
+  AuthoringMeta,
   BuildComparison,
   ClockResult,
+  ComposedFixture,
+  ComposeMessage,
+  ConnectionTestRequest,
+  ConnectionTestResult,
+  DraftValidation,
+  EmlSummary,
   EvaluationReport,
   EvaluationRequest,
   EventPage,
   InjectRequest,
   InjectResult,
+  MailboxOut,
+  MeOut,
+  MessagePage,
+  ParsedDocument,
+  RenderedYaml,
   ReplayOut,
+  ReportFormat,
+  RunConnection,
   RunCreate,
   RunCreated,
   RunOut,
+  RunPage,
+  ScenarioCreate,
+  ScenarioDraft,
   ScenarioOut,
+  ScenarioVersionDocument,
+  ScenarioVersionOut,
+  SystemStatus,
 } from './types';
+// ---- builder (UX-F1)
+
+// ---- end builder (UX-F1)
+// ---- answer keys & mailbox browser (UX-F2)
+
 
 const seg = encodeURIComponent;
 
@@ -42,7 +69,7 @@ export function createApi(cfg: ApiConfig) {
     /** Caller identity (older servers without it answer 404/501; callers fall back). */
     me: () => get<MeOut>('/v1/me'),
     /** Runs of the caller's project, newest first. */
-    listRuns: (cursor: string | null, filters: { scenario_key?: string; status?: string } = {}) =>
+    listRuns: (cursor: string | null, filters: { scenario_key?: string; status?: string; page_size?: number } = {}) =>
       get<RunPage>('/v1/runs', { cursor, ...filters }),
     /** Evaluation report export; returned as text for download. */
     report: (runId: string, evaluationId: string, format: ReportFormat) =>
@@ -86,6 +113,64 @@ export function createApi(cfg: ApiConfig) {
     listEvaluations: (id: string) => get<EvaluationReport[]>(`${run(id)}/evaluations`),
     evaluate: (id: string, body: EvaluationRequest) =>
       post<EvaluationReport>(`${run(id)}/evaluations`, body, true),
+
+    // ---- connect & status (UX-F3)
+    /** Server mode, LLM provider, served interfaces and IMAP/SMTP listener status. */
+    systemStatus: () => get<SystemStatus>('/v1/system/status'),
+    /** How an agent connects to a run (endpoints, mailbox, key ids; never secrets). */
+    runConnection: (id: string) => get<RunConnection>(`${run(id)}/connection`),
+    /** Real call through one interface with the given agent key, made by the server. */
+    testConnection: (id: string, body: ConnectionTestRequest) =>
+      post<ConnectionTestResult>(`${run(id)}/connection-tests`, body),
+    /** Mints a new agent key (shown once); the server revokes the run's earlier agent keys. */
+    mintAgentKey: (id: string) => post<AgentCredential>(`${run(id)}/agent-credentials`),
+    revokeKey: (keyId: string) => apiRequest<void>(cfg, 'DELETE', `/v1/keys/${seg(keyId)}`),
+    // ---- builder (UX-F1): scenario authoring (namespaced to avoid merge collisions)
+    builder: {
+      meta: () => get<AuthoringMeta>('/v1/meta/authoring'),
+      validate: (body: ScenarioDraft, signal?: AbortSignal) =>
+        apiRequest<DraftValidation>(cfg, 'POST', '/v1/scenario-drafts/validate', { body, signal }),
+      composeEml: (body: ComposeMessage) => post<ComposedFixture>('/v1/scenario-drafts/compose-eml', body),
+      inspectEml: (contentB64: string) => post<EmlSummary>('/v1/scenario-drafts/inspect-eml', { content_b64: contentB64 }),
+      yamlToJson: (source: string) => post<ParsedDocument>('/v1/tools/yaml-to-json', { source }),
+      jsonToYaml: (document: Record<string, unknown>) => post<RenderedYaml>('/v1/tools/json-to-yaml', { document }),
+      versionDocument: (key: string, version: number) =>
+        get<ScenarioVersionDocument>(`/v1/scenarios/${seg(key)}/versions/${version}/document`),
+      publish: (body: ScenarioCreate) => post<ScenarioVersionOut>('/v1/scenarios', body, true),
+    },
+    // ---- end builder (UX-F1)
+    // ---- answer keys & mailbox browser (UX-F2)
+    authoringMeta: () => get<AuthoringMeta>('/v1/meta/authoring'),
+    /** Controller only: the published (agent-facing) scenario document, for pickers. */
+    scenarioVersionDocument: (key: string, version: number) =>
+      get<ScenarioVersionDocument>(`/v1/scenarios/${seg(key)}/versions/${version}/document`),
+    /** Evaluator only: the full answer key (never call with a controller-only session). */
+    answerKeyDocument: (key: string, version: number) =>
+      get<AnswerKeyDocument>(`/v1/scenarios/${seg(key)}/answer-keys/${version}/document`),
+    validateAnswerKey: (
+      key: string,
+      body: { document?: Record<string, unknown>; source?: string },
+      signal?: AbortSignal,
+    ) => apiRequest<AnswerKeyValidation>(cfg, 'POST', `/v1/scenarios/${seg(key)}/answer-keys/validate`, { body, signal }),
+    createAnswerKey: (key: string, body: { document?: Record<string, unknown>; source?: string }) =>
+      post<AnswerKeyOut>(`/v1/scenarios/${seg(key)}/answer-keys`, body, true),
+    jsonToYaml: (document: Record<string, unknown>) => post<RenderedYaml>('/v1/tools/json-to-yaml', { document }),
+    yamlToJson: (source: string) => post<ParsedDocument>('/v1/tools/yaml-to-json', { source }),
+    runMailboxes: (id: string) => get<MailboxOut[]>(`${run(id)}/mailboxes`),
+    inspectMessages: (
+      id: string,
+      mailboxId: string,
+      params: { folder?: string | null; cursor?: string | null; pageSize?: number; order?: 'asc' | 'desc' },
+    ) =>
+      get<MessagePage>(`${run(id)}/mailboxes/${seg(mailboxId)}/messages`, {
+        folder: params.folder,
+        cursor: params.cursor,
+        page_size: params.pageSize,
+        order: params.order,
+      }),
+    activity: (id: string, afterId: number, limit = 100) =>
+      get<ActivityPage>(`${run(id)}/activity`, { after_id: afterId, limit }),
+    // ---- end answer keys & mailbox browser (UX-F2)
   };
 }
 
