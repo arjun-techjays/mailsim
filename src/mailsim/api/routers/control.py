@@ -18,7 +18,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
 from mailsim.api import schemas as s
-from mailsim.api.auth import issue_key, project_keys
+from mailsim.api.auth import issue_key, project_keys, revoke_agent_keys, revoke_scoped_key
 from mailsim.api.deps import Controller, Evaluator, Inspector, not_implemented
 from mailsim.api.errors import ErrorEnvelope
 from mailsim.api.idempotency import idempotent
@@ -27,6 +27,7 @@ from mailsim.api.routers._common import blobs, controller, inspector, run_out, s
 from mailsim.auth.principal import Principal, Role
 from mailsim.domain.clock import iso
 from mailsim.domain.errors import InvalidRequest, NotFound
+from mailsim.domain.states import TERMINAL
 from mailsim.engine.facades import EvaluatorView
 from mailsim.evaluation.contract import BuildComparison, EvaluationReport
 from mailsim.scenario import answer_keys as keys_service
@@ -40,6 +41,7 @@ from mailsim.store import repos
 router = APIRouter(prefix="/v1", tags=["control"], responses={"default": {"model": ErrorEnvelope}})
 Idem = Annotated[str | None, Header(alias="Idempotency-Key", max_length=200)]
 MAX_FIXTURES = 200
+MAX_FIXTURE_TOTAL_BYTES = 25 * 1024 * 1024
 REPORT_TYPES = {"json": "application/json", "junit": "application/xml",
                 "markdown": "text/markdown; charset=utf-8"}  # fmt: skip
 
@@ -77,9 +79,10 @@ def _project_out(row: m.Project) -> s.ProjectOut:
 def create_project(
     request: Request, body: s.ProjectCreate, principal: Controller
 ) -> s.ProjectCreated:
-    """Create a project in the caller's tenant. The response carries the new project's first
-    controller and evaluator keys (shown once). The very first tenant/project/keys come from
-    `python -m mailsim.api.server bootstrap`."""
+    """Create a project in the caller's TENANT (tenant-wide: any controller key of the tenant
+    may do this). The response carries the new project's first controller and evaluator keys
+    (shown once); the caller's own key stays bound to its own project. The very first
+    tenant/project/keys come from `python -m mailsim.serve bootstrap`."""
     with sessions(request).begin() as session:
         row = repos.create_project(session, principal.tenant_id, body.name)
         issued = project_keys(session, principal.tenant_id, row.id)
@@ -91,10 +94,21 @@ def create_project(
 
 @router.get("/projects/{project_id}", response_model=s.ProjectOut)
 def get_project(request: Request, project_id: str, principal: Inspector) -> s.ProjectOut:
-    """Projects in the caller's tenant only (any other id answers NOT_FOUND)."""
+    """The caller's own project only (any other id answers NOT_FOUND)."""
+    if project_id != principal.project_id:
+        raise NotFound(f"project {project_id} not found")
     with sessions(request)() as session:
-        row = repos.get_project(session, repos.Scope(principal.tenant_id, project_id))
-        return _project_out(row)
+        return _project_out(repos.get_project(session, scope(principal)))
+
+
+@router.delete("/keys/{key_id}", status_code=204, response_class=Response)
+def revoke_api_key(request: Request, key_id: str, principal: Controller) -> Response:
+    """Revoke any key of the caller's project (including agent keys and the caller's own).
+    Keys of other projects or tenants answer NOT_FOUND."""
+    with sessions(request).begin() as session:
+        if not revoke_scoped_key(session, principal.tenant_id, principal.project_id, key_id):
+            raise NotFound(f"key {key_id} not found")
+    return Response(status_code=204)
 
 
 # ---- scenarios -------------------------------------------------------------------------
@@ -111,19 +125,33 @@ def _materialize(body: s.ScenarioCreate, directory: Path) -> Path:
         data = body.source.encode()
     if len(body.fixtures) > MAX_FIXTURES:
         raise InvalidRequest(f"at most {MAX_FIXTURES} fixtures per request")
+    decoded: dict[str, bytes] = {}
+    total = 0
     for rel, encoded in body.fixtures.items():
-        path = validator.resolve_fixture(directory, rel)  # rejects absolute paths, traversal
-        if path in (directory / "scenario.json", directory / "scenario.yaml"):
+        if any(part in ("", ".", "..") for part in rel.split("/")):
+            raise InvalidRequest(f"fixture path must not contain empty, '.' or '..' parts: {rel!r}")
+        if rel.split("/")[0] in ("scenario.json", "scenario.yaml"):
             raise InvalidRequest(f"fixture path collides with the scenario document: {rel!r}")
+        if len(encoded) > s.MAX_FIXTURE_B64_CHARS:  # checked before decoding
+            raise InvalidRequest(f"fixture too large: {rel}")
         try:
             content = base64.b64decode(encoded, validate=True)
         except (binascii.Error, ValueError):
             raise InvalidRequest(f"fixture {rel!r} is not valid base64") from None
         if len(content) > validator.MAX_FIXTURE_BYTES:
             raise InvalidRequest(f"fixture too large: {rel}")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(content)
+        total += len(content)
+        if total > MAX_FIXTURE_TOTAL_BYTES:
+            raise InvalidRequest(f"fixtures exceed {MAX_FIXTURE_TOTAL_BYTES} bytes in total")
+        decoded[rel] = content
     target.write_bytes(data)
+    for rel, content in decoded.items():
+        path = validator.resolve_fixture(directory, rel)  # rejects absolute paths, traversal
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+        except OSError:  # e.g. both "a" and "a/b": one path is a file, the other needs a dir
+            raise InvalidRequest(f"fixture paths overlap: {rel!r}") from None
     return target
 
 
@@ -298,8 +326,14 @@ def _scenario_version(
     return row
 
 
+def _revoke_agent_keys(request: Request, principal: Principal, run_id: str) -> None:
+    with sessions(request).begin() as session:
+        revoke_agent_keys(session, principal.tenant_id, principal.project_id, run_id)
+
+
 def _agent_credential(request: Request, principal: Principal, run_id: str) -> s.AgentCredential:
-    """Issue an agent key bound to the run and the scenario's agent mailbox."""
+    """Issue an agent key bound to the run and the scenario's agent mailbox, revoking every
+    earlier agent key of the run (one live agent credential per run)."""
     ctl = controller(request, principal)
     with sessions(request)() as session:
         run = repos.get_run(session, scope(principal), run_id)
@@ -313,6 +347,8 @@ def _agent_credential(request: Request, principal: Principal, run_id: str) -> s.
         key = issue_key(session, tenant_id=principal.tenant_id, project_id=principal.project_id,
                         role=Role.AGENT, run_id=run_id, mailbox_id=mailbox_id,
                         label=f"agent for {run_id}")  # fmt: skip
+        revoke_agent_keys(session, principal.tenant_id, principal.project_id, run_id,
+                          keep=key.key_id)  # fmt: skip
     return s.AgentCredential(api_key=key.api_key, mailbox_id=mailbox_id,
                              mailbox_address=address, run_id=run_id)  # fmt: skip
 
@@ -347,7 +383,8 @@ def create_run(
 def create_agent_credential(
     request: Request, run_id: str, principal: Controller
 ) -> s.AgentCredential:
-    """Issue an additional agent key for a run (e.g. after a lost or redacted response)."""
+    """Issue a new agent key for a run (e.g. after a lost or redacted response). Earlier agent
+    keys of the run are revoked."""
     return _agent_credential(request, principal, run_id)
 
 
@@ -368,6 +405,7 @@ def cancel_run(
 ) -> Response:
     def cancel() -> s.RunOut:
         controller(request, principal).cancel_run(run_id)
+        _revoke_agent_keys(request, principal, run_id)  # a cancelled run has no agent
         return run_out(request, principal, run_id)
 
     return idempotent(request, principal, idempotency_key, {}, 200, cancel)
@@ -480,9 +518,14 @@ def evaluate_run(
     service = _evaluations(request)
 
     def evaluate() -> EvaluationReport:
-        return service.evaluate(scope(principal), run_id,
-                                answer_key_version=body.answer_key_version, checks=body.checks,
-                                complete_run=body.complete_run)  # fmt: skip
+        report = service.evaluate(scope(principal), run_id,
+                                  answer_key_version=body.answer_key_version, checks=body.checks,
+                                  complete_run=body.complete_run)  # fmt: skip
+        with sessions(request)() as session:
+            status = repos.get_run(session, scope(principal), run_id).status
+        if status in TERMINAL:  # completed (PASSED/FAILED) through this call: agent is done
+            _revoke_agent_keys(request, principal, run_id)
+        return report
 
     return idempotent(request, principal, idempotency_key, _payload(body), 201, evaluate)
 

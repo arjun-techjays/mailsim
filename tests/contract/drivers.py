@@ -148,32 +148,29 @@ class RestError(Exception):
 
 class RestDriver(NeutralDriver):
     """`/v1/mailboxes/{id}/...` over HTTP (FastAPI TestClient), authenticated with an agent
-    key issued for the scenario's agent mailbox in this run, exactly as run creation does."""
+    key bound to this run and to `mailbox.mailbox_id`. For a mailbox that is not the
+    scenario's agent mailbox, the engine's agent guard then answers PERMISSION_DENIED, which is
+    what the isolation contract expects."""
 
     name: ClassVar[str] = "rest"
     capabilities: ClassVar[frozenset[str]] = ALL_CAPABILITIES
 
     def __init__(self, mailbox: AgentMailbox) -> None:
         from fastapi.testclient import TestClient
-        from sqlalchemy import select
 
         from mailsim.api.app import create_app
-        from mailsim.api.auth import issue_key
-        from mailsim.store import models as m
+        from mailsim.api.auth import issue_key, verify_key
 
-        engine = mailbox._e  # test harness: reuse the world's engine, sessions and blobs
+        # The facade exposes no public accessor for its engine/scope; the harness must share
+        # them with the app so both drivers act on the same canonical state.
+        engine, scope = mailbox._e, mailbox._scope
         sf = engine._sf
-        scope = mailbox._scope
         with sf.begin() as s:
-            run = s.get(m.Run, mailbox.run_id)
-            agent_mailbox = s.execute(
-                select(m.Mailbox.id).where(
-                    m.Mailbox.run_id == run.id,
-                    m.Mailbox.owner_id == run.config["agent"]["mailbox_owner"],
-                )
-            ).scalar_one()
             key = issue_key(s, tenant_id=scope.tenant_id, project_id=scope.project_id,
-                            role="agent", run_id=run.id, mailbox_id=agent_mailbox).api_key  # fmt: skip
+                            role="agent", run_id=mailbox.run_id,
+                            mailbox_id=mailbox.mailbox_id).api_key  # fmt: skip
+            principal = verify_key(s, key)
+        assert (principal.run_id, principal.mailbox_id) == (mailbox.run_id, mailbox.mailbox_id)
         app = create_app(engine=engine, session_factory=sf, blobs=engine.blobs)
         self.http = TestClient(app, raise_server_exceptions=False)
         self.http.headers["Authorization"] = f"Bearer {key}"

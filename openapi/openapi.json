@@ -177,6 +177,7 @@
           "source": {
             "anyOf": [
               {
+                "maxLength": 2097152,
                 "type": "string"
               },
               {
@@ -1336,6 +1337,7 @@
           "raw_base64": {
             "anyOf": [
               {
+                "maxLength": 34952538,
                 "type": "string"
               },
               {
@@ -1801,6 +1803,7 @@
           },
           "fixtures": {
             "additionalProperties": {
+              "maxLength": 6990511,
               "type": "string"
             },
             "description": "relative path -> base64 bytes",
@@ -1810,6 +1813,7 @@
           "source": {
             "anyOf": [
               {
+                "maxLength": 2097152,
                 "type": "string"
               },
               {
@@ -2167,6 +2171,47 @@
         "summary": "Health",
         "tags": [
           "meta"
+        ]
+      }
+    },
+    "/v1/keys/{key_id}": {
+      "delete": {
+        "description": "Revoke any key of the caller's project (including agent keys and the caller's own).\nKeys of other projects or tenants answer NOT_FOUND.",
+        "operationId": "revoke_api_key_v1_keys__key_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "key_id",
+            "required": true,
+            "schema": {
+              "title": "Key Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Revoke Api Key",
+        "tags": [
+          "control"
         ]
       }
     },
@@ -2560,7 +2605,7 @@
         ]
       },
       "patch": {
-        "description": "Move and/or change labels and flags. Each kind of change is one agent write (budget).",
+        "description": "Move and/or change labels and flags.\n\nThe folder is resolved (404 if unknown) before anything is written. The changes are then\napplied as SEPARATE agent writes, in this order: move, labels, flags. Each counts against\nthe write budget, and if a later step fails (e.g. an unknown flag, or the budget runs out)\nthe earlier steps stay applied: the error response means \"possibly partially applied\";\nGET the message to see its state.",
         "operationId": "patch_message_v1_mailboxes__mailbox_id__messages__message_id__patch",
         "parameters": [
           {
@@ -2753,7 +2798,7 @@
     },
     "/v1/projects": {
       "post": {
-        "description": "Create a project in the caller's tenant. The response carries the new project's first\ncontroller and evaluator keys (shown once). The very first tenant/project/keys come from\n`python -m mailsim.api.server bootstrap`.",
+        "description": "Create a project in the caller's TENANT (tenant-wide: any controller key of the tenant\nmay do this). The response carries the new project's first controller and evaluator keys\n(shown once); the caller's own key stays bound to its own project. The very first\ntenant/project/keys come from `python -m mailsim.serve bootstrap`.",
         "operationId": "create_project_v1_projects_post",
         "requestBody": {
           "content": {
@@ -2800,7 +2845,7 @@
     },
     "/v1/projects/{project_id}": {
       "get": {
-        "description": "Projects in the caller's tenant only (any other id answers NOT_FOUND).",
+        "description": "The caller's own project only (any other id answers NOT_FOUND).",
         "operationId": "get_project_v1_projects__project_id__get",
         "parameters": [
           {
@@ -2946,7 +2991,7 @@
     },
     "/v1/runs/{run_id}/agent-credentials": {
       "post": {
-        "description": "Issue an additional agent key for a run (e.g. after a lost or redacted response).",
+        "description": "Issue a new agent key for a run (e.g. after a lost or redacted response). Earlier agent\nkeys of the run are revoked.",
         "operationId": "create_agent_credential_v1_runs__run_id__agent_credentials_post",
         "parameters": [
           {

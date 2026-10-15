@@ -1,7 +1,8 @@
 """Sandbox API keys: issue and verify (spec 5.6, 8.4, 10 "credential isolation").
 
-Format: ``msk_<prefix>_<secret>``. ``prefix`` (12 hex chars) is stored in clear to find the
-row; only the sha256 of the FULL key is stored, and it is compared in constant time. Keys are
+Format: ``msk_<prefix>_<secret>``. ``prefix`` (12 hex chars) is stored in clear to identify
+the key in listings; only the sha256 of the FULL key is stored. Lookup is by that hash
+(unique index) and the hash is re-compared in constant time. Keys are
 role-scoped: controller/evaluator keys bind a tenant + project, agent keys additionally bind
 one run + one mailbox. A key is shown exactly once, when it is issued.
 
@@ -18,7 +19,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from mailsim.auth.principal import Principal, Role
@@ -89,12 +90,15 @@ def verify_key(session: Session, raw: str, *, now: datetime | None = None) -> Pr
     if match is None:
         raise InvalidCredential("malformed API key")
     digest = hash_key(raw)
-    rows = session.execute(select(m.ApiKey).where(m.ApiKey.prefix == match.group(1))).scalars()
-    found = None
-    for row in rows:  # constant-time comparison of the full-key hash
-        if hmac.compare_digest(row.key_hash, digest):
-            found = row
-    if found is None:
+    # unique-index lookup by the full-key hash; compare_digest + prefix are defence in depth
+    found = session.execute(
+        select(m.ApiKey).where(m.ApiKey.key_hash == digest)
+    ).scalar_one_or_none()
+    if (
+        found is None
+        or not hmac.compare_digest(found.key_hash, digest)
+        or found.prefix != match.group(1)
+    ):
         raise InvalidCredential("unknown API key")
     moment = now or datetime.now(UTC)
     if found.revoked_at is not None and found.revoked_at <= moment:
@@ -110,6 +114,35 @@ def revoke_key(session: Session, key_id: str, *, now: datetime | None = None) ->
     if row is not None and row.revoked_at is None:
         row.revoked_at = now or datetime.now(UTC)
         session.flush()
+
+
+def revoke_scoped_key(session: Session, tenant_id: str, project_id: str, key_id: str) -> bool:
+    """Revoke a key of this tenant + project. False when no such key exists in that scope."""
+    row = session.get(m.ApiKey, key_id)
+    if row is None or (row.tenant_id, row.project_id) != (tenant_id, project_id):
+        return False
+    revoke_key(session, key_id)
+    return True
+
+
+def revoke_agent_keys(
+    session: Session, tenant_id: str, project_id: str, run_id: str, *, keep: str | None = None
+) -> int:
+    """Revoke every live agent key of a run (except `keep`). Returns how many were revoked."""
+    moment = datetime.now(UTC)
+    result = session.execute(
+        update(m.ApiKey)
+        .where(
+            m.ApiKey.tenant_id == tenant_id,
+            m.ApiKey.project_id == project_id,
+            m.ApiKey.run_id == run_id,
+            m.ApiKey.role == str(Role.AGENT),
+            m.ApiKey.revoked_at.is_(None),
+            m.ApiKey.id != (keep or ""),
+        )  # fmt: skip
+        .values(revoked_at=moment)
+    )
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 def project_keys(session: Session, tenant_id: str, project_id: str) -> list[IssuedKey]:

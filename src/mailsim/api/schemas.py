@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import math
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -12,6 +13,13 @@ from mailsim.domain.models import CanonicalMessage
 
 class _M(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+# Request size caps (WS-A, additive): base64 of 5 MB per fixture / 25 MB raw MIME, 2 MB text.
+MAX_SOURCE_CHARS = 2 * 1024 * 1024
+MAX_FIXTURE_B64_CHARS = math.ceil(5 * 1024 * 1024 * 4 / 3) + 4
+MAX_RAW_B64_CHARS = math.ceil(25 * 1024 * 1024 * 4 / 3) + 4
+FixtureB64 = Annotated[str, Field(max_length=MAX_FIXTURE_B64_CHARS)]
 
 
 # ---- control plane ---------------------------------------------------------------------
@@ -29,9 +37,11 @@ class ProjectOut(_M):
 class ScenarioCreate(_M):
     """Scenario document (YAML text or parsed JSON) plus fixtures (path -> base64)."""
 
-    source: str | None = Field(default=None, description="YAML or JSON text")
+    source: str | None = Field(
+        default=None, description="YAML or JSON text", max_length=MAX_SOURCE_CHARS
+    )
     document: dict[str, Any] | None = None
-    fixtures: dict[str, str] = Field(
+    fixtures: dict[str, FixtureB64] = Field(
         default_factory=dict, description="relative path -> base64 bytes"
     )
 
@@ -63,7 +73,7 @@ class ValidationResult(_M):
 
 
 class AnswerKeyCreate(_M):
-    source: str | None = None
+    source: str | None = Field(default=None, max_length=MAX_SOURCE_CHARS)
     document: dict[str, Any] | None = None
 
 
@@ -182,7 +192,7 @@ class InjectMessage(_M):
 class InjectRequest(_M):
     event_id: str | None = None
     message: InjectMessage | None = None
-    raw_base64: str | None = None
+    raw_base64: str | None = Field(default=None, max_length=MAX_RAW_B64_CHARS)
     delivery: dict[str, Any] = Field(default_factory=lambda: {"mode": "immediate"})
 
 

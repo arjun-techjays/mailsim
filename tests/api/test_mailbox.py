@@ -177,8 +177,10 @@ def test_operation_policy_budget_and_run_state(api, tmp_path):
     assert body["details"] == {"limit": 2}
     for _ in range(3):  # reads stay free after the write budget is spent
         items(api, f"/v1/mailboxes/{mbx}/messages", key)
-    api.call("POST", f"/v1/runs/{rid}/cancel", expect=200)
+    api.call("POST", f"/v1/runs/{rid}/reset", expect=200)  # READY again: not active
     err(api.call("GET", f"/v1/mailboxes/{mbx}/messages", key=key), 409, "RUN_NOT_ACTIVE")
+    api.call("POST", f"/v1/runs/{rid}/cancel", expect=200)  # cancel revokes the agent key
+    err(api.call("GET", f"/v1/mailboxes/{mbx}/messages", key=key), 401, "UNAUTHENTICATED")
 
 
 def test_agent_never_sees_answer_key_text(api, agent):

@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import importlib.machinery
 import json
+import os
+import stat
 import sys
 import types
 
 import pytest
 from fastapi.testclient import TestClient
 
-from mailsim.api import auth, cli_serve, server
+from mailsim import serve as server
+from mailsim.api import auth
 from mailsim.api.app import create_app
 from mailsim.api.routers import _common
 from mailsim.auth.principal import Principal, Role
@@ -28,10 +32,8 @@ def env(db_engine, tmp_path, monkeypatch):
 
 def test_bootstrap_cli_then_serve_the_app_from_env(env, capsys, monkeypatch):
     migrated = []
-    monkeypatch.setattr(cli_serve, "run_migrations", lambda: migrated.append(True))
-    assert (
-        cli_serve.main(["bootstrap", "--tenant", "acme", "--project", "agents", "--migrate"]) == 0
-    )
+    monkeypatch.setattr(server, "run_migrations", lambda: migrated.append(True))
+    assert server.main(["bootstrap", "--tenant", "acme", "--project", "agents", "--migrate"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert migrated == [True] and out["controller_key"].startswith("msk_")
     app = server.app_from_env(env)
@@ -43,14 +45,31 @@ def test_bootstrap_cli_then_serve_the_app_from_env(env, capsys, monkeypatch):
     app.state.db_engine.dispose()
 
 
+def test_bootstrap_output_file_is_private(env, capsys, tmp_path):
+    target = tmp_path / "keys.json"
+    target.write_text("old")
+    os.chmod(target, 0o644)
+    assert server.main(["bootstrap", "--output", str(target)]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["keys_written_to"] == str(target) and "msk_" not in json.dumps(printed)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert json.loads(target.read_text())["controller_key"].startswith("msk_")
+
+
+def test_build_state_reads_body_limit(env):
+    state = server.build_state({**env, "MAILSIM_MAX_BODY_BYTES": "123"})
+    assert state["max_body_bytes"] == 123
+    state["db_engine"].dispose()
+
+
 def test_bootstrap_cli_reports_errors(env, capsys):
-    assert cli_serve.main(["bootstrap", "--tenant", " "]) == 2
+    assert server.main(["bootstrap", "--tenant", " "]) == 2
     assert json.loads(capsys.readouterr().err)["error"]["code"] == "INVALID_REQUEST"
 
 
 def test_serve_command_uses_the_injected_runner():
     seen = []
-    assert cli_serve.main(["serve", "--port", "9999"], serve=lambda h, p: seen.append((h, p))) == 0
+    assert server.main(["serve", "--port", "9999"], serve=lambda h, p: seen.append((h, p))) == 0
     assert seen == [("127.0.0.1", 9999)]
 
 
@@ -67,13 +86,15 @@ def test_evaluation_service_wiring(monkeypatch):
             raise AssertionError("never called")
 
     module = types.ModuleType("fake_eval")
+    module.__spec__ = importlib.machinery.ModuleSpec("fake_eval", None)
     module.EvaluationService = Service
     monkeypatch.setitem(sys.modules, "fake_eval", module)
     monkeypatch.setattr(server, "EVALUATION_SERVICE", "fake_eval")
     built = server.evaluation_service(session_factory="sf", blobs="b", engine="e")
     assert built.args == ("sf", "b")
-    module.EvaluationService = Broken
-    assert server.evaluation_service(session_factory="sf") is None
+    module.EvaluationService = Broken  # present but not constructible: fail fast
+    with pytest.raises(TypeError):
+        server.evaluation_service(session_factory="sf")
 
 
 def test_build_state_defaults(monkeypatch, tmp_path, env):

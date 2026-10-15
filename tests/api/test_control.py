@@ -36,8 +36,8 @@ def test_project_create_returns_working_keys_and_get_is_tenant_scoped(api, other
     # the new keys work for the new project, and the scenario list there is empty
     api.call("GET", f"/v1/projects/{created['id']}", key=roles["controller"], expect=200)
     assert api.call("GET", "/v1/scenarios", key=roles["evaluator"], expect=200).json() == []
-    # same tenant may read it; another tenant gets NOT_FOUND (existence is not leaked)
-    api.call("GET", f"/v1/projects/{created['id']}", expect=200)
+    # keys are project-bound: another project (same tenant) or tenant is NOT_FOUND
+    err(api.call("GET", f"/v1/projects/{created['id']}"), 404, "NOT_FOUND")
     err(other_api.call("GET", f"/v1/projects/{api.project_id}"), 404, "NOT_FOUND")
     err(api.call("POST", "/v1/projects", json={"name": " "}), 400, "INVALID_REQUEST")
     err(api.call("POST", "/v1/projects", json={}), 400, "INVALID_REQUEST")
@@ -73,8 +73,14 @@ def test_publish_yaml_json_and_document_forms(api):
     [
         ({"source": None}, "exactly one"),
         ({"document": {"a": 1}}, "exactly one"),
-        ({"fixtures": {"../escape.eml": "eA=="}}, "escapes"),
-        ({"fixtures": {"/etc/passwd": "eA=="}}, "relative"),
+        ({"fixtures": {"../escape.eml": "eA=="}}, "'..' parts"),
+        ({"fixtures": {"/etc/passwd": "eA=="}}, "'..' parts"),
+        ({"fixtures": {"a/./b": "eA=="}}, "'..' parts"),
+        ({"fixtures": {"a//b": "eA=="}}, "'..' parts"),
+        ({"fixtures": {".": "eA=="}}, "'..' parts"),
+        ({"fixtures": {"scenario.json/x": "eA=="}}, "collides"),
+        ({"fixtures": {"a": "eA==", "a/b": "eA=="}}, "overlap"),
+        ({"fixtures": {"a/b": "eA==", "a": "eA=="}}, "overlap"),
         ({"fixtures": {"fixtures/invoice-001.eml": "not base64!"}}, "base64"),
         ({"fixtures": {"scenario.yaml": "eA=="}}, "collides"),
         ({"fixtures": {f"f{i}.eml": "eA==" for i in range(201)}}, "at most"),
@@ -228,8 +234,8 @@ def test_agent_credentials_route_issues_a_fresh_working_key(api):
     rid, (key1, mbx) = created["run"]["id"], api.agent(created)
     fresh = api.call("POST", f"/v1/runs/{rid}/agent-credentials", expect=201).json()
     assert fresh["api_key"] != key1 and fresh["mailbox_id"] == mbx
-    for key in (key1, fresh["api_key"]):
-        api.call("GET", f"/v1/mailboxes/{mbx}/folders", key=key, expect=200)
+    api.call("GET", f"/v1/mailboxes/{mbx}/folders", key=fresh["api_key"], expect=200)
+    api.call("GET", f"/v1/mailboxes/{mbx}/folders", key=key1, expect=401)  # superseded
 
 
 def test_events_pagination_is_complete_and_ordered(api):

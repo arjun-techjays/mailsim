@@ -8,6 +8,7 @@ from fastapi import FastAPI
 
 from mailsim import __version__
 from mailsim.api.errors import install_error_handlers
+from mailsim.api.limits import BodySizeLimit
 from mailsim.api.routers import control, mailbox, simulator
 
 API_TITLE = "mailsim"
@@ -24,6 +25,7 @@ def create_app(**state: Any) -> FastAPI:
     for key, value in state.items():
         setattr(app.state, key, value)
     install_error_handlers(app)
+    app.add_middleware(BodySizeLimit)  # WS-A: request body size cap (api/limits.py)
 
     @app.get("/v1/health", tags=["meta"])
     def health() -> dict[str, str]:

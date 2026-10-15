@@ -53,6 +53,7 @@ ROUTES: list[tuple[str, str, set[str], object, int]] = [
     ("DELETE", "/v1/mailboxes/{mbx}/messages/{msg}", {A}, None, 204),
     ("GET", "/v1/mailboxes/{mbx}/changes", {A}, None, 200),
     ("GET", "/v1/mailboxes/{mbx}/folders", {A}, None, 200),
+    ("DELETE", "/v1/keys/{keyid}", {C}, None, 204),
 ]  # fmt: skip
 
 
@@ -71,7 +72,7 @@ def test_matrix_covers_every_route():
         for name, real in (("{project}", "{project_id}"), ("{key}", "{scenario_key}"),
                            ("{ready}", "{run_id}"), ("{run}", "{run_id}"), ("{mbx}", "{mailbox_id}"),
                            ("{msg}", "{message_id}"), ("{thread}", "{thread_id}"),
-                           ("evl_1", "{evaluation_id}")):  # fmt: skip
+                           ("evl_1", "{evaluation_id}"), ("{keyid}", "{key_id}")):  # fmt: skip
             template = template.replace(name, real)
         listed.add((method, template))
     assert listed == served
@@ -88,11 +89,21 @@ class World:
         first = api.call("GET", f"/v1/mailboxes/{mbx}/messages?folder=inbox", key=self.agent_key,
                          expect=200).json()["items"][0]  # fmt: skip
         self.values = {"project": api.project_id, "key": KEY, "run": run, "ready": ready,
-                       "mbx": mbx, "msg": first["id"], "thread": first["thread_id"]}  # fmt: skip
+                       "mbx": mbx, "msg": first["id"], "thread": first["thread_id"],
+                       "keyid": _key_id(api, self.agent_key)}  # fmt: skip
         self.keys = {**api.keys, A: self.agent_key}
 
     def url(self, path: str) -> str:
         return path.format(**self.values)
+
+
+def _key_id(api: Api, key: str) -> str:
+    from sqlalchemy import select
+
+    from mailsim.store import models as m
+
+    with api.sf() as s:
+        return s.scalar(select(m.ApiKey.id).where(m.ApiKey.key_hash == hash_key(key)))
 
 
 def _body(body: object, api: Api) -> object:

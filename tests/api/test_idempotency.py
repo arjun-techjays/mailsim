@@ -102,9 +102,16 @@ def test_concurrent_duplicates_run_once(api):
         t.start()
     for t in ts:
         t.join()
-    assert [r.status_code for r in results] == [201] * 4
-    assert len({r.json()["run"]["id"] for r in results}) == 1 and runs_in(api) == 1
-    assert sum(REPLAYED_HEADER in r.headers for r in results) == 3
+    # exactly one executes; the others either replay it or see it still in progress (409)
+    assert runs_in(api) == 1
+    fresh = [r for r in results if r.status_code == 201 and REPLAYED_HEADER not in r.headers]
+    assert len(fresh) == 1
+    for r in results:
+        assert r.status_code in (201, 409)
+        if r.status_code == 201:
+            assert r.json()["run"]["id"] == fresh[0].json()["run"]["id"]
+        else:
+            assert "in progress" in r.json()["error"]["message"]
 
 
 def test_every_idempotent_operation_replays(api):

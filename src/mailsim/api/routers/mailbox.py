@@ -87,12 +87,19 @@ def send(request: Request, mailbox_id: str, body: s.SendRequest, principal: Agen
 def patch_message(
     request: Request, mailbox_id: str, message_id: str, body: s.MessagePatch, principal: Agent
 ) -> CanonicalMessage:
-    """Move and/or change labels and flags. Each kind of change is one agent write (budget)."""
+    """Move and/or change labels and flags.
+
+    The folder is resolved (404 if unknown) before anything is written. The changes are then
+    applied as SEPARATE agent writes, in this order: move, labels, flags. Each counts against
+    the write budget, and if a later step fails (e.g. an unknown flag, or the budget runs out)
+    the earlier steps stay applied: the error response means "possibly partially applied";
+    GET the message to see its state."""
     if not (body.folder or body.add_labels or body.remove_labels or body.add_flags
             or body.remove_flags):  # fmt: skip
         raise InvalidRequest("empty patch: set folder, labels or flags")
     mb = agent(request, principal)
     if body.folder is not None:
+        _folder_name(mb, body.folder)  # validate before the first write
         mb.move(message_id, body.folder)
     if body.add_labels or body.remove_labels:
         mb.modify_labels(message_id, add=body.add_labels, remove=body.remove_labels)
