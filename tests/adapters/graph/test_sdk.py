@@ -15,7 +15,6 @@ from typing import Any
 
 import httpx
 import pytest
-from kiota_abstractions.api_error import APIError
 from kiota_abstractions.authentication import (
     AccessTokenProvider,
     AllowedHostsValidator,
@@ -273,8 +272,9 @@ def test_delta_and_errors(world, client):
         assert (unsupported.value.response_status_code, unsupported.value.error.code) == (
             501, "ErrorNotSupported")  # fmt: skip
         anonymous = sdk(world.app, "msk_000000000000_" + "x" * 40)
-        with pytest.raises(APIError) as denied:
+        with pytest.raises(ODataError) as denied:  # the Graph error body parses as ODataError
             await anonymous.me.messages.get()
         assert denied.value.response_status_code == 401
+        assert denied.value.error.code == "InvalidAuthenticationToken"
 
     run(go())

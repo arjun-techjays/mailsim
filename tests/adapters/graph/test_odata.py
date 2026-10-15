@@ -120,3 +120,26 @@ def test_tokens_and_helpers():
     assert odata.path_get({"a": 1}, "a/b") is None
     assert odata.path_get(5, "") == 5
     assert odata.parse_datetime("2026-10-15T08:30:00") == datetime(2026, 10, 15, 8, 30, tzinfo=UTC)
+
+
+def test_resource_limits_are_invalid_requests():
+    with pytest.raises(QueryError):
+        odata.compile_filter("isRead eq true or " * 300 + "isRead eq true")  # > 4 KB
+    deep = "categories/any(c:" * 33 + "c eq 'x'" + ")" * 33
+    with pytest.raises(QueryError):
+        odata.compile_filter(deep)
+    ok = "(" * 32 + "isRead eq true" + ")" * 32
+    assert odata.compile_filter(ok)({"isRead": True})
+    with pytest.raises(QueryError):
+        odata.decode_token("A" * 257, ())
+    with pytest.raises(QueryError):
+        odata.decode_token(odata.encode_token({"s": 2**53 + 1}), ("s",))
+    nested = "[" * 100 + "]" * 100
+    import base64
+
+    token = base64.urlsafe_b64encode(nested.encode()).decode()[:256]
+    with pytest.raises(QueryError):
+        odata.decode_token(token, ())
+    for raw in ("\u00b2", "1" * 11, "+5", " "):
+        with pytest.raises(QueryError):
+            odata.parse_int("$top", raw, default=1, low=0, high=10**9)

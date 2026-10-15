@@ -415,17 +415,23 @@ def test_reply_family(world):
     world.post(f"/me/messages/{mid}/forward", {"comment": "fwd", "toRecipients": [
         {"emailAddress": {"address": "vendor@example.test"}}]}, 202)  # fmt: skip
     world.post(f"/me/messages/{mid}/forward", {"comment": "fwd2", "message": {
-        "toRecipients": [{"emailAddress": {"address": "vendor@example.test"}}],
-        "subject": "custom forward"}}, 202)  # fmt: skip
-    world.post(f"/me/messages/{mid}/reply", {"comment": "x", "message": {
-        "subject": "custom reply"}}, 202)  # fmt: skip
+        "toRecipients": [{"emailAddress": {"address": "vendor@example.test"}}]}}, 202)  # fmt: skip
+    world.post(f"/me/messages/{mid}/reply", {"comment": "again", "message": {}}, 202)
+    for action, extra in (("reply", {}), ("replyAll", {}),
+                          ("forward", {"toRecipients": [{"emailAddress": {"address": "vendor@example.test"}}]})):  # fmt: skip
+        r = world.call("POST", f"/me/messages/{mid}/{action}",
+                       json={"comment": "x", "message": {"subject": "custom", **extra}})  # fmt: skip
+        assert err(r, 501, "ErrorNotSupported")["message"].startswith("message properties subject")
     sent = {m["subject"]: m for m in world.messages("sentitems", **{"$expand": "attachments"})}
-    assert {"Re: Invoice INV-001", "Re: group", "Fwd: Invoice INV-001", "custom forward",
-            "custom reply"} <= set(sent)  # fmt: skip
+    assert {"Re: Invoice INV-001", "Re: group", "Fwd: Invoice INV-001"} <= set(sent)
+    assert (
+        "custom" not in sent
+        and world.messages("drafts", **{"$filter": "subject eq 'custom'"}) == []
+    )
     assert sent["Fwd: Invoice INV-001"]["attachments"], "direct forward keeps attachments"
     got = world.get(f"/me/messages/{mid}", params={"$expand": ANSWERED})
     assert got["singleValueExtendedProperties"][0]["value"] == "102"
-    own = world.post(f"/me/messages/{sent['custom reply']['id']}/createReply", {})
+    own = world.post(f"/me/messages/{sent['Re: Invoice INV-001']['id']}/createReply", {})
     assert [x["emailAddress"]["address"] for x in own["toRecipients"]] == ["vendor@example.test"]
     err(world.call("POST", f"/me/messages/{mid}/forward", json={"comment": "x"}), 400,
         "ErrorInvalidRequest")  # fmt: skip
@@ -439,7 +445,7 @@ def test_reply_family(world):
 # ----------------------------------------------------------------------------- delta
 
 
-def test_delta_paging_changes_and_reset(world, monkeypatch):
+def test_delta_paging_changes_and_reset(world):
     page = world.get("/me/messages/delta", params={"$top": 1, "$select": "subject"})
     seen = [m["id"] for m in page["value"]]
     assert set(page["value"][0]) == {"@odata.etag", "id", "subject"}
@@ -452,14 +458,12 @@ def test_delta_paging_changes_and_reset(world, monkeypatch):
     assert empty["value"] == [] and empty["@odata.deltaLink"]
     world.inject("delta-new")
     world.patch(f"/me/messages/{seen[0]}", {"isRead": True})
-    monkeypatch.setattr(graph_api, "ENGINE_PAGE", 1)  # force a paged change round
-    page = world.client.get(delta).json()
+    page = world.client.get(delta).json()  # the link keeps $top=1: a paged change round
     changed = [m.get("subject") for m in page["value"]]
     while "@odata.nextLink" in page:
         page = world.client.get(page["@odata.nextLink"]).json()
         changed += [m.get("subject") for m in page["value"]]
     assert "delta-new" in changed and len(changed) >= 2
-    monkeypatch.setattr(graph_api, "ENGINE_PAGE", 500)
     sent_delta = world.get("/me/mailFolders/sentitems/messages/delta")
     assert sent_delta["value"] == []
     world.post(f"/me/messages/{seen[0]}/reply", {"comment": "r"}, 202)
@@ -471,7 +475,9 @@ def test_delta_paging_changes_and_reset(world, monkeypatch):
     world.ctl.start_run(world.run)
     err(world.client.get(delta), 410, "SyncStateNotFound")
     for bad in ({"$deltatoken": "!!"}, {"$skiptoken": graph_api.odata.encode_token({"m": "z"})},
-                {"$skiptoken": graph_api.odata.encode_token({"m": "i", "o": 0})},
+                {"$skiptoken": graph_api.odata.encode_token({"m": "i", "a": 0})},
+                {"$skiptoken": graph_api.odata.encode_token({"m": "i", "a": 0, "c": "!!"})},
+                {"$skiptoken": "A" * 300},
                 {"$filter": "isRead eq true"}):  # fmt: skip
         r = world.call("GET", "/me/messages/delta", params=bad)
         assert r.status_code == 400, (bad, r.text)
@@ -498,3 +504,90 @@ def test_resource_helpers():
     assert res.folder_key("Custom") == "name:Custom"
     custom = {"id": "fld", "name": "Custom", "system_type": None}
     assert res.mail_folder("mbx", custom, {})["displayName"] == "Custom"
+
+
+def test_initial_delta_sync_survives_deletes_between_pages(world):
+    """Keyset paging: deleting an already-returned message never hides a later one."""
+    world.inject("third")
+    page = world.get("/me/messages/delta", params={"$top": 1})
+    seen = {m["id"] for m in page["value"]}
+    world.post(f"/me/messages/{page['value'][0]['id']}/permanentDelete", None, 204)
+    while "@odata.nextLink" in page:
+        page = world.client.get(page["@odata.nextLink"]).json()
+        seen |= {m["id"] for m in page["value"]}
+    nxt = world.client.get(page["@odata.deltaLink"]).json()
+    while "@odata.nextLink" in nxt:
+        seen |= {m["id"] for m in nxt["value"]}
+        nxt = world.client.get(nxt["@odata.nextLink"]).json()
+    seen |= {m["id"] for m in nxt["value"]}
+    everything = {m["id"] for m in world.messages()}
+    assert everything <= seen and len(seen) == 3
+
+
+def test_direct_reply_is_the_engines_reply(env, tmp_path, world):
+    """Example scenario: reply allowed, send not. A Graph reply is one engine `reply` (so it is
+    permitted and arms the `send_reply` trigger); draft + send is refused by the scenario."""
+    example = write_variant(tmp_path, lambda s: s.update(version=3), "example.yaml")
+    run = world.ctl.create_run(env.version(example))
+    world.ctl.start_run(run)
+    with env.session_factory.begin() as s:
+        from mailsim.api.auth import issue_key
+
+        key = issue_key(s, tenant_id=env.scope.tenant_id, project_id=env.scope.project_id,
+                        role="agent", run_id=run,
+                        mailbox_id=world.ctl.mailbox_id_for(run, "finance_manager")).api_key  # fmt: skip
+    hdr = {"Authorization": f"Bearer {key}"}
+    inv = next(m for m in world.get("/me/messages", headers=hdr)["value"]
+               if m["subject"] == "Invoice INV-001")  # fmt: skip
+    world.post(f"/me/messages/{inv['id']}/reply", {"Comment": "checking"}, 202, headers=hdr)
+    ops = [a["operation"] for a in world.ctl.actions(run) if a["actor"] == "agent"
+           and a["operation"] not in ("read", "search")]  # fmt: skip
+    assert ops == ["reply"]
+    assert "event.armed" in {e["type"] for e in world.ev.events(run)}
+    world.ctl.tick(run)
+    subjects = [m["subject"] for m in world.get("/me/messages", headers=hdr)["value"]]
+    assert "Updated bank details" in subjects
+    err(
+        world.call("POST", f"/me/messages/{inv['id']}/createReply", json={}, headers=hdr),
+        403,
+        "ErrorAccessDenied",
+    )  # drafts are not among this scenario's allowed operations
+
+
+def test_draft_update_keeps_flags_and_categories(world):
+    draft = world.post("/me/messages", {"subject": "keep", "toRecipients": [
+        {"emailAddress": {"address": "vendor@example.test"}}]})  # fmt: skip
+    world.patch(f"/me/messages/{draft['id']}", {"categories": ["Keep"], "isRead": False,
+                                                "flag": {"flagStatus": "flagged"}})  # fmt: skip
+    out = world.patch(f"/me/messages/{draft['id']}", {"subject": "keep-2"})
+    assert out["subject"] == "keep-2" and out["categories"] == ["Keep"]
+    assert out["flag"]["flagStatus"] == "flagged" and out["isRead"] is False
+    out = world.patch(f"/me/messages/{draft['id']}", {"subject": "keep-3", "categories": [],
+                                                      "isRead": True})  # fmt: skip
+    assert out["categories"] == [] and out["isRead"] and out["flag"]["flagStatus"] == "flagged"
+
+
+def test_other_mailboxes_ids_are_not_found(world):
+    vendor_msgs = world.ctl.inspect_messages(world.run, world.vendor).items
+    world.ctl.inject(world.run, world.vendor, {"from": "finance@example.test",
+                     "to": ["vendor@example.test"], "subject": "theirs", "text": "t"})  # fmt: skip
+    theirs = [m for m in world.ctl.inspect_messages(world.run, world.vendor).items
+              if m not in vendor_msgs]  # fmt: skip
+    gid = theirs[0].provider_ids["graph_message_id"]
+    err(world.call("GET", f"/me/messages/{gid}"), 404, "ErrorItemNotFound")
+    err(world.call("PATCH", f"/me/messages/{gid}", json={"isRead": True}), 404, "ErrorItemNotFound")
+    mine = invoice(world)
+    att = world.get(f"/me/messages/{mine['id']}/attachments")["value"][0]["id"]
+    err(world.call("GET", f"/me/messages/{gid}/attachments/{att}"), 404, "ErrorItemNotFound")
+
+
+def test_attachment_expansion_caps_the_page(world):
+    for i in range(55):
+        world.inject(f"bulk-{i}")
+    page = world.get("/me/messages", params={"$top": 100, "$expand": "attachments"})
+    assert len(page["value"]) == 50 and "@odata.nextLink" in page
+    r = world.call("GET", "/me/messages", headers={"Prefer": "odata.maxpagesize=" + "9" * 50})
+    err(r, 400, "ErrorInvalidRequest")
+    err(world.call("GET", "/me/messages", params={"$top": "\u00b2"}), 400, "ErrorInvalidRequest")
+    err(world.call("GET", "/me/messages", params={"$filter": "(" * 40 + "isRead eq true" + ")" * 40}),
+        400, "ErrorInvalidRequest")  # fmt: skip

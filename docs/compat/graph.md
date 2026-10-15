@@ -109,14 +109,21 @@ other value clears it). Other extended properties are not supported.
   `categories` (replaces the set), the replied marker above, and, on drafts only, `subject`,
   `body` and the recipient lists. Changes are applied as separate engine writes in the order
   content, flags, categories; if a later one fails the earlier ones stay applied (GET to see the
-  state). Content changes on a non-draft answer `400 ErrorInvalidRequest`.
+  state). Content changes on a non-draft answer `400 ErrorInvalidRequest`. A content change
+  keeps the draft's flags (`isRead`, `flag`, replied marker) and categories unless the same PATCH
+  changes them.
 - Draft-to-sent: `POST /messages/{id}/send` removes the draft from Drafts, places the sent copy
   in Sent Items (new id) and delivers it to the simulated recipients. Sending a non-draft
   answers `409 ErrorIrresolvableConflict`.
-- `reply`/`replyAll` with only `comment` use the engine's reply (threading headers, `ANSWERED` on
-  the original). `forward` with `comment` + `toRecipients` uses the engine's forward, which keeps
-  the original's attachments. When a `message` object with other properties is supplied, the
-  sandbox creates a draft with those properties and sends it (reply also sets `ANSWERED`).
+- `reply`/`replyAll` (`comment`) and `forward` (`comment` + `toRecipients`, top level or inside
+  `message`) run as exactly one engine `reply` / `forward` operation: threading headers,
+  `ANSWERED` on the original, the scenario's `allowed_operations` for that operation, its
+  `after_agent_action` triggers (e.g. `send_reply`) and one unit of action budget. The engine's
+  forward keeps the original's attachments. A `message` object carrying any other property
+  (subject, body, cc, ...) answers `501 ErrorNotSupported` instead of being emulated with draft +
+  send; use `createReply`/`createForward`, PATCH the draft, then `send` it.
+- `createReply` -> PATCH -> `POST .../send` is recorded by the engine as `draft`, `draft`, `send`
+  operations (not `reply`): scenario permissions and `send_reply` triggers see a `send`.
 - `createReply`/`createReplyAll` address the draft as Outlook does (sender; plus the other To/Cc
   for reply-all; never the mailbox itself), subject `RE: ...`, `In-Reply-To`/`References` set, so
   it threads into the same `conversationId`. `createForward` uses `FW: ...` with a forwarded
@@ -126,7 +133,7 @@ other value clears it). Other extended properties are not supported.
 
 | Option | Support |
 |---|---|
-| `$top` | 1..1000, default 10 (or `Prefer: odata.maxpagesize=N`) |
+| `$top` | 1..1000, default 10 (or `Prefer: odata.maxpagesize=N`); at most 50 per page with `$expand=attachments` (the rest via `@odata.nextLink`) |
 | `$skip` | offset; `@odata.nextLink` carries `$skip` like Graph's message lists |
 | `$skiptoken` | opaque token from a delta `@odata.nextLink`; also accepted on lists |
 | `$count=true` | `@odata.count` |
@@ -149,18 +156,24 @@ other value clears it). Other extended properties are not supported.
   r/emailAddress/address eq '...')` (and `all`).
 - `null` literals compare with `eq`/`ne`; ordering comparisons with null are false.
 
-Malformed queries answer `400 ErrorInvalidRequest`; valid OData the sandbox does not implement
+Limits: `$filter` up to 4096 characters and 32 nested parentheses/lambdas; integers
+(`$top`, `$skip`, `odata.maxpagesize`) up to 10 ASCII digits; paging/delta tokens up to 256
+characters. Beyond them, and for malformed queries, the answer is `400 ErrorInvalidRequest`; valid OData the sandbox does not implement
 (`not`, `has`, `in`, `contains`, other properties or options such as `$apply`) answers `400
 ErrorNotSupported`.
 
 ## Change tracking (delta)
 
 - First call without a token returns every current message (engine order), paged by `$top` /
-  `Prefer: odata.maxpagesize` (default 10) with `@odata.nextLink` (`$skiptoken`), ending with
-  `@odata.deltaLink` (`$deltatoken`) anchored at the run's event sequence taken before the read.
+  `Prefer: odata.maxpagesize` (default 10, at most 500) with `@odata.nextLink` (`$skiptoken`),
+  ending with `@odata.deltaLink` (`$deltatoken`) anchored at the run's event sequence taken
+  before the read. Pages use the engine's keyset cursor over (created, id), so deleting or
+  moving an already-returned message never hides a later one; anything that changes during the
+  initial sync is reported again in the next round.
 - Calling the `deltaLink` returns each message that changed since (deduplicated): the current
   message, or `{"id": ..., "@removed": {"reason": "deleted"}}` when it was deleted or (for a
-  folder delta) is no longer in that folder. Long rounds are paged with `@odata.nextLink`.
+  folder delta) is no longer in that folder. A round reads at most page-size change events (so
+  at most that many message reads) and continues with `@odata.nextLink`.
 - Tokens are opaque; `$select` is kept on the links. `$filter`/`$orderby` on delta are not
   supported.
 - After a run reset, an older token answers `410 SyncStateNotFound`: restart without a token.
@@ -231,6 +244,15 @@ Each Graph code maps back to exactly one simulator code.
   folders, child folders, categories master list, mailbox settings or calendar.
 - Each Graph request may record more than one agent read in the audit trail (e.g. id
   resolution + read); only writes count against the action budget.
+
+## Cost and mailbox-size envelope
+
+List, `$count`, `$search` and folder-count requests read the whole folder (or mailbox) through
+the agent facade in engine pages of 500, then filter, order and page in memory; `$skip` paging
+therefore costs one full scan per page. This is sized for simulated mailboxes: up to a few
+thousand messages per mailbox the cost is a few engine reads per request. Much larger
+mailboxes work but each list request grows linearly with the mailbox. Delta initial sync uses
+keyset paging (one bounded read per page) and change rounds read at most one page of events.
 
 ## Pointing a client at the sandbox
 

@@ -24,6 +24,11 @@ from mailsim.domain.errors import InvalidRequest
 
 DEFAULT_TOP = 10
 MAX_TOP = 1000
+MAX_FILTER_CHARS = 4096
+MAX_FILTER_DEPTH = 32  # nested parentheses + lambdas
+MAX_TOKEN_CHARS = 256
+MAX_TOKEN_INT = 2**53
+_UINT = re.compile(r"[0-9]{1,10}")
 
 
 class QueryError(InvalidRequest):
@@ -135,6 +140,12 @@ class _Parser:
     toks: list[_Tok]
     pos: int = 0
     lambda_vars: dict[str, str] = field(default_factory=dict)  # var -> collection
+    depth: int = 0
+
+    def nest(self) -> None:
+        self.depth += 1
+        if self.depth > MAX_FILTER_DEPTH:
+            raise QueryError(f"$filter nests deeper than {MAX_FILTER_DEPTH} levels")
 
     def peek(self) -> _Tok | None:
         return self.toks[self.pos] if self.pos < len(self.toks) else None
@@ -179,8 +190,10 @@ class _Parser:
         tok = self.peek()
         if tok is not None and tok.text == "(":
             self.take()
+            self.nest()
             inner = self.parse_or()
             self.expect(")")
+            self.depth -= 1
             return inner
         if tok is not None and tok.kind == "name" and tok.text == "not":
             raise QueryNotSupported("the 'not' operator is not supported")
@@ -277,12 +290,18 @@ class _Parser:
         if var.kind != "name" or "/" in var.text:
             raise QueryError("expected a lambda variable")
         self.expect(":")
+        self.nest()
+        outer = self.lambda_vars.get(var.text)  # a nested lambda may reuse the name
         self.lambda_vars[var.text] = collection
         try:
             inner = self.parse_or()
         finally:
-            del self.lambda_vars[var.text]
+            if outer is None:
+                del self.lambda_vars[var.text]
+            else:
+                self.lambda_vars[var.text] = outer
         self.expect(")")
+        self.depth -= 1
         quant = any if fn == "any" else all
 
         def predicate(doc: Mapping[str, Any]) -> bool:
@@ -313,6 +332,8 @@ def _apply(op: str, value: Any, expected: Any) -> bool:
 def compile_filter(text: str) -> Predicate:
     if not text.strip():
         raise QueryError("empty $filter")
+    if len(text) > MAX_FILTER_CHARS:
+        raise QueryError(f"$filter is longer than {MAX_FILTER_CHARS} characters")
     parser = _Parser(_tokenize(text))
     predicate = parser.parse_or()
     extra = parser.peek()
@@ -389,7 +410,7 @@ def parse_expand(text: str) -> Expand:
 def parse_int(name: str, raw: str | None, *, default: int, low: int, high: int) -> int:
     if raw is None:
         return default
-    if not raw.strip().isdigit():
+    if not _UINT.fullmatch(raw.strip()):
         raise QueryError(f"{name} must be a non-negative integer")
     value = int(raw)
     if not low <= value <= high:
@@ -415,12 +436,17 @@ def encode_token(state: Mapping[str, Any]) -> str:
 
 
 def decode_token(token: str, required: tuple[str, ...]) -> dict[str, Any]:
+    """Decode a paging/delta token; `required` keys must be integers in [0, 2**53]."""
+    if len(token) > MAX_TOKEN_CHARS:
+        raise QueryError("malformed state token")
     try:
         value = json.loads(base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)))
-    except (binascii.Error, ValueError, UnicodeDecodeError):
+    except (binascii.Error, ValueError, UnicodeDecodeError, RecursionError):
         raise QueryError("malformed state token") from None
     if not isinstance(value, dict) or any(
-        not isinstance(value.get(k), int) or isinstance(value.get(k), bool) or value[k] < 0
+        not isinstance(value.get(k), int)
+        or isinstance(value.get(k), bool)
+        or not 0 <= value[k] <= MAX_TOKEN_INT
         for k in required
     ):
         raise QueryError("malformed state token")

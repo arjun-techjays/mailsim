@@ -27,6 +27,7 @@ from mailsim.adapters.graph import odata
 from mailsim.adapters.graph import resources as res
 from mailsim.adapters.graph.errors import GraphAuthError, GraphRoute, SyncStateGone
 from mailsim.api.auth import InvalidCredential, verify_key
+from mailsim.api.routers._common import app_state
 from mailsim.auth.principal import Principal, Role
 from mailsim.domain.errors import (
     InvalidRequest,
@@ -43,6 +44,7 @@ PREFIX = "/graph/v1.0"
 BASES = ("/me", "/users/{user_id}")
 ENGINE_PAGE = 500
 DELTA_DEFAULT_PAGE = 10
+MAX_TOP_WITH_ATTACHMENTS = 50
 ITEM_NOT_FOUND = "The specified object was not found in the store."
 LIST_OPTIONS = frozenset(
     {"$top", "$skip", "$skiptoken", "$select", "$filter", "$orderby", "$count", "$search",
@@ -52,7 +54,7 @@ GET_OPTIONS = frozenset({"$select", "$expand"})
 COUNT_OPTIONS = frozenset({"$filter", "$search"})
 DELTA_OPTIONS = frozenset({"$select", "$deltatoken", "$skiptoken", "$top"})
 _PREFER_BODY = re.compile(r'outlook\.body-content-type\s*=\s*"?(text|html)"?', re.IGNORECASE)
-_PREFER_PAGE = re.compile(r"odata\.maxpagesize\s*=\s*(\d+)", re.IGNORECASE)
+_PREFER_PAGE = re.compile(r"odata\.maxpagesize\s*=\s*([0-9]+)", re.IGNORECASE)
 CONTENT_FIELDS = ("subject", "body", "toRecipients", "ccRecipients", "bccRecipients")
 REJECT_IF_SET = ("attachments", "replyTo", "internetMessageHeaders",
                  "multiValueExtendedProperties", "mentions")  # fmt: skip
@@ -69,7 +71,7 @@ def authenticate(request: Request) -> Principal:
     scheme, _, token = request.headers.get("authorization", "").partition(" ")
     if scheme.lower() != "bearer" or not token.strip():
         raise GraphAuthError("Access token is empty or invalid.")
-    sf = _state(request, "session_factory")
+    sf = app_state(request, "session_factory")
     with sf() as session:
         try:
             principal = verify_key(session, token.strip())
@@ -79,13 +81,6 @@ def authenticate(request: Request) -> Principal:
         raise PermissionDenied("Graph mail endpoints accept agent credentials only")
     request.state.principal = principal
     return principal
-
-
-def _state(request: Request, name: str) -> Any:
-    value = getattr(request.app.state, name, None)
-    if value is None:
-        raise UnsupportedOperation(f"server is not configured with {name}")
-    return value
 
 
 @dataclass
@@ -102,7 +97,7 @@ class Ctx:
     def email(self) -> str:
         """The credential's own mailbox address (identity only, never other mailboxes)."""
         if self._email is None:
-            with _state(self.request, "session_factory")() as session:
+            with app_state(self.request, "session_factory")() as session:
                 row = session.get(store_models.Mailbox, (self.mailbox_id, self.mb.run_id))
             if row is None:  # pragma: no cover - verify_key only issues keys for real mailboxes
                 raise NotFound("mailbox not found")
@@ -117,7 +112,7 @@ class Ctx:
 
 def graph_ctx(request: Request) -> Ctx:
     principal = authenticate(request)
-    facade = facade_for(_state(request, "engine"), principal)
+    facade = facade_for(app_state(request, "engine"), principal)
     assert isinstance(facade, AgentMailbox)  # agent role -> AgentMailbox (facade_for)
     ctx = Ctx(request, principal, facade)
     user = request.path_params.get("user_id")
@@ -180,9 +175,10 @@ class Prefer:
     def parse(cls, request: Request) -> Prefer:
         raw = ",".join(request.headers.getlist("prefer"))
         body, page = _PREFER_BODY.search(raw), _PREFER_PAGE.search(raw)
-        size = int(page.group(1)) if page else None
-        if size is not None and not 1 <= size <= odata.MAX_TOP:
-            raise odata.QueryError(f"odata.maxpagesize must be between 1 and {odata.MAX_TOP}")
+        size = None
+        if page is not None:
+            size = odata.parse_int("odata.maxpagesize", page.group(1), default=0, low=1,
+                                   high=odata.MAX_TOP)  # fmt: skip
         return cls(body.group(1).lower() if body else None, size)
 
     def applied(self) -> dict[str, str]:
@@ -388,6 +384,14 @@ def _args(payload: Mapping[str, Any] | None) -> dict[str, Any]:
     return {ACTION_KEYS.get(k.casefold(), k): v for k, v in (payload or {}).items()}
 
 
+def _action(ctx: Ctx, payload: Mapping[str, Any] | None) -> tuple[dict[str, Any], dict[str, Any]]:
+    """(normalised action parameters, their writable `message` object)."""
+    data = _args(payload)
+    message = _object(data, "message")
+    check_writable(ctx, message)
+    return data, message
+
+
 def _object(payload: Mapping[str, Any], name: str) -> dict[str, Any]:
     value = payload.get(name)
     if value is None:
@@ -502,6 +506,8 @@ def list_messages(ctx: Ctx, folder: FolderRef | None) -> JSONResponse:
     count = q.get("$count", "false").lower()
     if count not in ("true", "false"):
         raise odata.QueryError("$count must be true or false")
+    if expand is not None and expand.attachments:
+        top = min(top, MAX_TOP_WITH_ATTACHMENTS)  # bounds attachment bytes per response
     order = odata.parse_orderby(q["$orderby"]) if "$orderby" in q else [("receivedDateTime", True)]
     docs = ordered(matching(ctx, folder), order)
     page = docs[skip : skip + top]
@@ -548,6 +554,7 @@ def _delta(ctx: Ctx, folder: FolderRef | None) -> JSONResponse:
     select = odata.parse_select(q["$select"]) if "$select" in q else None
     size = odata.parse_int("$top", q.get("$top"), default=prefer.page_size or DELTA_DEFAULT_PAGE,
                            low=1, high=odata.MAX_TOP)  # fmt: skip
+    size = min(size, ENGINE_PAGE)  # engine pages hold at most 500 items / events
     drop = ("$deltatoken", "$skiptoken")
     if "$deltatoken" in q:
         state = {**odata.decode_token(q["$deltatoken"], ("s",)), "m": "c"}
@@ -556,24 +563,27 @@ def _delta(ctx: Ctx, folder: FolderRef | None) -> JSONResponse:
         mode = odata.decode_token(token, ()).get("m")
         if mode not in ("i", "c"):
             raise odata.QueryError("malformed state token")
-        state = odata.decode_token(token, ("o", "a") if mode == "i" else ("s",))
+        state = odata.decode_token(token, ("a",) if mode == "i" else ("s",))
+        if mode == "i" and not isinstance(state.get("c"), str):
+            raise odata.QueryError("malformed state token")
     else:
-        state = {"m": "i", "o": 0, "a": ctx.mb.list_changes(0, limit=1)["latest_sequence"]}
+        state = {"m": "i", "c": None, "a": ctx.mb.list_changes(0, limit=1)["latest_sequence"]}
     body: dict[str, Any] = {"@odata.context": context_url(request, "Collection(message)")}
     if state["m"] == "i":
-        msgs = all_messages(ctx.mb, folder.engine_ref if folder else None)
-        offset = int(state["o"])
-        body["value"] = [render(request, m, select=select, prefer=prefer)
-                         for m in msgs[offset : offset + size]]  # fmt: skip
-        if offset + size < len(msgs):
-            token = odata.encode_token({"m": "i", "o": offset + size, "a": state["a"]})
+        # keyset paging over (created, id): deleting or moving an already-returned message
+        # cannot shift later pages; changes after the anchor arrive in the next round
+        page = ctx.mb.list_messages(folder=folder.engine_ref if folder else None,
+                                    page_size=size, cursor=state["c"])  # fmt: skip
+        body["value"] = [render(request, m, select=select, prefer=prefer) for m in page.items]
+        if page.next_cursor is not None:
+            token = odata.encode_token({"m": "i", "c": page.next_cursor, "a": state["a"]})
             body["@odata.nextLink"] = link(request, {"$skiptoken": token}, drop)
         else:
             body["@odata.deltaLink"] = link(
                 request, {"$deltatoken": odata.encode_token({"s": state["a"]})}, drop
             )
         return ok(body, headers=prefer.applied())
-    feed = ctx.mb.list_changes(int(state["s"]), limit=ENGINE_PAGE)
+    feed = ctx.mb.list_changes(int(state["s"]), limit=size)  # bounds the per-round fan-out
     if feed["reset_since"]:
         raise SyncStateGone("The sync state is no longer valid (the run was reset); "
                             "restart the sync without a token.")  # fmt: skip
@@ -581,7 +591,7 @@ def _delta(ctx: Ctx, folder: FolderRef | None) -> JSONResponse:
     items = []
     for internal in ids:
         try:
-            m = ctx.mb.get_message(internal)
+            m: CanonicalMessage | None = ctx.mb.get_message(internal)
         except NotFound:
             m = None
         if m is None or (folder is not None and res.folder_key(m.folder) != folder.key):
@@ -625,7 +635,7 @@ def get_message(message_id: str, ctx: Context) -> JSONResponse:
 @route("GET", "/messages/{message_id}/$value")
 def get_mime(message_id: str, ctx: Context) -> Response:
     m = ctx.mb.get_message(resolve_message(ctx, message_id))
-    blobs = _state(ctx.request, "blobs")
+    blobs = app_state(ctx.request, "blobs")
     if m.raw_blob_ref is None:  # pragma: no cover - every inserted message keeps its raw MIME
         raise NotFound("this message has no MIME content")
     return Response(blobs.get(m.raw_blob_ref), media_type="text/plain")
@@ -683,15 +693,25 @@ def update_message(message_id: str, ctx: Context, payload: Payload = None) -> JS
         not isinstance(categories, list) or not all(isinstance(c, str) for c in categories)
     ):
         raise InvalidRequest("categories must be a collection of strings")
+    current = res.user_categories(m)
     if content:
+        # the engine replaces the draft's message (fresh flags DRAFT+SEEN, no labels): carry
+        # the previous flags and categories over unless this PATCH changes them
         d = Draft.of(m).apply(data)
         out = ctx.mb.update_draft(mid, to=d.to, subject=d.subject, text=d.text, cc=d.cc,
                                   bcc=d.bcc, html=d.html)  # fmt: skip
         mid = str(out["message_id"])
+        carried = sorted(set(m.flags) - {"DRAFT", "SEEN"} - set(remove))
+        add = list(dict.fromkeys([*carried, *add]))
+        if "SEEN" not in m.flags and "SEEN" not in add:
+            remove = list(dict.fromkeys([*remove, "SEEN"]))
+        if categories is None:
+            categories = current
+        current = []
     if add or remove:
         ctx.mb.set_flags(mid, add=add, remove=remove)
     if categories is not None:
-        current, wanted = res.user_categories(m), list(dict.fromkeys(categories))
+        wanted = list(dict.fromkeys(categories))
         plus = [c for c in wanted if c not in current]
         minus = [c for c in current if c not in wanted]
         if plus or minus:
@@ -745,14 +765,12 @@ def copy_message(message_id: str, ctx: Context, payload: Payload = None) -> JSON
 @route("POST", "/sendMail", 202)
 def send_mail(ctx: Context, payload: Payload = None) -> Response:
     """`saveToSentItems` is accepted but a Sent Items copy is always kept (documented)."""
-    data = _args(payload)
-    message = _object(data, "message")
+    data, message = _action(ctx, payload)
     if not message:
         raise InvalidRequest("message is required")
     save = data.get("saveToSentItems", True)
     if not isinstance(save, bool):
         raise InvalidRequest("saveToSentItems must be a boolean")
-    check_writable(ctx, message)
     d = Draft().apply(message)
     ctx.mb.send(to=d.to, subject=d.subject, text=d.text, cc=d.cc, bcc=d.bcc, html=d.html)
     return accepted()
@@ -781,9 +799,7 @@ def create_reply_all(message_id: str, ctx: Context, payload: Payload = None) -> 
 
 def _create_reply(message_id: str, ctx: Ctx, payload: dict[str, Any] | None, *,
                   reply_all: bool) -> JSONResponse:  # fmt: skip
-    data = _args(payload)
-    message = _object(data, "message")
-    check_writable(ctx, message)
+    data, message = _action(ctx, payload)
     orig = ctx.mb.get_message(resolve_message(ctx, message_id))
     draft = reply_draft(ctx, orig, reply_all=reply_all, comment=_comment(data))
     return _create_response(ctx, draft.apply(message))
@@ -791,29 +807,32 @@ def _create_reply(message_id: str, ctx: Ctx, payload: dict[str, Any] | None, *,
 
 @route("POST", "/messages/{message_id}/createForward", 201)
 def create_forward(message_id: str, ctx: Context, payload: Payload = None) -> JSONResponse:
-    data = _args(payload)
-    message = _object(data, "message")
-    check_writable(ctx, message)
+    data, message = _action(ctx, payload)
     orig = ctx.mb.get_message(resolve_message(ctx, message_id))
     draft = forward_draft(orig, _addresses(data, "toRecipients") or [], _comment(data))
     return _create_response(ctx, draft.apply(message))
 
 
+def _engine_only(message: Mapping[str, Any], allowed: tuple[str, ...]) -> None:
+    """Direct reply/forward run as the engine's own operation (scenario permissions,
+    triggers and budget see exactly one `reply` / `forward`). Message overrides the engine
+    cannot express are refused rather than emulated with draft + send."""
+    extra = sorted(k for k, v in message.items() if k not in allowed and v not in (None, [], ""))
+    if extra:
+        raise UnsupportedOperation(
+            f"message properties {', '.join(extra)} are not supported on this action; use "
+            "createReply/createForward, PATCH the draft, then send it",
+            details={"properties": extra},
+        )
+
+
 def _reply(
     message_id: str, ctx: Ctx, payload: dict[str, Any] | None, *, reply_all: bool
 ) -> Response:
-    data = _args(payload)
-    message = _object(data, "message")
-    check_writable(ctx, message)
+    data, message = _action(ctx, payload)
+    _engine_only(message, ())
     comment = _comment(data)
-    mid = resolve_message(ctx, message_id)
-    if not message:  # the engine's own reply: threading headers + ANSWERED on the original
-        ctx.mb.reply(mid, text=comment, reply_all=reply_all)
-        return accepted()
-    orig = ctx.mb.get_message(mid)
-    draft = reply_draft(ctx, orig, reply_all=reply_all, comment=comment).apply(message)
-    ctx.mb.send_draft(draft.create(ctx.mb))
-    ctx.mb.set_flags(mid, add=["ANSWERED"])
+    ctx.mb.reply(resolve_message(ctx, message_id), text=comment, reply_all=reply_all)
     return accepted()
 
 
@@ -829,19 +848,13 @@ def reply_all(message_id: str, ctx: Context, payload: Payload = None) -> Respons
 
 @route("POST", "/messages/{message_id}/forward", 202)
 def forward(message_id: str, ctx: Context, payload: Payload = None) -> Response:
-    data = _args(payload)
-    message = _object(data, "message")
-    check_writable(ctx, message)
+    """The engine's forward keeps the original's attachments."""
+    data, message = _action(ctx, payload)
+    _engine_only(message, ("toRecipients",))
     to = _addresses(data, "toRecipients") or _addresses(message, "toRecipients") or []
     if not to:
         raise InvalidRequest("toRecipients is required to forward a message")
-    mid = resolve_message(ctx, message_id)
-    extra = {k: v for k, v in message.items() if k != "toRecipients"}
-    if not extra:  # the engine's forward keeps the original's attachments
-        ctx.mb.forward(mid, to=to, text=_comment(data))
-        return accepted()
-    orig = ctx.mb.get_message(mid)
-    ctx.mb.send_draft(forward_draft(orig, to, _comment(data)).apply(extra).create(ctx.mb))
+    ctx.mb.forward(resolve_message(ctx, message_id), to=to, text=_comment(data))
     return accepted()
 
 
@@ -875,7 +888,7 @@ def get_attachment(message_id: str, attachment_id: str, ctx: Context) -> JSONRes
 def get_attachment_content(message_id: str, attachment_id: str, ctx: Context) -> Response:
     m, i = _attachment(ctx, message_id, attachment_id)
     att = m.attachments[i]
-    return Response(_state(ctx.request, "blobs").get(att.blob_ref), media_type=att.mime_type)
+    return Response(app_state(ctx.request, "blobs").get(att.blob_ref), media_type=att.mime_type)
 
 
 # ------------------------------------------------------------------- capability discovery
