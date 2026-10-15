@@ -177,6 +177,8 @@ def _parser() -> argparse.ArgumentParser:
     b.add_argument("--migrate", action="store_true", help="apply migrations first")
     b.add_argument("--output", type=Path, help="write the keys to this file (mode 0600)")
     sub.add_parser("sweep", help="delete expired idempotency records (also done on each claim)")
+    sub.add_parser("mcp-stdio", help="serve the MCP tools on stdin/stdout for one API key "
+                                     "(MAILSIM_API_KEY; logs go to stderr)")  # fmt: skip
     srv = sub.add_parser("serve", help="run the HTTP API with uvicorn")
     srv.add_argument("--host", default="127.0.0.1")
     srv.add_argument("--port", type=int, default=8000)
@@ -202,6 +204,29 @@ def serve_command(host: str, port: int, local_no_auth: bool, serve: Callable[[st
     return 0
 
 
+def mcp_stdio_command(environ: Mapping[str, str] | None = None,
+                      run: Callable[..., Any] | None = None) -> int:  # fmt: skip
+    """`mcp-stdio`: MCP over stdin/stdout. The key comes from MAILSIM_API_KEY only (never argv);
+    local no-auth mode never applies; stdout is the protocol channel, so nothing else is
+    printed there."""
+    from mailsim.mcp.stdio import StdioConfigError, run_stdio
+
+    env = {k: v for k, v in (os.environ if environ is None else environ).items()
+           if k != "MAILSIM_LOCAL_NO_AUTH"}  # fmt: skip
+    state = build_state(env)
+    try:
+        (run or run_stdio)(state["engine"], session_factory=state["session_factory"],
+                           evaluation_service=state["evaluation_service"],
+                           persona_runtime_factory=state["persona_runtime_factory"],
+                           environ=env)  # fmt: skip
+    except StdioConfigError as exc:
+        print(f"mcp-stdio: {exc}", file=sys.stderr)
+        return 2
+    finally:
+        state["db_engine"].dispose()
+    return 0
+
+
 def _write_secret(path: Path, data: str) -> None:
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as fh:
@@ -213,6 +238,8 @@ def main(argv: Sequence[str] | None = None, *, serve: Callable[[str, int], Any] 
     args = _parser().parse_args(argv)
     if args.cmd == "serve":
         return serve_command(args.host, args.port, args.local_no_auth, serve)
+    if args.cmd == "mcp-stdio":
+        return mcp_stdio_command()
     if args.cmd == "sweep":
         state = build_state()
         try:
