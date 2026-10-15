@@ -19,3 +19,20 @@ jobs:
       - run: uv run mypy
       - run: uv run lint-imports
       - run: uv run pytest --cov=mailsim --cov-branch
+      - run: uv run alembic upgrade head && uv run alembic check
+        env: {MAILSIM_DATABASE_URL: "postgresql+psycopg://mailsim:mailsim@localhost:54329/mailsim"}
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run: {working-directory: web}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: "22", cache: npm, cache-dependency-path: web/package-lock.json}
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run e2e
