@@ -113,7 +113,7 @@ export function KeyPanel({ conn, revealed, onReveal }: { conn: RunConnection; re
             Agent keys are shown once: when the run is created and when a new key is minted. This tab does not hold a
             key for this run. Paste the key you saved, or mint a new one.
           </p>
-          <form className="form inline" onSubmit={submitPasted} noValidate aria-label="Use a saved agent key">
+          <form className="form inline" onSubmit={submitPasted} noValidate aria-label="Paste a key you saved">
             <div className="field">
               <label htmlFor="paste-key">Saved agent key</label>
               <input

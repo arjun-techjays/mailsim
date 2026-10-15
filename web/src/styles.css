@@ -445,7 +445,7 @@ fieldset {
   color: var(--warn-fg);
   border-color: var(--warn-border);
 }
-.card.warning a {
+.card.warning a:not(.button) {
   color: inherit;
 }
 .card.warning input {
@@ -458,7 +458,7 @@ fieldset {
   padding: 8px 12px;
   border-radius: 4px;
 }
-.notice a {
+.notice a:not(.button) {
   color: inherit;
 }
 .error-box {
@@ -469,7 +469,7 @@ fieldset {
   padding: 8px 12px;
   margin: 8px 0;
 }
-.error-box a {
+.error-box a:not(.button) {
   color: inherit;
 }
 .error-title,

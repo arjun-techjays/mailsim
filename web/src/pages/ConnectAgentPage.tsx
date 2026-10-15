@@ -22,12 +22,15 @@ function ConnectContent({ runId }: { runId: string }) {
   const held = useAgentKeys().get(runId);
   const conn = useQuery({ queryKey: connectionKey(runId), queryFn: () => api.runConnection(runId) });
   const status = useSystemStatus();
-  const choice = choiceById(params.get('interface'));
+  // Local state answers the radio at once; the URL keeps the choice for reloads and links.
+  const [choiceId, setChoiceId] = useState(params.get('interface'));
+  const choice = choiceById(choiceId);
 
   if (conn.isPending) return <Loading label="Loading connection details…" />;
   if (conn.isError) return <ErrorDisplay error={conn.error} title="Could not load connection details" />;
   const c = conn.data;
   const pick = (id: string) => {
+    setChoiceId(id);
     const p = new URLSearchParams(params);
     p.set('interface', id);
     setParams(p, { replace: true });
