@@ -67,6 +67,18 @@ def inspector(request: Request, principal: Principal) -> Controller | EvaluatorV
     return _facade(request, principal, Controller | EvaluatorView)  # type: ignore[arg-type]
 
 
+def run_personas(request: Request, ctl: Controller, run_id: str) -> int:
+    """Run one persona-runtime step after the clock moved (single scheduler loop per run).
+
+    The runtime is optional (`app.state.persona_runtime_factory`); without it personas stay
+    silent. Replies are recorded via `Controller.persona_reply`, so replay never calls a model.
+    """
+    factory = getattr(request.app.state, "persona_runtime_factory", None)
+    if factory is None:
+        return 0
+    return len(factory(ctl).step(run_id))
+
+
 def run_out(request: Request, principal: Principal, run_id: str) -> s.RunOut:
     info = inspector(request, principal).run_info(run_id)  # scope-checked (404 otherwise)
     with sessions(request)() as session:

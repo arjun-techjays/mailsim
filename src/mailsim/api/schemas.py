@@ -213,6 +213,9 @@ class AdvanceRequest(_M):
 class ClockResult(_M):
     fired: list[str]
     virtual_time: str
+    persona_replies: int = Field(
+        default=0, description="persona messages delivered by the persona runtime in this step"
+    )
 
 
 # ---- agent mailbox ---------------------------------------------------------------------
