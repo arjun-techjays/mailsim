@@ -31,6 +31,7 @@ HTTP_STATUS: dict[ErrorCode, int] = {
     ErrorCode.SIMULATION_LIMIT_EXCEEDED: 429,
     ErrorCode.RATE_LIMITED: 429,
     ErrorCode.UNSUPPORTED_OPERATION: 501,
+    ErrorCode.UPSTREAM_UNAVAILABLE: 503,
 }
 UNAUTHENTICATED = "UNAUTHENTICATED"  # 401: missing/invalid credential (transport-level)
 INTERNAL = "INTERNAL"  # 500: unexpected server fault; details are never leaked

@@ -1457,6 +1457,30 @@
         "title": "IssuedCredential",
         "type": "object"
       },
+      "MailboxOut": {
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "owner_id": {
+            "title": "Owner Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "owner_id",
+          "email"
+        ],
+        "title": "MailboxOut",
+        "type": "object"
+      },
       "MeOut": {
         "additionalProperties": false,
         "description": "The calling credential's identity (`GET /v1/me`).",
@@ -3828,6 +3852,58 @@
         ]
       }
     },
+    "/v1/runs/{run_id}/mailboxes": {
+      "get": {
+        "description": "Mailboxes of the run (operator view).",
+        "operationId": "list_mailboxes_v1_runs__run_id__mailboxes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/MailboxOut"
+                  },
+                  "title": "Response List Mailboxes V1 Runs  Run Id  Mailboxes Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Mailboxes",
+        "tags": [
+          "simulator"
+        ]
+      }
+    },
     "/v1/runs/{run_id}/mailboxes/{mailbox_id}/inject": {
       "post": {
         "description": "Inject an inbound message into a simulated mailbox. Nothing ever leaves the sandbox:\nthe only delivery status is `delivered_to_simulated_mailbox`.",
@@ -3907,6 +3983,121 @@
           }
         ],
         "summary": "Inject",
+        "tags": [
+          "simulator"
+        ]
+      }
+    },
+    "/v1/runs/{run_id}/mailboxes/{mailbox_id}/messages": {
+      "get": {
+        "description": "Operator read of any mailbox in the run. Unlike the agent mailbox API this is not an\nagent action: nothing is recorded and no triggers are armed; finished runs are readable.",
+        "operationId": "inspect_messages_v1_runs__run_id__mailboxes__mailbox_id__messages_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "mailbox_id",
+            "required": true,
+            "schema": {
+              "title": "Mailbox Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "folder",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Folder"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "default": "asc",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "title": "Order",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagePage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Inspect Messages",
         "tags": [
           "simulator"
         ]

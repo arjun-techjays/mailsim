@@ -103,6 +103,7 @@ class Run(Base):
     __table_args__ = (
         ForeignKeyConstraint(["project_id", "tenant_id"], ["projects.id", "projects.tenant_id"]),
         Index("ix_runs_scope", "tenant_id", "project_id"),
+        Index("ix_runs_scope_created", "tenant_id", "project_id", "created_at", "id"),
     )
 
 

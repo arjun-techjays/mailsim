@@ -345,3 +345,15 @@ def test_principal_roles_are_coerced_and_unknown_roles_fail_closed(env):
     object.__setattr__(rogue, "role", "nobody")
     with pytest.raises(PermissionDenied):
         facade_for(env.engine, rogue)
+
+
+def test_operator_reads_validate_and_page(world):
+    env, ctl, ev, run, agent, fm, *_ = world
+    with pytest.raises(InvalidRequest):
+        ctl.inspect_messages(run, fm, order="sideways")
+    page = ev.inspect_messages(run, fm, page_size=1)
+    rest = ev.inspect_messages(run, fm, cursor=page.next_cursor)
+    assert len(page.items) == 1 and rest.items and page.items[0].id != rest.items[0].id
+    items, nxt = ev.events_page(run, limit=2)
+    assert len(items) == 2 and nxt == items[-1]["sequence"]
+    assert {b["owner_id"] for b in ctl.list_mailboxes(run)} == {"finance_manager", "vendor"}

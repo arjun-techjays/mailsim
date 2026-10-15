@@ -154,6 +154,10 @@ class SimEngine:
         self.blobs = blobs
         self.limits = limits or MimeLimits()
 
+    @property
+    def session_factory(self) -> sessionmaker[Session]:
+        return self._sf
+
     # ------------------------------------------------------------------ command wrapper
 
     def _command(
@@ -1648,34 +1652,83 @@ class SimEngine:
         after = decode_cursor(cursor) if cursor else None
 
         def fn(c: Ctx) -> Page[CanonicalMessage]:
-            self._mailbox(c, mailbox_id)
-            stmt = select(m.Message).where(
-                m.Message.run_id == c.run.id, m.Message.mailbox_id == mailbox_id
-            )
-            if folder is not None:
-                stmt = stmt.where(
-                    m.Message.folder_id == self._resolve_folder(c, mailbox_id, folder).id
-                )
-            key = tuple_(m.Message.created_at, m.Message.id)
-            if after is not None:
-                bound = (parse_ts(after[0]), after[1])
-                stmt = stmt.where(key > bound if order == "asc" else key < bound)
-            ordering = (
-                (m.Message.created_at, m.Message.id)
-                if order == "asc"
-                else (m.Message.created_at.desc(), m.Message.id.desc())
-            )
-            rows = c.session.execute(stmt.order_by(*ordering).limit(page_size + 1)).scalars().all()
-            items = [self._canonical(c, r) for r in rows[:page_size]]
-            nxt = None
-            if len(rows) > page_size:
-                last = rows[page_size - 1]
-                nxt = encode_cursor(iso(last.created_at), last.id)
-            return Page(items, nxt)
+            return self._message_page(c, mailbox_id, folder, page_size, after, order)
 
         return self._read(scope, run_id, actor, "read",
                           {"folder": folder, "page_size": page_size, "paged": cursor is not None},
                           fn, mailbox_id)  # fmt: skip
+
+    def _message_page(self, c: Ctx, mailbox_id: str, folder: str | None, page_size: int,
+                      after: tuple[str, str] | None, order: str) -> Page[CanonicalMessage]:  # fmt: skip
+        self._mailbox(c, mailbox_id)
+        stmt = select(m.Message).where(
+            m.Message.run_id == c.run.id, m.Message.mailbox_id == mailbox_id
+        )
+        if folder is not None:
+            stmt = stmt.where(m.Message.folder_id == self._resolve_folder(c, mailbox_id, folder).id)
+        key = tuple_(m.Message.created_at, m.Message.id)
+        if after is not None:
+            bound = (parse_ts(after[0]), after[1])
+            stmt = stmt.where(key > bound if order == "asc" else key < bound)
+        ordering = (
+            (m.Message.created_at, m.Message.id)
+            if order == "asc"
+            else (m.Message.created_at.desc(), m.Message.id.desc())
+        )
+        rows = c.session.execute(stmt.order_by(*ordering).limit(page_size + 1)).scalars().all()
+        items = [self._canonical(c, r) for r in rows[:page_size]]
+        nxt = None
+        if len(rows) > page_size:
+            last = rows[page_size - 1]
+            nxt = encode_cursor(iso(last.created_at), last.id)
+        return Page(items, nxt)
+
+    def inspect_messages(self, scope: Scope, run_id: str, mailbox_id: str, *,
+                         folder: str | None = None, page_size: int = 50, cursor: str | None = None,
+                         order: str = "asc") -> Page[CanonicalMessage]:  # fmt: skip
+        """Operator (controller/evaluator) read of any mailbox in the run. Not an agent
+        action: it records nothing, arms no triggers and works on finished runs too."""
+        check_page_size(page_size)
+        if order not in ("asc", "desc"):
+            raise InvalidRequest("order must be 'asc' or 'desc'")
+        after = decode_cursor(cursor) if cursor else None
+        with self._sf() as s:
+            run = get_run(s, scope, run_id)
+            return self._message_page(Ctx(s, run, id_generator(run)), mailbox_id, folder,
+                                      page_size, after, order)  # fmt: skip
+
+    def list_mailboxes(self, scope: Scope, run_id: str) -> list[dict[str, Any]]:
+        with self._sf() as s:
+            get_run(s, scope, run_id)
+            rows = s.execute(
+                select(m.Mailbox).where(m.Mailbox.run_id == run_id).order_by(m.Mailbox.owner_id)
+            ).scalars()
+            return [{"id": r.id, "owner_id": r.owner_id, "email": r.email} for r in rows]
+
+    def events_page(self, scope: Scope, run_id: str, *, after_sequence: int = 0, limit: int = 100,
+                    event_type: str | None = None, actor: str | None = None,
+                    epoch: int | None = None) -> tuple[list[dict[str, Any]], int | None]:  # fmt: skip
+        """Filtered, keyset-paginated event trace. Returns (items, next after_sequence|None)."""
+        check_page_size(limit)
+        ev = m.EventRow
+        stmt = select(ev).where(ev.run_id == run_id, ev.sequence > after_sequence)
+        if event_type is not None:
+            stmt = stmt.where(ev.type == event_type)
+        if actor is not None:
+            stmt = stmt.where(ev.actor == actor)
+        if epoch is not None:
+            stmt = stmt.where(ev.epoch == epoch)
+        with self._sf() as s:
+            get_run(s, scope, run_id)
+            rows = s.execute(stmt.order_by(ev.sequence).limit(limit + 1)).scalars().all()
+        items: list[dict[str, Any]] = [
+            {"sequence": r.sequence, "epoch": r.epoch, "type": r.type, "actor": r.actor,
+             "operation": r.operation, "outcome": r.outcome, "payload": r.payload,
+             "virtual_time": iso(r.virtual_time) if r.virtual_time else None}
+            for r in rows[:limit]
+        ]  # fmt: skip
+        nxt: int | None = rows[limit - 1].sequence if len(rows) > limit else None
+        return items, nxt
 
     def list_changes(self, scope: Scope, run_id: str, mailbox_id: str, since_sequence: int, *,
                      limit: int = 500, actor: str = AGENT) -> dict[str, Any]:  # fmt: skip

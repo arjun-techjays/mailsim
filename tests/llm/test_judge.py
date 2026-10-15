@@ -111,7 +111,7 @@ def test_judge_unparseable_and_null_are_inconclusive():
 def test_judge_provider_failure_and_budget_are_inconclusive():
     out, _ = run_judge(LLMUnavailable("down"))
     assert out == {"passed": None, "score": None, "llm_call_id": None,
-                   "explanation": f"INCONCLUSIVE: judge unavailable ({ErrorCode.RATE_LIMITED})"}  # fmt: skip
+                   "explanation": f"INCONCLUSIVE: judge unavailable ({ErrorCode.UPSTREAM_UNAVAILABLE})"}  # fmt: skip
     gw = LLMGateway(ScriptedProvider(), budget=Budget(max_calls=0))
     out = LLMJudge(gw, run_id="run_1").judge(**ARGS)
     assert out["passed"] is None and "SIMULATION_LIMIT_EXCEEDED" in out["explanation"]

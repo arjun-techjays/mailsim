@@ -35,7 +35,12 @@ from typing import Any
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from mailsim.domain.errors import InvalidRequest, RateLimited, SimError, SimulationLimitExceeded
+from mailsim.domain.errors import (
+    InvalidRequest,
+    SimError,
+    SimulationLimitExceeded,
+    UpstreamUnavailable,
+)
 from mailsim.domain.ids import new_control_id
 from mailsim.llm.config import LLMConfig, redact
 from mailsim.llm.contract import Budget, LLMProvider, LLMRequest, LLMResponse
@@ -48,12 +53,19 @@ TRUNCATED_STOP_REASONS = frozenset({"max_tokens", "length"})
 RUN_SCOPED_PURPOSES = frozenset({"persona", "judge"})
 
 
-class LLMUnavailable(RateLimited):
-    """Transient provider failure (timeout, connection, 408/429/overloaded, 5xx)."""
+class LLMUnavailable(UpstreamUnavailable):
+    """Transient provider failure (timeout, connection, 408/429/overloaded, 5xx). HTTP 503."""
+
+    def __init__(self, message: str, *, details: dict[str, object] | None = None) -> None:
+        super().__init__(message, details={"retryable": True, **(details or {})})
 
 
-class LLMProviderError(InvalidRequest):
-    """Non-retryable provider failure (auth, rejected request, refusal, bad output)."""
+class LLMProviderError(UpstreamUnavailable):
+    """Non-retryable provider failure (auth, rejected request, refusal, bad output). HTTP 503:
+    it is the provider's (or the operator's configuration's) fault, never the API caller's."""
+
+    def __init__(self, message: str, *, details: dict[str, object] | None = None) -> None:
+        super().__init__(message, details={"retryable": False, **(details or {})})
 
 
 def provider_error(provider: str, kind: str, message: str, *, retryable: bool,

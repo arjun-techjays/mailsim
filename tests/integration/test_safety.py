@@ -122,6 +122,12 @@ def test_exempt_directories_contain_only_listed_files():
             assert not any(f"import {m}" in text for m in ALWAYS_FORBIDDEN), rel
 
 
+def test_harness_accessor_is_never_used_by_interfaces():
+    offenders = [str(p.relative_to(ROOT)) for p in (ROOT / "src").rglob("*.py")
+                 if "harness_parts" in p.read_text() and "mailsim/engine/" not in str(p)]  # fmt: skip
+    assert offenders == []
+
+
 def test_interfaces_never_reach_through_facades():
     """Facades keep the engine in `_e`; nothing outside mailsim/engine may touch it."""
     offenders = []

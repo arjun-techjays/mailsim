@@ -26,7 +26,7 @@ from mailsim.api.pagination import decode_sequence_cursor, encode_sequence_curso
 from mailsim.api.routers._common import blobs, controller, inspector, run_out, scope, sessions
 from mailsim.auth.principal import Principal, Role
 from mailsim.domain.clock import iso, parse_ts
-from mailsim.domain.errors import InvalidRequest, NotFound
+from mailsim.domain.errors import Conflict, InvalidRequest, NotFound
 from mailsim.domain.states import TERMINAL
 from mailsim.engine.facades import EvaluatorView
 from mailsim.engine.pagination import decode_cursor, encode_cursor
@@ -338,6 +338,9 @@ def _agent_credential(request: Request, principal: Principal, run_id: str) -> s.
     ctl = controller(request, principal)
     with sessions(request)() as session:
         run = repos.get_run(session, scope(principal), run_id)
+        if run.status in {str(st) for st in TERMINAL}:
+            raise Conflict(f"run is {run.status}; agent credentials are only issued for live runs",
+                           details={"status": run.status})  # fmt: skip
         sv = session.get(m.ScenarioVersion, run.scenario_version_id)
         assert sv is not None
         body = sv.spec["scenario"]
@@ -490,25 +493,16 @@ def run_events(
     """Event trace in sequence order, optionally filtered by event `type`, `actor` and
     `epoch`; follow `next_cursor` (with the same filters) until it is null."""
     after = decode_sequence_cursor(cursor)
-    stmt = select(m.EventRow).where(m.EventRow.run_id == run_id, m.EventRow.sequence > after)
-    if event_type is not None:
-        stmt = stmt.where(m.EventRow.type == event_type)
-    if actor is not None:
-        stmt = stmt.where(m.EventRow.actor == actor)
-    if epoch is not None:
-        stmt = stmt.where(m.EventRow.epoch == epoch)
-    with sessions(request)() as session:
-        repos.get_run(session, scope(principal), run_id)
-        rows = session.execute(
-            stmt.order_by(m.EventRow.sequence).limit(page_size + 1)
-        ).scalars().all()  # fmt: skip
-    items = [
-        s.EventOut(sequence=r.sequence, epoch=r.epoch, type=r.type, actor=r.actor,
-                   operation=r.operation, outcome=r.outcome, payload=r.payload,
-                   virtual_time=iso(r.virtual_time) if r.virtual_time else None)
-        for r in rows[:page_size]
-    ]  # fmt: skip
-    nxt = encode_sequence_cursor(items[-1].sequence) if len(rows) > page_size else None
+    rows, nxt_seq = inspector(request, principal).events_page(
+        run_id,
+        after_sequence=after,
+        limit=page_size,
+        event_type=event_type,
+        actor=actor,
+        epoch=epoch,
+    )
+    items = [s.EventOut(**r) for r in rows]
+    nxt = encode_sequence_cursor(nxt_seq) if nxt_seq is not None else None
     return s.EventPage(items=items, next_cursor=nxt)
 
 

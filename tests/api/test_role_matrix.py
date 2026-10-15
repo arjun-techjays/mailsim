@@ -44,6 +44,8 @@ ROUTES: list[tuple[str, str, set[str], object, int]] = [
     ("POST", "/v1/runs/{run}/scheduler/tick", {C}, None, 200),
     ("GET", "/v1/runs/{run}/state", {C, E}, None, 200),
     ("GET", "/v1/runs/{run}/actions", {C, E}, None, 200),
+    ("GET", "/v1/runs/{run}/mailboxes", {C, E}, None, 200),
+    ("GET", "/v1/runs/{run}/mailboxes/{mbx}/messages", {C, E}, None, 200),
     ("GET", "/v1/mailboxes/{mbx}/messages", {A}, None, 200),
     ("GET", "/v1/mailboxes/{mbx}/messages/{msg}", {A}, None, 200),
     ("GET", "/v1/mailboxes/{mbx}/threads/{thread}", {A}, None, 200),

@@ -116,6 +116,19 @@ class RunIndex:
                           a.get("input") or {}, a.get("result") or {}, start, end,
                           a.get("virtual_time"))  # fmt: skip
 
+    def agent_labels_at(self, cutoff: int) -> set[tuple[str, str]]:
+        """(message id, casefolded label) pairs whose most recent ADD up to `cutoff` was made by
+        the agent itself. Such labels are self-issued evidence: like agent-created mail they
+        cannot satisfy a policy's `unless` (a label added by anyone else later wins)."""
+        last_adder: dict[tuple[str, str], str] = {}
+        for e in self.events_in(cutoff):
+            if e["type"] != "message.labels_changed":
+                continue
+            mid = e["payload"].get("message_id", "")
+            for label in e["payload"].get("add") or []:
+                last_adder[(mid, str(label).casefold())] = e["actor"]
+        return {k for k, actor in last_adder.items() if actor == AGENT}
+
     # ------------------------------------------------------------------ windows
     def events_in(self, cutoff: int) -> list[dict[str, Any]]:
         """Current-epoch events up to and including `cutoff`."""
@@ -320,6 +333,7 @@ def select_messages(
     *,
     agent_mailbox_id: str,
     agent_created: set[str],
+    agent_labels: set[tuple[str, str]] | None = None,
 ) -> Selection:
     """Apply a MessageWhere to a state snapshot (all conditions AND-ed)."""
     if where.mailbox is None:
@@ -371,6 +385,14 @@ def select_messages(
                 continue
         if not where.include_agent_created and msg["id"] in agent_created:
             excluded.append(msg["id"])
+            continue
+        if (
+            where.label is not None
+            and not where.include_agent_created
+            and agent_labels is not None
+            and (msg["id"], where.label.casefold()) in agent_labels
+        ):
+            excluded.append(msg["id"])  # the matching label was applied by the agent itself
             continue
         picked.append(msg)
     return Selection(picked, excluded)

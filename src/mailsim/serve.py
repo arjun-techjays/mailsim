@@ -24,6 +24,7 @@ import json
 import os
 import sys
 from collections.abc import Callable, Mapping, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,7 @@ from fastapi import FastAPI
 
 from mailsim.api.app import create_app
 from mailsim.api.auth import bootstrap
+from mailsim.api.idempotency import SWEEP_BATCH, sweep_expired
 from mailsim.domain.errors import SimError
 from mailsim.engine.core import SimEngine
 from mailsim.llm.gateway import LLMGateway
@@ -93,6 +95,7 @@ def _parser() -> argparse.ArgumentParser:
     b.add_argument("--project", default="default")
     b.add_argument("--migrate", action="store_true", help="apply migrations first")
     b.add_argument("--output", type=Path, help="write the keys to this file (mode 0600)")
+    sub.add_parser("sweep", help="delete expired idempotency records (also done on each claim)")
     srv = sub.add_parser("serve", help="run the HTTP API with uvicorn")
     srv.add_argument("--host", default="127.0.0.1")
     srv.add_argument("--port", type=int, default=8000)
@@ -116,6 +119,20 @@ def main(argv: Sequence[str] | None = None, *, serve: Callable[[str, int], Any] 
     args = _parser().parse_args(argv)
     if args.cmd == "serve":
         serve(args.host, args.port)
+        return 0
+    if args.cmd == "sweep":
+        state = build_state()
+        try:
+            total = 0
+            while True:
+                with state["session_factory"].begin() as session:
+                    n = sweep_expired(session, datetime.now(UTC))
+                total += n
+                if n < SWEEP_BATCH:
+                    break
+            print(json.dumps({"swept": total}))
+        finally:
+            state["db_engine"].dispose()
         return 0
     if args.migrate:
         run_migrations()
