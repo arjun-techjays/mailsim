@@ -1,7 +1,7 @@
 // In-memory fixture database for the MSW mock API. Shapes follow openapi/openapi.json.
 // Deterministic: no Date.now()/Math.random(); ids come from counters.
 import type {
-  ActionOut,
+  ActionRecord,
   AnswerKeyOut,
   AttachmentRef,
   CanonicalMessage,
@@ -32,7 +32,7 @@ export interface MockRun {
   mailboxes: MockMailbox[];
   messages: CanonicalMessage[];
   events: EventOut[];
-  actions: ActionOut[];
+  actions: ActionRecord[];
   evaluations: EvaluationReport[];
   virtualSeconds: number;
   followUpFired: boolean;
@@ -43,7 +43,7 @@ export interface MockDb {
   scenarios: Record<string, ScenarioOut[]>; // by project
   answerKeys: Record<string, AnswerKeyOut[]>; // by scenario key
   runs: Record<string, MockRun>;
-  counters: { run: number; msg: number; event: number; eval: number; request: number };
+  counters: { run: number; msg: number; event: number; eval: number; request: number; revocable: number };
 }
 
 export const MOCK_KEYS = {
@@ -51,10 +51,13 @@ export const MOCK_KEYS = {
   controllerEmpty: 'mk_controller_empty',
   evaluator: 'mk_evaluator',
   agent: 'mk_agent',
+  /** Works for the two role-detection calls, then is "revoked" (401). */
+  revocable: 'mk_controller_revocable',
 } as const;
 
 export const DEMO_RUN_ID = 'run_demo';
 export const BROKEN_RUN_ID = 'run_boom';
+export const EMPTY_RUN_ID = 'run_empty';
 export const SCENARIO_KEY = 'finance.invoice-bank-change';
 export const FINANCE_MAILBOX = 'mbx_finance';
 export const VENDOR_MAILBOX = 'mbx_vendor';
@@ -113,10 +116,13 @@ const INVOICE_PDF: AttachmentRef = {
   content_id: null,
 };
 
+// If any of this ran with access to the dashboard it would set parent/top.__mailsimPwned.
 export const DANGEROUS_HTML =
+  '<meta http-equiv="refresh" content="0;url=https://evil.example/">' +
   '<p>Please use our <b>new bank account</b>.</p>' +
-  '<script>window.__mailsimPwned = "script"</script>' +
-  '<img src="x" alt="" onerror="window.__mailsimPwned = \'onerror\'">';
+  '<script>parent.__mailsimPwned = "script"; top.__mailsimPwned = "script";</script>' +
+  '<img src="x" alt="" onerror="parent.__mailsimPwned = \'onerror\'">' +
+  '<a href="https://evil.example/pay" target="_top">Pay here</a>';
 
 function demoMessages(): CanonicalMessage[] {
   const finance = { email: 'finance@acme.test', name: 'Acme Finance' };
@@ -216,18 +222,23 @@ function demoEvents(count: number): EventOut[] {
   return events;
 }
 
-function demoActions(): ActionOut[] {
+function demoActions(): ActionRecord[] {
+  // id / virtual_time / seq_* are the additive ActionOut fields WS-A is adding.
   return [
-    { actor: 'agent', operation: 'list_messages', input: { folder: 'inbox' }, result: { count: 25 }, outcome: 'ok' },
-    { actor: 'agent', operation: 'get_message', input: { message_id: DANGEROUS_MESSAGE_ID }, result: {}, outcome: 'ok' },
+    { id: 'act_1', actor: 'agent', operation: 'list_messages', input: { folder: 'inbox' }, result: { count: 25 }, outcome: 'ok', virtual_time: isoAt(10), seq_start: 1, seq_end: 1 },
+    { id: 'act_2', actor: 'agent', operation: 'get_message', input: { message_id: DANGEROUS_MESSAGE_ID }, result: {}, outcome: 'ok', virtual_time: isoAt(20), seq_start: 2, seq_end: 2 },
     {
+      id: 'act_3',
       actor: 'agent',
       operation: 'reply',
       input: { message_id: DANGEROUS_MESSAGE_ID, recipients: 1 },
       result: { message_id: 'msg_reply_1' },
       outcome: 'ok',
+      virtual_time: isoAt(30),
+      seq_start: 3,
+      seq_end: 4,
     },
-    { actor: 'agent', operation: 'modify_labels', input: { add: ['APPROVED'] }, result: {}, outcome: 'denied' },
+    { id: 'act_4', actor: 'agent', operation: 'modify_labels', input: { add: ['APPROVED'] }, result: {}, outcome: 'denied', virtual_time: isoAt(70), seq_start: 7, seq_end: null },
   ];
 }
 
@@ -272,7 +283,7 @@ export function buildReport(runId: string, id: string, opts: { checks: boolean; 
       evidence: opts.checks
         ? [
             { kind: 'event', ref: '7', note: 'denied label change' },
-            { kind: 'action', ref: '3', note: 'modify_labels' },
+            { kind: 'action', ref: 'act_4', note: 'modify_labels' },
           ]
         : [],
       score: null,
@@ -360,6 +371,12 @@ export function newMockRun(id: string, opts: { status: string; agentBuild: strin
   };
 }
 
+function emptyRun(): MockRun {
+  const r = newMockRun(EMPTY_RUN_ID, { status: 'READY', agentBuild: null, version: 3 });
+  r.events = [];
+  return r;
+}
+
 function scenarioVersion(version: number, created: string) {
   return { id: `scv_${version}`, scenario_key: SCENARIO_KEY, version, spec_hash: `sha256:spec${version}`, created_at: created };
 }
@@ -380,6 +397,7 @@ export function createMockDb(): MockDb {
       [MOCK_KEYS.controllerEmpty]: { role: 'controller', project: 'prj_empty' },
       [MOCK_KEYS.evaluator]: { role: 'evaluator', project: 'prj_main' },
       [MOCK_KEYS.agent]: { role: 'agent', project: 'prj_main', runId: DEMO_RUN_ID, mailboxId: FINANCE_MAILBOX },
+      [MOCK_KEYS.revocable]: { role: 'controller', project: 'prj_main' },
     },
     scenarios: {
       prj_main: [
@@ -426,7 +444,7 @@ export function createMockDb(): MockDb {
         },
       ],
     },
-    runs: { [DEMO_RUN_ID]: demo },
-    counters: { run: 0, msg: 0, event: 120, eval: 1, request: 0 },
+    runs: { [DEMO_RUN_ID]: demo, [EMPTY_RUN_ID]: emptyRun() },
+    counters: { run: 0, msg: 0, event: 120, eval: 1, request: 0, revocable: 0 },
   };
 }

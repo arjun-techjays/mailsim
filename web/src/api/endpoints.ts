@@ -1,26 +1,35 @@
 import { apiRequest, type ApiConfig, type RequestOptions } from './client';
 import type {
-  ActionOut,
   AnswerKeyOut,
   ArtifactOut,
   BuildComparison,
-  CanonicalMessage,
   ClockResult,
   EvaluationReport,
   EvaluationRequest,
   EventPage,
-  FolderOut,
   InjectRequest,
   InjectResult,
-  MessagePage,
   ReplayOut,
   RunCreate,
   RunCreated,
   RunOut,
   ScenarioOut,
 } from './types';
+import type { ActionRecord } from './types';
 
 const seg = encodeURIComponent;
+
+export interface EventFilters {
+  type?: string;
+  actor?: string;
+  epoch?: string;
+}
+
+/** Shape of the planned GET /v1/me; only `role` is relied upon. */
+export interface Me {
+  role?: unknown;
+  [key: string]: unknown;
+}
 
 /** One function per OpenAPI operation the dashboard uses. */
 export function createApi(cfg: ApiConfig) {
@@ -32,6 +41,14 @@ export function createApi(cfg: ApiConfig) {
 
   return {
     health: () => get<Record<string, string>>('/v1/health'),
+    /** Additive endpoint (may be absent: 404/501). */
+    me: () => get<Me>('/v1/me'),
+    /** Additive endpoint (may be absent: 404/501). Accepts a page or a bare array. */
+    listRuns: async (cursor: string | null): Promise<{ items: RunOut[]; next_cursor: string | null }> => {
+      const out = await get<RunOut[] | { items?: RunOut[]; next_cursor?: string | null }>('/v1/runs', { cursor });
+      if (Array.isArray(out)) return { items: out, next_cursor: null };
+      return { items: out?.items ?? [], next_cursor: out?.next_cursor ?? null };
+    },
 
     // scenarios
     listScenarios: (filters: { tag?: string; q?: string } = {}, signal?: AbortSignal) =>
@@ -53,8 +70,9 @@ export function createApi(cfg: ApiConfig) {
     cancelRun: (id: string) => post<RunOut>(`${run(id)}/cancel`, undefined, true),
     resetRun: (id: string) => post<RunOut>(`${run(id)}/reset`, undefined, true),
     replayRun: (id: string) => post<ReplayOut>(`${run(id)}/replay`, undefined, true),
-    events: (id: string, cursor: string | null, pageSize: number) =>
-      get<EventPage>(`${run(id)}/events`, { cursor, page_size: pageSize }),
+    /** type/actor/epoch are additive filters; servers that ignore them still return valid pages. */
+    events: (id: string, cursor: string | null, pageSize: number, filters: EventFilters = {}) =>
+      get<EventPage>(`${run(id)}/events`, { cursor, page_size: pageSize, ...filters }),
     artifacts: (id: string) => get<ArtifactOut[]>(`${run(id)}/artifacts`),
 
     // simulator control
@@ -64,29 +82,12 @@ export function createApi(cfg: ApiConfig) {
     inject: (id: string, mailboxId: string, body: InjectRequest) =>
       post<InjectResult>(`${run(id)}/mailboxes/${seg(mailboxId)}/inject`, body, true),
     state: (id: string) => get<Record<string, unknown>>(`${run(id)}/state`),
-    actions: (id: string) => get<ActionOut[]>(`${run(id)}/actions`),
+    actions: (id: string) => get<ActionRecord[]>(`${run(id)}/actions`),
 
     // evaluation (evaluator role)
     listEvaluations: (id: string) => get<EvaluationReport[]>(`${run(id)}/evaluations`),
     evaluate: (id: string, body: EvaluationRequest) =>
       post<EvaluationReport>(`${run(id)}/evaluations`, body, true),
-
-    // agent mailbox (agent role, bound to one mailbox)
-    folders: (mailboxId: string) => get<FolderOut[]>(`/v1/mailboxes/${seg(mailboxId)}/folders`),
-    listMessages: (
-      mailboxId: string,
-      params: { folder?: string; q?: string; cursor?: string | null; pageSize?: number },
-    ) =>
-      get<MessagePage>(`/v1/mailboxes/${seg(mailboxId)}/messages`, {
-        folder: params.folder,
-        q: params.q,
-        cursor: params.cursor,
-        page_size: params.pageSize,
-      }),
-    getMessage: (mailboxId: string, messageId: string) =>
-      get<CanonicalMessage>(`/v1/mailboxes/${seg(mailboxId)}/messages/${seg(messageId)}`),
-    getThread: (mailboxId: string, threadId: string) =>
-      get<CanonicalMessage[]>(`/v1/mailboxes/${seg(mailboxId)}/threads/${seg(threadId)}`),
   };
 }
 

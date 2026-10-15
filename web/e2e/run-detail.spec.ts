@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { expectAccessible, KEYS } from './fixtures';
+import { expectAccessible, expectEmailFrameInert, KEYS, XSS_HTML } from './fixtures';
 import { ConnectPage } from './pages/ConnectPage';
 import { RunPage } from './pages/RunPage';
 
@@ -34,10 +34,8 @@ test.describe('run detail navigation', () => {
 
     // HTML is only rendered in an empty-sandbox iframe; its script/onerror never execute.
     await view.getByRole('button', { name: 'Show HTML (sandboxed)' }).click();
-    const frame = view.getByTestId('email-html-frame');
-    await expect(frame).toHaveAttribute('sandbox', '');
     await expect(page.frameLocator('[data-testid="email-html-frame"]').getByText('new bank account')).toBeVisible();
-    expect(await page.evaluate(() => (window as unknown as { __mailsimPwned?: string }).__mailsimPwned)).toBeUndefined();
+    await expectEmailFrameInert(page);
     expect(await page.locator('script', { hasText: '__mailsimPwned' }).count()).toBe(0);
 
     // thread navigation
@@ -79,5 +77,25 @@ test.describe('run detail navigation', () => {
 
     await run.tab('Actions');
     await expect(page.getByTestId('actions-table').locator('tbody tr')).toHaveCount(4);
+  });
+
+  test('empty trace for a run without events', async ({ page }) => {
+    const run = new RunPage(page);
+    await run.goto('run_empty');
+    await run.tab('Event trace');
+    await expect(page.getByTestId('empty-state')).toHaveText('This run has no events yet.');
+    await expectAccessible(page, 'empty trace');
+  });
+
+  test('XSS canary: the payload WOULD set the flag in an unsandboxed frame (so the checks can fail)', async ({ page }) => {
+    await new RunPage(page).goto('run_demo');
+    await page.evaluate((html) => {
+      const f = document.createElement('iframe');
+      f.srcdoc = html; // deliberately unsandboxed, test-only
+      document.body.append(f);
+    }, XSS_HTML);
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { __mailsimPwned?: unknown }).__mailsimPwned))
+      .not.toBeUndefined();
   });
 });

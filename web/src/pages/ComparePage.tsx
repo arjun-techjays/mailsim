@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import type { BuildComparison } from '../api/types';
+import type { BuildComparison, TrialStats } from '../api/types';
 import { useApi } from '../auth/session';
 import { BarChart } from '../components/BarChart';
 import { RequireRole } from '../components/Gates';
@@ -31,8 +31,8 @@ function ComparisonView({ data }: { data: BuildComparison }) {
         title="Mean accuracy by build"
         bars={builds.map((b) => ({
           label: b,
-          value: data.builds[b]?.mean_accuracy ?? null,
-          note: `${data.builds[b]?.runs ?? 0} runs`,
+          value: (data.builds[b] as TrialStats).mean_accuracy,
+          note: `${(data.builds[b] as TrialStats).runs} runs`,
         }))}
         format={pct}
       />

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { EventOut } from '../api/types';
 import { useApi } from '../auth/session';
 import { ErrorDisplay } from '../components/ErrorDisplay';
@@ -9,28 +9,32 @@ import { runKeys } from './keys';
 
 export const EVENT_PAGE_SIZE = 50;
 
-const uniq = (values: string[]) => [...new Set(values)].sort();
-
 /**
- * Event trace with cursor pagination. The v1 events endpoint has no server-side filters,
- * so type/actor/epoch filters apply to the pages loaded so far (stated in the UI).
+ * Event trace with cursor pagination. type/actor/epoch filters are sent to the server (additive
+ * query parameters) and also applied to the received pages, so the view is correct whether or
+ * not the server supports them. Filter options accumulate from every page seen.
  */
 export function EventTimeline({ runId, highlightSeq }: { runId: string; highlightSeq: number | null }) {
   const api = useApi();
-  const list = useCursorList<EventOut>(runKeys.events(runId), (cursor) => api.events(runId, cursor, EVENT_PAGE_SIZE));
   const [type, setType] = useState('');
   const [actor, setActor] = useState('');
   const [epoch, setEpoch] = useState('');
-  const highlighted = useRef<HTMLTableRowElement>(null);
-
-  const options = useMemo(
-    () => ({
-      types: uniq(list.items.map((e) => e.type)),
-      actors: uniq(list.items.map((e) => e.actor)),
-      epochs: uniq(list.items.map((e) => String(e.epoch))),
-    }),
-    [list.items],
+  const filters = { type: type || undefined, actor: actor || undefined, epoch: epoch || undefined };
+  const list = useCursorList<EventOut>([...runKeys.events(runId), filters], (cursor) =>
+    api.events(runId, cursor, EVENT_PAGE_SIZE, filters),
   );
+  const highlighted = useRef<HTMLTableRowElement>(null);
+  const seen = useRef({ types: new Set<string>(), actors: new Set<string>(), epochs: new Set<string>() });
+  for (const e of list.items) {
+    seen.current.types.add(e.type);
+    seen.current.actors.add(e.actor);
+    seen.current.epochs.add(String(e.epoch));
+  }
+  const options = {
+    types: [...seen.current.types].sort(),
+    actors: [...seen.current.actors].sort(),
+    epochs: [...seen.current.epochs].sort(),
+  };
   const shown = list.items.filter(
     (e) => (!type || e.type === type) && (!actor || e.actor === actor) && (!epoch || String(e.epoch) === epoch),
   );
@@ -39,9 +43,6 @@ export function EventTimeline({ runId, highlightSeq }: { runId: string; highligh
   useEffect(() => {
     if (highlightLoaded) highlighted.current?.focus();
   }, [highlightLoaded]);
-
-  if (list.isLoading) return <Loading label="Loading events…" />;
-  if (list.error && list.items.length === 0) return <ErrorDisplay error={list.error} title="Could not load events" />;
 
   const select = (id: string, label: string, value: string, set: (v: string) => void, values: string[]) => (
     <div className="field">
@@ -65,15 +66,20 @@ export function EventTimeline({ runId, highlightSeq }: { runId: string; highligh
         {select('ev-actor', 'Actor', actor, setActor, options.actors)}
         {select('ev-epoch', 'Epoch', epoch, setEpoch, options.epochs)}
       </div>
-      <p className="hint" role="status">
-        Showing {shown.length} of {list.items.length} loaded event(s){list.hasMore ? '; more pages available' : ''}.
-        Filters apply to loaded pages.
-      </p>
-      {highlightSeq != null && !highlightLoaded && (
+      {list.isLoading ? (
+        <Loading label="Loading events…" />
+      ) : list.error && list.items.length === 0 ? (
+        <ErrorDisplay error={list.error} title="Could not load events" />
+      ) : (
+        <p className="hint" role="status">
+          Showing {shown.length} of {list.items.length} loaded event(s){list.hasMore ? '; more pages available' : ''}.
+        </p>
+      )}
+      {highlightSeq != null && !highlightLoaded && !list.isLoading && (
         <p className="notice">Event #{highlightSeq} is not loaded yet. Use “Load more events”.</p>
       )}
-      {shown.length === 0 ? (
-        <Empty>No events match.</Empty>
+      {list.isLoading || (list.error && list.items.length === 0) ? null : shown.length === 0 ? (
+        <Empty>{type || actor || epoch ? 'No events match these filters.' : 'This run has no events yet.'}</Empty>
       ) : (
         <table data-testid="event-table">
           <thead>
@@ -116,7 +122,7 @@ export function EventTimeline({ runId, highlightSeq }: { runId: string; highligh
           </tbody>
         </table>
       )}
-      {list.error && <ErrorDisplay error={list.error} title="Could not load more events" />}
+      {list.error && list.items.length > 0 && <ErrorDisplay error={list.error} title="Could not load more events" />}
       {list.hasMore && (
         <button type="button" onClick={list.loadMore} disabled={list.isFetchingMore}>
           {list.isFetchingMore ? 'Loading…' : 'Load more events'}

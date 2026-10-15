@@ -22,7 +22,7 @@ test.describe('API failure states', () => {
 
   test('timeout state', async ({ page }) => {
     await page.goto('/scenarios?q=slow');
-    await expect(page.getByRole('status')).toContainText('Loading scenarios');
+    await expect(page.getByText('Loading scenarios…')).toBeVisible();
     const err = page.getByTestId('api-error');
     await expect(err).toContainText('Request timed out', { timeout: 15_000 });
     await expect(err).toContainText('did not respond within 4s');

@@ -40,8 +40,24 @@ describe('Scenarios', () => {
     expect(within(err).getByTestId('request-id')).toBeInTheDocument();
   });
 
-  it('agent keys get a 403 message', async () => {
+  it('agent keys see the agent-key notice and no request is made', async () => {
+    const seen: string[] = [];
+    server.events.on('request:start', ({ request }) => {
+      seen.push(request.url);
+    });
     renderApp('/scenarios', sessionFor('agent'));
+    expect(await screen.findByTestId('agent-key-notice')).toBeInTheDocument();
+    expect(seen).toEqual([]);
+    server.events.removeAllListeners();
+  });
+
+  it('scenario API 403 is shown with a role hint', async () => {
+    server.use(
+      http.get('*/v1/scenarios', () =>
+        HttpResponse.json({ error: { code: 'PERMISSION_DENIED', message: 'no', details: {}, request_id: 'r' } }, { status: 403 }),
+      ),
+    );
+    renderApp('/scenarios', sessionFor('controller'));
     expect(await screen.findByTestId('api-error')).toHaveTextContent('PERMISSION_DENIED (HTTP 403)');
   });
 

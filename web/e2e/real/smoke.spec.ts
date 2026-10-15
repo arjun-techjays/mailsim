@@ -34,14 +34,19 @@ test('controller can list scenarios', async ({ page }) => {
   await new ConnectPage(page).connectAs(keys.controller as string, 'controller');
   await page.getByRole('link', { name: 'Continue' }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Scenarios' })).toBeVisible();
-  await expect(page.getByRole('status')).toHaveCount(0, { timeout: 15_000 });
+  await expect(page.getByText('Loading scenarios…')).toHaveCount(0, { timeout: 15_000 });
   await expect(page.getByTestId('api-error')).toHaveCount(0);
   await expectAccessible(page, 'scenarios (real)');
 });
 
-test('agent key is refused on control pages', async ({ page }) => {
+test('agent key gets the explanatory page and no data requests', async ({ page }) => {
   test.skip(!keys.agent, 'MAILSIM_AGENT_KEY not set');
   await new ConnectPage(page).connectAs(keys.agent as string, 'agent');
+  const calls: string[] = [];
+  page.on('request', (r) => {
+    if (r.url().includes('/v1/')) calls.push(r.url());
+  });
   await page.goto('/scenarios');
-  await expect(page.getByTestId('api-error')).toContainText('PERMISSION_DENIED');
+  await expect(page.getByTestId('agent-key-notice')).toBeVisible();
+  expect(calls).toEqual([]);
 });

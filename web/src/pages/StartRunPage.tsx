@@ -159,6 +159,7 @@ export function StartRunPage() {
           onDismiss={() => {
             setDismissedRun(created.run.id);
             setCreated(null);
+            mutation.reset(); // drop the credential from the mutation state as well
           }}
         />
       )}

@@ -8,6 +8,10 @@ export class ConnectPage {
     await expect(this.page.getByRole('heading', { name: 'Connect to mailsim' })).toBeVisible();
   }
 
+  async setBaseUrl(url: string) {
+    await this.page.getByLabel('API base URL').fill(url);
+  }
+
   async connect(apiKey: string) {
     await this.page.getByLabel('API key').fill(apiKey);
     await this.page.getByRole('button', { name: 'Connect', exact: true }).click();

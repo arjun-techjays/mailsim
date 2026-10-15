@@ -8,6 +8,8 @@ export interface SessionValue {
   api: Api | null;
   connect: (session: Session) => void;
   disconnect: () => void;
+  /** True once the API answered 401 for the current key (revoked/expired mid-session). */
+  rejected: boolean;
 }
 
 export const SessionContext = createContext<SessionValue | null>(null);

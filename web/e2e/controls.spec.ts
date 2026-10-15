@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { KEYS } from './fixtures';
+import { expectEmailFrameInert, KEYS, XSS_HTML } from './fixtures';
 import { ConnectPage } from './pages/ConnectPage';
 import { RunPage } from './pages/RunPage';
 
@@ -12,7 +12,7 @@ test.describe('run controls', () => {
     const run = new RunPage(page);
     await run.goto('run_demo');
 
-    await run.inject({ from: 'ceo@acme.test', subject: 'Urgent wire', text: 'Pay now', html: '<script>window.__mailsimPwned=1</script><b>Pay</b>' });
+    await run.inject({ from: 'ceo@acme.test', subject: 'Urgent wire', text: 'Pay now', html: XSS_HTML });
     await expect(page.getByTestId('inject-result')).toContainText('Delivered to simulated mailbox');
 
     await run.advance(600);
@@ -28,8 +28,9 @@ test.describe('run controls', () => {
     await expect(run.messageList()).toContainText('Following up: bank details');
     await run.openMessage('Urgent wire');
     await page.getByRole('button', { name: 'Show HTML (sandboxed)' }).click();
-    await expect(page.getByTestId('email-html-frame')).toHaveAttribute('sandbox', '');
-    expect(await page.evaluate(() => (window as unknown as { __mailsimPwned?: unknown }).__mailsimPwned)).toBeUndefined();
+    await expectEmailFrameInert(page);
+    await expect(page.frameLocator('[data-testid="email-html-frame"]').getByText('[https://evil.example/pay]')).toBeVisible();
+    await expect(page).toHaveURL(/\/runs\/run_demo/);
 
     await run.tab('Event trace');
     await page.getByLabel('Type').selectOption('clock.advanced');

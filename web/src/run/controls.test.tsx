@@ -120,7 +120,9 @@ describe('Inject form', () => {
     });
     const { user } = await openRun();
     const form = screen.getByRole('form', { name: 'Inject message' });
+    expect(within(form).getByLabelText('To (comma-separated)')).toHaveValue('finance@acme.test');
     await user.selectOptions(within(form).getByLabelText('Deliver to mailbox'), 'mbx_vendor');
+    expect(within(form).getByLabelText('To (comma-separated)')).toHaveValue('billing@supplier.test');
     await user.clear(within(form).getByLabelText('To (comma-separated)'));
     await user.type(within(form).getByLabelText('To (comma-separated)'), 'billing@supplier.test');
     await user.type(within(form).getByLabelText('Cc (comma-separated)'), 'a@x.test, b@x.test');

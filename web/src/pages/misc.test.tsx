@@ -5,10 +5,66 @@ import { server } from '../test/server';
 import { renderApp, sessionFor } from '../test/utils';
 
 describe('Runs page', () => {
-  it('opens a run by id and lists recent runs', async () => {
+  it('lists runs from GET /v1/runs', async () => {
+    renderApp('/runs', sessionFor('evaluator'));
+    const table = await screen.findByTestId('runs-table');
+    expect(within(table).getByRole('link', { name: 'run_demo' })).toBeInTheDocument();
+    expect(table).toHaveTextContent('finance.invoice-bank-change v3');
+    expect(table).toHaveTextContent('READY');
+  });
+
+  it('paginates the run list and shows empty/more errors', async () => {
+    const run = { id: 'r1', status: 'RUNNING', epoch: 1, virtual_time: null, agent_actions: 0, replay_of: null };
+    server.use(
+      http.get('*/v1/runs', ({ request }) =>
+        new URL(request.url).searchParams.get('cursor') ? HttpResponse.error() : HttpResponse.json([run]),
+      ),
+    );
+    renderApp('/runs', sessionFor('controller'));
+    expect(await screen.findByTestId('runs-table')).toHaveTextContent('r1');
+    expect(screen.queryByRole('button', { name: 'Load more runs' })).toBeNull();
+  });
+
+  it('load more runs and its failure', async () => {
+    const run = (id: string) => ({ id, status: 'RUNNING', epoch: 1, virtual_time: 'T', agent_actions: 0, replay_of: null, agent_build: 'b' });
+    server.use(
+      http.get('*/v1/runs', ({ request }) => {
+        const c = new URL(request.url).searchParams.get('cursor');
+        if (!c) return HttpResponse.json({ items: [run('r1')], next_cursor: 'c2' });
+        if (c === 'c2') return HttpResponse.json({ items: [run('r2')], next_cursor: 'c3' });
+        return HttpResponse.error();
+      }),
+    );
+    const { user } = renderApp('/runs', sessionFor('controller'));
+    await user.click(await screen.findByRole('button', { name: 'Load more runs' }));
+    expect(await screen.findByRole('link', { name: 'r2' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Load more runs' }));
+    expect(await screen.findByText(/Could not load more runs/)).toBeInTheDocument();
+  });
+
+  it('empty run list (page without fields)', async () => {
+    server.use(http.get('*/v1/runs', () => HttpResponse.json({})));
+    renderApp('/runs', sessionFor('controller'));
+    expect(await screen.findByText('No runs yet.')).toBeInTheDocument();
+  });
+
+  it('other list errors are shown with the session list', async () => {
+    server.use(http.get('*/v1/runs', () => HttpResponse.error()));
+    renderApp('/runs', sessionFor('controller'));
+    expect(await screen.findByText(/Could not list runs/)).toBeInTheDocument();
+    expect(screen.getByTestId('empty-state')).toHaveTextContent('No runs opened yet.');
+  });
+
+  it('falls back to the tab list when GET /v1/runs is absent, and opens by id', async () => {
+    server.use(
+      http.get('*/v1/runs', () =>
+        HttpResponse.json({ error: { code: 'NOT_FOUND', message: 'Not Found', details: {}, request_id: 'r' } }, { status: 404 }),
+      ),
+    );
     rememberRun({ id: 'run_demo', scenarioKey: 'finance.invoice-bank-change' });
     rememberRun({ id: 'run_other', scenarioKey: null });
     const { user, router } = renderApp('/runs', sessionFor('controller'));
+    expect(await screen.findByTestId('runs-fallback')).toBeInTheDocument();
     const recent = screen.getByTestId('recent-runs');
     expect(within(recent).getAllByRole('listitem')).toHaveLength(2);
     expect(recent).toHaveTextContent('(finance.invoice-bank-change)');
@@ -20,126 +76,4 @@ describe('Runs page', () => {
     expect(router.state.location.pathname).toBe('/runs/run_demo');
   });
 
-  it('shows an empty state', () => {
-    renderApp('/runs', sessionFor('controller'));
-    expect(screen.getByTestId('empty-state')).toHaveTextContent('No runs opened yet.');
-  });
-});
-
-describe('Agent mailbox', () => {
-  it('opens the bound mailbox with server-side cursor pagination', async () => {
-    const urls: string[] = [];
-    server.events.on('request:start', ({ request }) => {
-      urls.push(request.url);
-    });
-    const { user, router } = renderApp('/mailbox', sessionFor('agent'));
-    await user.click(screen.getByRole('button', { name: 'Open mailbox' }));
-    expect(screen.getByText('Enter the mailbox id from the agent credential.')).toBeInTheDocument();
-    await user.type(screen.getByLabelText('Mailbox id'), 'mbx_finance');
-    await user.click(screen.getByRole('button', { name: 'Open mailbox' }));
-    expect(router.state.location.pathname).toBe('/mailbox/mbx_finance');
-
-    expect(await screen.findByText('20 message(s) loaded, more available')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Load more messages' }));
-    expect(await screen.findByText('25 message(s) loaded')).toBeInTheDocument();
-    expect(urls.some((u) => u.includes('/v1/mailboxes/mbx_finance/messages?cursor=20&page_size=20'))).toBe(true);
-
-    await user.click(within(screen.getByRole('navigation', { name: 'Folders' })).getByRole('button', { name: 'inbox' }));
-    expect(await screen.findByText('20 message(s) loaded, more available')).toBeInTheDocument();
-    expect(urls.some((u) => u.includes('folder=inbox'))).toBe(true);
-
-    await user.click(screen.getByRole('button', { name: 'Invoice 4471' }));
-    expect(await screen.findByTestId('message-view')).toHaveTextContent('invoice-4471.pdf');
-    expect(screen.getByTestId('message-view')).toHaveTextContent('blob/raw/msg_invoice_1.eml');
-    expect(screen.queryByTestId('raw-mime-link')).toBeNull();
-    expect(router.state.location.search).toBe('?message=msg_invoice_1');
-    server.events.removeAllListeners();
-  });
-
-  it('another mailbox is refused', async () => {
-    renderApp('/mailbox/mbx_vendor', sessionFor('agent'));
-    expect((await screen.findAllByTestId('api-error'))[0]).toHaveTextContent('PERMISSION_DENIED');
-  });
-
-  it('thread and message-list errors; messages without optional fields', async () => {
-    server.use(
-      http.get('*/v1/mailboxes/:id/threads/:t', () => HttpResponse.error()),
-      http.get('*/v1/mailboxes/:id/messages', () =>
-        HttpResponse.json({
-          items: [
-            {
-              id: 'm1',
-              mailbox_id: 'mbx_finance',
-              message_id_header: '<m1>',
-              thread_id: 't1',
-              folder: 'inbox',
-              from: { email: 'a@x' },
-              created_at: '2026-01-01T00:00:00Z',
-            },
-          ],
-          next_cursor: null,
-        }),
-      ),
-      http.get('*/v1/mailboxes/:id/messages/:m', () =>
-        HttpResponse.json({
-          id: 'm1',
-          mailbox_id: 'mbx_finance',
-          message_id_header: '<m1>',
-          thread_id: 't1',
-          folder: 'inbox',
-          from: { email: 'a@x' },
-          created_at: '2026-01-01T00:00:00Z',
-        }),
-      ),
-    );
-    const { user } = renderApp('/mailbox/mbx_finance', sessionFor('agent'));
-    await user.click(await screen.findByRole('button', { name: '(no subject)' }));
-    const view = await screen.findByTestId('message-view');
-    expect(view).toHaveTextContent('No attachments.');
-    expect(view).toHaveTextContent('This message has no body.');
-    expect(await within(view).findByText(/Could not load thread/)).toBeInTheDocument();
-  });
-
-  it('folder and list errors', async () => {
-    server.use(
-      http.get('*/v1/mailboxes/:id/folders', () => HttpResponse.error()),
-      http.get('*/v1/mailboxes/:id/messages', () => HttpResponse.error()),
-    );
-    renderApp('/mailbox/mbx_finance', sessionFor('agent'));
-    expect(await screen.findByText(/Could not load folders/)).toBeInTheDocument();
-    expect(await screen.findByText(/Could not load messages/)).toBeInTheDocument();
-  });
-
-  it('second page failure keeps loaded messages', async () => {
-    server.use(
-      http.get('*/v1/mailboxes/:id/messages', ({ request }) =>
-        new URL(request.url).searchParams.get('cursor')
-          ? HttpResponse.error()
-          : HttpResponse.json({
-              items: [
-                {
-                  id: 'm1',
-                  mailbox_id: 'mbx_finance',
-                  message_id_header: '<m1>',
-                  thread_id: 't1',
-                  folder: 'inbox',
-                  subject: 'One',
-                  from: { email: 'a@x' },
-                  created_at: '2026-01-01T00:00:00Z',
-                },
-              ],
-              next_cursor: 'n',
-            }),
-      ),
-    );
-    const { user } = renderApp('/mailbox/mbx_finance', sessionFor('agent'));
-    await user.click(await screen.findByRole('button', { name: 'Load more messages' }));
-    expect(await screen.findByText(/Could not load more messages/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'One' })).toBeInTheDocument();
-  });
-
-  it('is gated for non-agent keys', () => {
-    renderApp('/mailbox', sessionFor('controller'));
-    expect(screen.getByTestId('role-gate')).toHaveTextContent('requires an agent key');
-  });
 });

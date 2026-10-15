@@ -25,37 +25,23 @@ test.describe('role differences', () => {
     await expectAccessible(page, 'role gate');
   });
 
-  test('agent: control pages are refused with a 403 message', async ({ page }) => {
-    await new ConnectPage(page).connectAs(KEYS.agent, 'agent');
+  test('agent keys: explanatory page and no data requests', async ({ page }) => {
+    const connect = new ConnectPage(page);
+    await connect.connectAs(KEYS.agent, 'agent');
+    const apiCalls: string[] = [];
+    page.on('request', (r) => {
+      if (r.url().includes('/v1/')) apiCalls.push(r.url());
+    });
     const nav = page.getByRole('navigation', { name: 'Main' });
     await expect(nav.getByRole('link', { name: 'Scenarios' })).toHaveCount(0);
-    await expect(nav.getByRole('link', { name: 'My mailbox' })).toBeVisible();
-
-    await page.goto('/scenarios');
-    const err = page.getByTestId('api-error');
-    await expect(err).toContainText('PERMISSION_DENIED (HTTP 403)');
-    await expect(err).toContainText('role is not allowed');
-
-    await new RunPage(page).goto('run_demo');
-    await expect(page.getByTestId('api-error')).toContainText('PERMISSION_DENIED (HTTP 403)');
-    await expect(page.getByRole('heading', { name: 'Run controls' })).toHaveCount(0);
-    await expectAccessible(page, 'agent 403');
-  });
-
-  test('agent: own mailbox via the agent API with server-side cursor pagination', async ({ page }) => {
-    await new ConnectPage(page).connectAs(KEYS.agent, 'agent');
     await page.getByRole('link', { name: 'Continue' }).click();
-    await page.getByLabel('Mailbox id').fill('mbx_finance');
-    await page.getByRole('button', { name: 'Open mailbox' }).click();
-    const list = page.getByTestId('message-list');
-    await expect(list.locator('tbody tr')).toHaveCount(20);
-    await page.getByRole('button', { name: 'Load more messages' }).click();
-    await expect(list.locator('tbody tr')).toHaveCount(25);
-    await list.getByRole('button', { name: 'Invoice 4471', exact: true }).click();
-    await expect(page.getByTestId('message-view')).toContainText('invoice-4471.pdf');
-    await expectAccessible(page, 'agent mailbox');
+    await expect(page.getByTestId('agent-key-notice')).toContainText('belong to the agent under test');
 
-    await page.goto('/mailbox/mbx_vendor');
-    await expect(page.getByTestId('api-error').first()).toContainText('PERMISSION_DENIED');
+    for (const path of ['/scenarios', '/runs/run_demo', '/runs/run_demo/evaluations', '/runs']) {
+      await page.goto(path);
+      await expect(page.getByTestId('agent-key-notice')).toBeVisible();
+    }
+    expect(apiCalls).toEqual([]);
+    await expectAccessible(page, 'agent key notice');
   });
 });

@@ -88,7 +88,11 @@ describe('Run detail', () => {
     expect(await screen.findByText(/Could not load run state/)).toBeInTheDocument();
   });
 
-  it('event trace: cursor pagination, filters and highlight', async () => {
+  it('event trace: cursor pagination, server-side filters and highlight', async () => {
+    const urls: string[] = [];
+    server.events.on('request:start', ({ request }) => {
+      urls.push(request.url);
+    });
     const { user } = renderApp('/runs/run_demo?tab=trace&seq=110', sessionFor('evaluator'));
     expect(await screen.findByText(/Showing 50 of 50 loaded event\(s\); more pages available/)).toBeInTheDocument();
     expect(screen.getByText(/Event #110 is not loaded yet/)).toBeInTheDocument();
@@ -102,11 +106,32 @@ describe('Run detail', () => {
     expect(hl).toHaveFocus();
 
     await user.selectOptions(screen.getByLabelText('Actor'), 'controller');
+    await screen.findByText(/Showing 24 of 24/);
     expect(rows('event-table')).toHaveLength(24);
+    expect(urls.at(-1)).toContain('actor=controller');
+    expect(screen.getByLabelText('Actor')).toHaveFocus();
     await user.selectOptions(screen.getByLabelText('Epoch'), '2');
-    expect(rows('event-table')).toHaveLength(4);
+    await screen.findByText(/Showing 4 of 4/);
     await user.selectOptions(screen.getByLabelText('Type'), 'message.read');
-    expect(screen.getByTestId('empty-state')).toHaveTextContent('No events match.');
+    expect(await screen.findByTestId('empty-state')).toHaveTextContent('No events match these filters.');
+    server.events.removeAllListeners();
+  });
+
+  it('filters are also applied client-side when the server ignores them', async () => {
+    const { mockDb } = await import('../test/server');
+    const all = mockDb.runs.run_demo?.events ?? [];
+    server.use(
+      http.get('*/v1/runs/:id/events', () => HttpResponse.json({ items: all.slice(0, 30), next_cursor: null })),
+    );
+    const { user } = renderApp('/runs/run_demo?tab=trace', sessionFor('evaluator'));
+    await screen.findByText(/Showing 30 of 30/);
+    await user.selectOptions(screen.getByLabelText('Actor'), 'controller');
+    await screen.findByText(/Showing 6 of 30/);
+  });
+
+  it('empty trace', async () => {
+    renderApp('/runs/run_empty?tab=trace', sessionFor('evaluator'));
+    expect(await screen.findByTestId('empty-state')).toHaveTextContent('This run has no events yet.');
   });
 
   it('trace errors (first page and later page)', async () => {
@@ -131,12 +156,15 @@ describe('Run detail', () => {
     expect(await screen.findByText(/Could not load events/)).toBeInTheDocument();
   });
 
-  it('actions table with evidence highlight, and artifacts', async () => {
-    const { user } = renderApp('/runs/run_demo?tab=actions&action=3', sessionFor('evaluator'));
+  it('actions table highlights by action id, and artifacts', async () => {
+    const { user } = renderApp('/runs/run_demo?tab=actions&action=act_4', sessionFor('evaluator'));
     expect(await screen.findByTestId('actions-table')).toBeInTheDocument();
     expect(rows('actions-table')).toHaveLength(4);
-    expect(rows('actions-table')[2]).toHaveClass('highlight');
-    expect(screen.getByText(/matched by position/)).toBeInTheDocument();
+    expect(screen.getByTestId('highlighted-action')).toHaveTextContent('modify_labels');
+    expect(screen.getByTestId('highlighted-action')).toHaveFocus();
+    expect(rows('actions-table')[2]).toHaveTextContent('#3–#4');
+    expect(rows('actions-table')[3]).toHaveTextContent('#7–#7');
+    expect(screen.queryByTestId('unmatched-action')).toBeNull();
     await user.click(screen.getByRole('link', { name: 'Artifacts' }));
     expect(await screen.findByTestId('artifacts-table')).toHaveTextContent('trace/run_demo.jsonl');
     expect(screen.getByTestId('artifacts-table')).toHaveTextContent('unknown');
@@ -190,8 +218,20 @@ describe('Run detail', () => {
     expect(await screen.findByTestId('api-error')).toHaveTextContent('INTERNAL (HTTP 500)');
   });
 
-  it('agent is refused with 403', async () => {
+  it('legacy actions without ids: refs are shown but nothing is highlighted', async () => {
+    server.use(
+      http.get('*/v1/runs/:id/actions', () =>
+        HttpResponse.json([{ actor: 'agent', operation: 'reply', input: {}, result: {}, outcome: 'ok' }]),
+      ),
+    );
+    renderApp('/runs/run_demo?tab=actions&action=3', sessionFor('evaluator'));
+    expect(await screen.findByTestId('unmatched-action')).toHaveTextContent('3');
+    expect(screen.queryByTestId('highlighted-action')).toBeNull();
+    expect(rows('actions-table')[0]).toHaveTextContent('1agentreplyok——');
+  });
+
+  it('agent keys never reach the run page', async () => {
     renderApp('/runs/run_demo', sessionFor('agent'));
-    expect(await screen.findByTestId('api-error')).toHaveTextContent('PERMISSION_DENIED (HTTP 403)');
+    expect(await screen.findByTestId('agent-key-notice')).toBeInTheDocument();
   });
 });

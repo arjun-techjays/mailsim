@@ -7,7 +7,7 @@ describe('useApi', () => {
   it('throws when not connected and exposes the role otherwise', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const none = ({ children }: { children: ReactNode }) => (
-      <SessionContext.Provider value={{ session: null, api: null, connect: () => {}, disconnect: () => {} }}>
+      <SessionContext.Provider value={{ session: null, api: null, connect: () => {}, disconnect: () => {}, rejected: false }}>
         {children}
       </SessionContext.Provider>
     );

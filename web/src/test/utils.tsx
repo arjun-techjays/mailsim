@@ -9,7 +9,7 @@ import { MOCK_KEYS } from '../mocks/db';
 import { makeQueryClient } from '../queryClient';
 import { routes } from '../routes';
 
-export const API_BASE = 'http://api.test';
+export const API_BASE = 'http://127.0.0.1:7357';
 
 export function sessionFor(role: Role | 'controllerEmpty'): Session {
   const key = MOCK_KEYS[role];

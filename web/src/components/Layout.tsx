@@ -1,10 +1,33 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState, type RefObject } from 'react';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useSession } from '../auth/session';
 
+/** Moves focus to <main> and announces the new page title after client-side navigation. */
+function useRouteAnnouncer(): [string, RefObject<HTMLElement | null>] {
+  const { pathname } = useLocation();
+  const main = useRef<HTMLElement>(null);
+  const first = useRef(true);
+  const [announcement, setAnnouncement] = useState('');
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    main.current?.focus();
+    setAnnouncement(document.title);
+  }, [pathname]);
+  return [announcement, main];
+}
+
 export function Layout() {
-  const { session, disconnect } = useSession();
+  const { session, disconnect, rejected } = useSession();
   const navigate = useNavigate();
-  const role = session?.role;
+  const [announcement, main] = useRouteAnnouncer();
+  const operator = session && session.role !== 'agent';
+  const reconnect = () => {
+    disconnect();
+    navigate('/connect');
+  };
   return (
     <>
       <a className="skip-link" href="#main">
@@ -14,7 +37,7 @@ export function Layout() {
         <span className="brand">mailsim</span>
         <nav aria-label="Main">
           <ul>
-            {role && role !== 'agent' && (
+            {operator && (
               <>
                 <li>
                   <NavLink to="/scenarios">Scenarios</NavLink>
@@ -23,11 +46,6 @@ export function Layout() {
                   <NavLink to="/runs">Runs</NavLink>
                 </li>
               </>
-            )}
-            {role === 'agent' && (
-              <li>
-                <NavLink to="/mailbox">My mailbox</NavLink>
-              </li>
             )}
             <li>
               <NavLink to="/connect">Connect</NavLink>
@@ -39,22 +57,31 @@ export function Layout() {
             <span>
               Role: <strong data-testid="session-role">{session.role}</strong>
             </span>
-            <span className="muted">{session.baseUrl || 'same origin'}</span>
-            <button
-              type="button"
-              onClick={() => {
-                disconnect();
-                navigate('/connect');
-              }}
-            >
+            <span className="muted" data-testid="session-origin">
+              API: {session.baseUrl}
+              {session.baseUrl !== window.location.origin && ' (different origin from this dashboard)'}
+            </span>
+            <button type="button" onClick={reconnect}>
               Disconnect
             </button>
           </div>
         )}
       </header>
-      <main id="main" tabIndex={-1}>
+      {rejected && (
+        <div role="alert" className="error-box banner" data-testid="key-rejected">
+          <p className="error-title">The API rejected your key (401).</p>
+          <p>It may have been revoked or expired.</p>
+          <button type="button" onClick={reconnect}>
+            Reconnect
+          </button>
+        </div>
+      )}
+      <main id="main" tabIndex={-1} ref={main}>
         <Outlet />
       </main>
+      <div className="visually-hidden" role="status" aria-live="polite" data-testid="route-announcer">
+        {announcement}
+      </div>
     </>
   );
 }

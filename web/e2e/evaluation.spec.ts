@@ -66,4 +66,11 @@ test.describe('evaluation (evaluator)', () => {
     await page.getByRole('button', { name: 'eval_1' }).click();
     await expect(ev.report()).toContainText('FAILED');
   });
+
+  test('empty evaluation list', async ({ page }) => {
+    const ev = new EvaluationPage(page);
+    await ev.goto('run_empty');
+    await expect(page.getByTestId('empty-state')).toHaveText('This run has not been evaluated yet.');
+    await expect(ev.report()).toHaveCount(0);
+  });
 });

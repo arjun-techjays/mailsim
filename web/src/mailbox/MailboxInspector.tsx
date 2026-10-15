@@ -17,9 +17,11 @@ function MessageView({
   messageId,
   onSelect,
   rawMimeHref,
+  focusOnLoad,
 }: {
   source: MailboxSource;
   messageId: string;
+  focusOnLoad: boolean;
   onSelect: (id: string) => void;
   rawMimeHref?: (ref: string) => string;
 }) {
@@ -34,9 +36,10 @@ function MessageView({
     queryFn: () => source.getThread(threadId as string),
     enabled: !!threadId,
   });
+  // Only move focus when the user picked the message (not on deep links / initial load).
   useEffect(() => {
-    if (message.data) heading.current?.focus();
-  }, [message.data]);
+    if (message.data && focusOnLoad) heading.current?.focus();
+  }, [message.data, focusOnLoad]);
 
   if (message.isPending) return <Loading label="Loading message…" />;
   if (message.isError) return <ErrorDisplay error={message.error} title="Could not load message" />;
@@ -222,6 +225,11 @@ export function MailboxInspector({
   rawMimeHref?: (ref: string) => string;
 }) {
   const [folder, setFolder] = useState<string | null>(null);
+  const [userSelected, setUserSelected] = useState(false);
+  const select = (id: string) => {
+    setUserSelected(true);
+    onSelectMessage(id);
+  };
   const folders = useQuery({ queryKey: [...source.key, 'folders'], queryFn: () => source.listFolders() });
 
   return (
@@ -247,11 +255,17 @@ export function MailboxInspector({
         )}
       </nav>
       <section aria-label="Messages" className="messages">
-        <MessageList source={source} folder={folder} selected={selectedMessage} onSelect={onSelectMessage} />
+        <MessageList source={source} folder={folder} selected={selectedMessage} onSelect={select} />
       </section>
       <section aria-label="Message" className="message-pane">
         {selectedMessage ? (
-          <MessageView source={source} messageId={selectedMessage} onSelect={onSelectMessage} rawMimeHref={rawMimeHref} />
+          <MessageView
+            source={source}
+            messageId={selectedMessage}
+            onSelect={select}
+            rawMimeHref={rawMimeHref}
+            focusOnLoad={userSelected}
+          />
         ) : (
           <p className="muted">Select a message to see its headers, body, attachments and thread.</p>
         )}

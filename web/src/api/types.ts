@@ -37,3 +37,11 @@ export type ErrorEnvelope = S['ErrorEnvelope'];
 export type ErrorBody = S['ErrorBody'];
 
 export type Role = 'controller' | 'evaluator' | 'agent';
+
+/** ActionOut plus the optional fields WS-A is adding (id, virtual_time, seq_start, seq_end). */
+export type ActionRecord = ActionOut & {
+  id?: string | null;
+  virtual_time?: string | null;
+  seq_start?: number | null;
+  seq_end?: number | null;
+};

@@ -129,4 +129,31 @@ describe('apiRequest', () => {
     const err = await p.catch((e: unknown) => e);
     expect(isApiError(err)).toBe(false);
   });
+
+  it('times out while the body is still streaming', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init) => {
+      const signal = (init as RequestInit).signal as AbortSignal;
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers(),
+        text: () =>
+          new Promise<string>((_resolve, reject) =>
+            signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))),
+          ),
+      } as unknown as Response;
+    });
+    const err = (await apiRequest({ ...cfg, timeoutMs: 30 }, 'GET', '/v1/stall').catch((e: unknown) => e)) as ApiError;
+    expect(err).toMatchObject({ kind: 'timeout', code: 'TIMEOUT' });
+  });
+
+  it('rejects non-JSON success bodies and accepts empty ones', async () => {
+    server.use(
+      http.get('http://api.test/v1/html200', () => new HttpResponse('<html>proxy login</html>', { status: 200, headers: { 'x-request-id': 'h1' } })),
+      http.get('http://api.test/v1/empty200', () => new HttpResponse('', { status: 200 })),
+    );
+    const err = (await apiRequest(cfg, 'GET', '/v1/html200').catch((e: unknown) => e)) as ApiError;
+    expect(err).toMatchObject({ kind: 'http', status: 200, code: 'INVALID_RESPONSE', requestId: 'h1' });
+    await expect(apiRequest(cfg, 'GET', '/v1/empty200')).resolves.toBeUndefined();
+  });
 });

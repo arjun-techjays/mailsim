@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import type { RouteObject } from 'react-router-dom';
 import { RequireSession } from './components/Gates';
 import { Layout } from './components/Layout';
-import { AgentMailboxPage, AgentMailboxPicker } from './pages/AgentMailboxPage';
+import { AgentKeyNotice } from './pages/AgentKeyNotice';
 import { ComparePage } from './pages/ComparePage';
 import { ConnectPage } from './pages/ConnectPage';
 import { EvaluationPage } from './pages/EvaluationPage';
@@ -29,8 +29,7 @@ export const routes: RouteObject[] = [
       { path: 'runs', element: guarded(<RunsPage />) },
       { path: 'runs/:runId', element: guarded(<RunDetailPage />) },
       { path: 'runs/:runId/evaluations', element: guarded(<EvaluationPage />) },
-      { path: 'mailbox', element: guarded(<AgentMailboxPicker />) },
-      { path: 'mailbox/:mailboxId', element: guarded(<AgentMailboxPage />) },
+      { path: 'agent-key', element: <AgentKeyNotice /> },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

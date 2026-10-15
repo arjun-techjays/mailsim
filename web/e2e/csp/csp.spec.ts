@@ -1,0 +1,66 @@
+import { expect, test, type Page } from '@playwright/test';
+import { expectAccessible, KEYS } from '../fixtures';
+import { ConnectPage } from '../pages/ConnectPage';
+import { EvaluationPage } from '../pages/EvaluationPage';
+import { RunPage } from '../pages/RunPage';
+
+/** Collects CSP violations reported by the dashboard document (not the sandboxed email frame). */
+function watchCsp(page: Page): string[] {
+  const violations: string[] = [];
+  page.on('console', (msg) => {
+    const text = msg.text();
+    const fromEmailFrame = msg.location().url === 'about:srcdoc';
+    if (/Content Security Policy|Refused to/i.test(text) && !fromEmailFrame) violations.push(text);
+  });
+  page.on('pageerror', (err) => violations.push(`pageerror: ${err.message}`));
+  return violations;
+}
+
+test('production build works under the strict CSP and security headers', async ({ page }) => {
+  const violations = watchCsp(page);
+  const res = await page.goto('/connect');
+  const headers = res?.headers() ?? {};
+  expect(headers['content-security-policy']).toContain("frame-ancestors 'none'");
+  expect(headers['content-security-policy']).toContain("script-src 'self'");
+  expect(headers['x-content-type-options']).toBe('nosniff');
+  expect(headers['referrer-policy']).toBe('no-referrer');
+  expect(await page.locator('meta[http-equiv="Content-Security-Policy"]').getAttribute('content')).toContain(
+    "object-src 'none'",
+  );
+
+  await new ConnectPage(page).connectAs(KEYS.evaluator, 'evaluator');
+  const run = new RunPage(page);
+  await run.goto('run_demo');
+  await run.tab('Mailboxes');
+  await run.openMessage('Re: Invoice 4471 - updated bank details');
+  await page.getByRole('button', { name: 'Show HTML (sandboxed)' }).click();
+  const frame = page.frameLocator('[data-testid="email-html-frame"]');
+  await expect(frame.getByText('new bank account')).toBeVisible();
+  expect(await page.evaluate(() => (window as unknown as { __mailsimPwned?: unknown }).__mailsimPwned)).toBeUndefined();
+  await run.tab('Event trace');
+  await expect(page.getByTestId('event-table')).toBeVisible();
+
+  const ev = new EvaluationPage(page);
+  await ev.goto('run_demo');
+  await expect(ev.report()).toContainText('FAILED');
+  await page.goto('/scenarios/finance.invoice-bank-change/compare');
+  await expect(page.getByRole('img', { name: /Mean accuracy by build/ })).toBeVisible();
+  await expectAccessible(page, 'compare (csp build)');
+
+  expect(violations).toEqual([]);
+});
+
+test('source maps are not shipped', async ({ page, request }) => {
+  await page.goto('/connect');
+  const src = await page.locator('script[type="module"]').first().getAttribute('src');
+  const js = await (await request.get(src as string)).text();
+  expect(js).not.toContain('sourceMappingURL');
+});
+
+test('the policy is enforced (inline script blocked) and the violation watcher sees it', async ({ page }) => {
+  const violations = watchCsp(page);
+  await page.goto('/connect');
+  await page.addScriptTag({ content: 'window.__inlineRan = true;' }).catch(() => undefined);
+  expect(await page.evaluate(() => (window as unknown as { __inlineRan?: boolean }).__inlineRan)).toBeUndefined();
+  await expect.poll(() => violations.length).toBeGreaterThan(0);
+});

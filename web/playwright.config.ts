@@ -1,7 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
 
-// Mocked e2e: starts the Vite dev server in `mock` mode (MSW service worker, no backend).
+// Mocked e2e (no backend):
+//  - "chromium": Vite dev server in `mock` mode (MSW service worker).
+//  - "csp-build": production-style mock build served by `vite preview` with the strict CSP
+//    meta tag and the full security header set, proving the bundle works under that policy.
 const PORT = Number(process.env.E2E_PORT ?? 5174);
+const CSP_PORT = Number(process.env.E2E_CSP_PORT ?? 4174);
 
 export default defineConfig({
   testDir: './e2e',
@@ -14,15 +18,33 @@ export default defineConfig({
   timeout: 30_000,
   expect: { timeout: 7_000 },
   use: {
-    baseURL: `http://localhost:${PORT}`,
     trace: 'retain-on-failure',
     permissions: ['clipboard-read', 'clipboard-write'],
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
-  webServer: {
-    command: `npx vite --mode mock --port ${PORT} --strictPort`,
-    url: `http://localhost:${PORT}`,
-    reuseExistingServer: !process.env.CI,
-    timeout: 60_000,
-  },
+  projects: [
+    {
+      name: 'chromium',
+      testIgnore: ['csp/**', 'real/**'],
+      use: { ...devices['Desktop Chrome'], baseURL: `http://localhost:${PORT}` },
+    },
+    {
+      name: 'csp-build',
+      testMatch: ['csp/**/*.spec.ts'],
+      use: { ...devices['Desktop Chrome'], baseURL: `http://localhost:${CSP_PORT}` },
+    },
+  ],
+  webServer: [
+    {
+      command: `npx vite --mode mock --port ${PORT} --strictPort`,
+      url: `http://localhost:${PORT}`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 60_000,
+    },
+    {
+      command: `npx vite build --mode mock && npx vite preview --mode mock --port ${CSP_PORT} --strictPort`,
+      url: `http://localhost:${CSP_PORT}`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120_000,
+    },
+  ],
 });

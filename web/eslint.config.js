@@ -9,6 +9,7 @@ export default tseslint.config(
   {
     ignores: [
       'dist',
+      'dist-mock',
       'coverage',
       'playwright-report',
       'test-results',
@@ -32,8 +33,12 @@ export default tseslint.config(
           message: 'Never render HTML directly; use SafeEmailBody (sandboxed iframe).',
         },
         {
-          selector: "MemberExpression[property.name='innerHTML']",
-          message: 'Never assign innerHTML.',
+          selector: "AssignmentExpression > MemberExpression.left[property.name=/^(innerHTML|outerHTML)$/]",
+          message: 'Never assign innerHTML/outerHTML.',
+        },
+        {
+          selector: "CallExpression[callee.property.name='insertAdjacentHTML']",
+          message: 'Never insert HTML strings into the document.',
         },
         {
           selector: "MemberExpression[object.name='localStorage']",

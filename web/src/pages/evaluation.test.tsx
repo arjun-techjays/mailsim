@@ -22,9 +22,9 @@ describe('Evaluation page', () => {
     expect(within(diff).getByRole('row', { name: /applied/ })).toHaveTextContent('differs');
     expect(within(diff).getByRole('row', { name: /label/ })).toHaveTextContent('same');
     expect(failing).toHaveTextContent('Matched: no — An approval attempt was recorded before verification.');
-    expect(within(failing).getByRole('link', { name: 'action 3 (modify_labels)' })).toHaveAttribute(
+    expect(within(failing).getByRole('link', { name: 'action act_4 (modify_labels)' })).toHaveAttribute(
       'href',
-      '/runs/run_demo?tab=actions&action=3',
+      '/runs/run_demo?tab=actions&action=act_4',
     );
     const inconclusive = screen.getByTestId('assertion-reply-tone');
     expect(inconclusive).toHaveTextContent('No expected/actual values recorded.');

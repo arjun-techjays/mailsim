@@ -40,7 +40,7 @@ describe('Build comparison', () => {
           : HttpResponse.json({
               scenario_key: KEY,
               answer_key_version: 1,
-              builds: { b1: { runs: 2, mean_accuracy: 0.5, variance: 0.1, stdev: 0.3, pass_rate: 0.5 } },
+              builds: { b1: { runs: 2, mean_accuracy: null, variance: 0.1, stdev: 0.3, pass_rate: 0.5 } },
             }),
       ),
     );
@@ -48,9 +48,13 @@ describe('Build comparison', () => {
     expect(await screen.findByText('No per-assertion data.')).toBeInTheDocument();
     expect(screen.getByText(/baseline:/)).toHaveTextContent('none');
     expect(within(screen.getByTestId('comparison-table')).getByRole('row', { name: /b1/ })).toHaveTextContent('n/a');
+    expect(screen.getByRole('img', { name: /Mean accuracy by build/ })).toHaveAccessibleName(/b1: n\/a \(2 runs\)/);
     await user.type(screen.getByLabelText('Baseline build'), 'none');
     await user.click(screen.getByRole('button', { name: 'Compare' }));
     expect(await screen.findByText('No evaluated runs for these builds.')).toBeInTheDocument();
+    await user.clear(screen.getByLabelText('Baseline build'));
+    await user.click(screen.getByRole('button', { name: 'Compare' }));
+    expect(await screen.findByText('No per-assertion data.')).toBeInTheDocument();
   });
 
   it('API errors are displayed', async () => {

@@ -105,7 +105,15 @@ export function InjectForm({ runId, mailboxes }: { runId: string; mailboxes: Sna
         <div className="field">
           <label htmlFor="inj-mailbox">{LABELS.mailbox}</label>
           {mailboxes.length > 0 ? (
-            <select id="inj-mailbox" value={f.mailbox} onChange={set('mailbox')}>
+            <select
+              id="inj-mailbox"
+              value={f.mailbox}
+              onChange={(e) => {
+                // "To" follows the selected mailbox so the message lands where it is addressed.
+                const mb = mailboxes.find((m) => m.id === e.target.value) as SnapshotMailbox;
+                setF({ ...f, mailbox: mb.id, to: mb.email });
+              }}
+            >
               {mailboxes.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.email} ({m.id})

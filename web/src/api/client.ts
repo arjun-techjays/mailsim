@@ -80,10 +80,9 @@ interface EnvelopeShape {
   error?: { code?: unknown; message?: unknown; details?: unknown; request_id?: unknown };
 }
 
-async function errorFromResponse(res: Response): Promise<ApiError> {
+function errorFromResponse(res: Response, text: string): ApiError {
   const headerRid = res.headers.get('x-request-id');
   let parsed: EnvelopeShape | null = null;
-  const text = await res.text();
   try {
     parsed = JSON.parse(text) as EnvelopeShape;
   } catch {
@@ -134,7 +133,9 @@ export async function apiRequest<T>(
   if (opts.idempotent) headers['Idempotency-Key'] = newIdempotencyKey();
 
   let res: Response;
+  let text: string;
   try {
+    // The timer stays armed until the whole body has been read.
     res = await fetch(buildUrl(cfg.baseUrl, path, opts.query), {
       method,
       headers,
@@ -143,6 +144,7 @@ export async function apiRequest<T>(
       credentials: 'omit',
       referrerPolicy: 'no-referrer',
     });
+    text = await res.text();
   } catch (e) {
     if (timedOut) {
       throw new ApiError({
@@ -162,7 +164,17 @@ export async function apiRequest<T>(
     opts.signal?.removeEventListener('abort', onOuterAbort);
   }
 
-  if (!res.ok) throw await errorFromResponse(res);
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  if (!res.ok) throw errorFromResponse(res, text);
+  if (res.status === 204 || text === '') return undefined as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new ApiError({
+      kind: 'http',
+      status: res.status,
+      code: 'INVALID_RESPONSE',
+      message: 'The API returned a response that is not JSON.',
+      requestId: res.headers.get('x-request-id'),
+    });
+  }
 }

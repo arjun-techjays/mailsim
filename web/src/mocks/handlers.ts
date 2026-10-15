@@ -20,6 +20,7 @@ import type {
 import {
   BROKEN_RUN_ID,
   buildReport,
+  MOCK_KEYS,
   createMockDb,
   isoAt,
   newMockRun,
@@ -53,6 +54,9 @@ export function createHandlers(db: MockDb = createMockDb()) {
     const header = request.headers.get('authorization') ?? '';
     const key = header.startsWith('Bearer ') ? header.slice(7) : '';
     const info = db.keys[key];
+    if (key === MOCK_KEYS.revocable && (db.counters.revocable += 1) > 1) {
+      return fail(401, 'UNAUTHENTICATED', 'API key has been revoked');
+    }
     if (!info) return fail(401, 'UNAUTHENTICATED', 'missing or invalid API key');
     if (!ALLOWED[guard].includes(info.role)) {
       return fail(403, 'PERMISSION_DENIED', "this credential's role may not call this operation");
@@ -164,6 +168,24 @@ export function createHandlers(db: MockDb = createMockDb()) {
 
   return [
     http.get('*/v1/health', () => ok({ status: 'ok', version: 'mock' })),
+    // Additive endpoint planned by WS-A; shape beyond `role` is not relied upon.
+    http.get('*/v1/me', ({ request }) => {
+      const header = request.headers.get('authorization') ?? '';
+      const key = header.startsWith('Bearer ') ? header.slice(7) : '';
+      if (!db.keys[key]) return fail(401, 'UNAUTHENTICATED', 'missing or invalid API key');
+      const who = auth(request, db.keys[key].role === 'agent' ? 'agent' : 'inspector');
+      if (who instanceof Response) return who;
+      return ok({ role: who.role, project_id: who.project, run_id: who.runId ?? null, mailbox_id: who.mailboxId ?? null });
+    }),
+    // Additive endpoint planned by WS-A: runs of the caller's project, newest first.
+    http.get('*/v1/runs', ({ request }) => {
+      const who = auth(request, 'inspector');
+      if (who instanceof Response) return who;
+      const items = Object.values(db.runs)
+        .map((r) => r.run)
+        .reverse();
+      return ok({ items, next_cursor: null });
+    }),
 
     // ---- scenarios ------------------------------------------------------------------------
     http.get('*/v1/scenarios', async ({ request }) => {
@@ -305,8 +327,14 @@ export function createHandlers(db: MockDb = createMockDb()) {
         const url = new URL(request.url);
         const offset = Number(url.searchParams.get('cursor') ?? 0);
         const size = Number(url.searchParams.get('page_size') ?? 100);
-        const items = r.events.slice(offset, offset + size);
-        const next = offset + size < r.events.length ? String(offset + size) : null;
+        const type = url.searchParams.get('type');
+        const actor = url.searchParams.get('actor');
+        const epoch = url.searchParams.get('epoch');
+        const all = r.events.filter(
+          (e) => (!type || e.type === type) && (!actor || e.actor === actor) && (!epoch || String(e.epoch) === epoch),
+        );
+        const items = all.slice(offset, offset + size);
+        const next = offset + size < all.length ? String(offset + size) : null;
         return ok({ items, next_cursor: next });
       }),
     ),

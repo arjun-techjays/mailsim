@@ -1,9 +1,8 @@
 import { ApiError } from '../api/client';
-import type { Api } from '../api/endpoints';
 import type { CanonicalMessage, FolderOut, MessagePage } from '../api/types';
 import type { ParsedSnapshot } from './snapshot';
 
-/** Read-only mailbox access used by the inspector, independent of where data comes from. */
+/** Read-only mailbox access used by the inspector. */
 export interface MailboxSource {
   /** Stable cache-key prefix for react-query. */
   key: readonly unknown[];
@@ -39,17 +38,5 @@ export function snapshotSource(snap: ParsedSnapshot, mailboxId: string, version:
       if (!m) throw notFound(`message ${messageId}`);
       return m;
     },
-  };
-}
-
-/** Agent view: the real agent-facing mailbox API with server-side cursor pagination. */
-export function apiSource(api: Api, mailboxId: string): MailboxSource {
-  return {
-    key: ['api-mailbox', mailboxId],
-    listFolders: () => api.folders(mailboxId),
-    listMessages: (folder, cursor, pageSize) =>
-      api.listMessages(mailboxId, { folder: folder ?? undefined, cursor, pageSize }),
-    getThread: (threadId) => api.getThread(mailboxId, threadId),
-    getMessage: (messageId) => api.getMessage(mailboxId, messageId),
   };
 }
