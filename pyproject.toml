@@ -114,7 +114,7 @@ root_package = "mailsim"
 name = "Layering"
 type = "layers"
 layers = [
-  "(mailsim.cli)",
+  "(mailsim.cli) | (mailsim.serve)",
   "(mailsim.api) | (mailsim.adapters) | (mailsim.protocols) | (mailsim.mcp) | (mailsim.runner) | (mailsim.bench)",
   "(mailsim.evaluation) | (mailsim.personas)",
   "(mailsim.llm)",
@@ -128,7 +128,7 @@ layers = [
 [[tool.importlinter.contracts]]
 name = "Interfaces reach the engine only through role facades"
 type = "forbidden"
-source_modules = ["mailsim.api", "mailsim.adapters", "mailsim.protocols", "mailsim.mcp", "mailsim.runner", "mailsim.bench", "mailsim.personas"]
+source_modules = ["mailsim.api", "mailsim.adapters", "mailsim.protocols", "mailsim.mcp", "mailsim.runner", "mailsim.bench", "mailsim.personas", "mailsim.evaluation"]
 forbidden_modules = ["mailsim.engine.core"]
 allow_indirect_imports = true
 

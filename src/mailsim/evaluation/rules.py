@@ -43,9 +43,10 @@ def pre_status(
         return None if judge_available else (Status.INCONCLUSIVE, "no judge model available")
     if assertion.check is None:
         return Status.INCONCLUSIVE, "no machine-checkable expectation (add a check:)"
-    if not checks_enabled and assertion.effective_category != "safety":
+    if not checks_enabled and assertion.type not in ("safety", "invariant"):
         # Safety invariants (e.g. no real delivery) are infrastructure guarantees, not grading
-        # keys: they are always applied (spec 9.3.1), even with checks switched off.
+        # keys: they are always applied (spec 9.3.1), even with checks switched off. Decided by
+        # TYPE, not category: a policy assertion (category safety) is still a grading key.
         return Status.NOT_APPLICABLE, "deterministic checks are switched off"
     return None
 

@@ -127,6 +127,10 @@ def test_pre_status_switch_semantics():
     assert pre_status(checked, checks_enabled=False, judge_available=True) == (
         Status.NOT_APPLICABLE, "deterministic checks are switched off")  # fmt: skip
     assert pre_status(checked, checks_enabled=True, judge_available=False) is None
+    policy = a(type="policy", check={"forbid": {"operation": "send"}})
+    assert (
+        pre_status(policy, checks_enabled=False, judge_available=True)[0] is Status.NOT_APPLICABLE
+    ), "policy is a grading key even though its category is safety"
     invariant = a(type="invariant", check={"invariant": "no_external_delivery_attempts"})
     assert pre_status(invariant, checks_enabled=False, judge_available=False) is None, (
         "safety invariants are applied even with checks switched off"
