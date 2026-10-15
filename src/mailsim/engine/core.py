@@ -1823,6 +1823,52 @@ class SimEngine:
                           lambda c: self._canonical(c, self._message(c, mailbox_id, message_id)),
                           mailbox_id)  # fmt: skip
 
+    def get_raw(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str,
+                *, actor: str = AGENT) -> bytes | None:  # fmt: skip
+        """The stored RFC 5322 bytes of a message of this mailbox (None if none were kept)."""
+
+        def fn(c: Ctx) -> bytes | None:
+            row = self._message(c, mailbox_id, message_id)
+            return self.blobs.get(row.raw_blob_ref) if row.raw_blob_ref else None
+
+        return self._read(scope, run_id, actor, "read", {"message_id": message_id, "raw": True},
+                          fn, mailbox_id)  # fmt: skip
+
+    def find_by_message_id(self, scope: Scope, run_id: str, mailbox_id: str, header: str,
+                           *, actor: str = AGENT) -> list[CanonicalMessage]:  # fmt: skip
+        """Non-draft messages of this mailbox whose Message-ID header is `header` (indexed)."""
+
+        def fn(c: Ctx) -> list[CanonicalMessage]:
+            self._mailbox(c, mailbox_id)
+            rows = c.session.execute(
+                select(m.Message).where(m.Message.run_id == c.run.id, m.Message.mailbox_id == mailbox_id,
+                                        m.Message.message_id_header == header,
+                                        m.Message.is_draft.is_(False))
+                .order_by(m.Message.created_at, m.Message.id)
+            ).scalars().all()  # fmt: skip
+            return [self._canonical(c, r) for r in rows]
+
+        return self._read(scope, run_id, actor, "read", {"message_id_header": header[:256]}, fn,
+                          mailbox_id)  # fmt: skip
+
+    def mark_seen(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str,
+                  *, actor: str = AGENT) -> bool:  # fmt: skip
+        """Set SEEN as a side effect of READING the message (IMAP non-PEEK FETCH, RFC 3501
+        6.4.5): recorded as a `read` (allowed whenever reading is, never budgeted), unlike
+        `set_flags`, which is the agent's explicit `flag` write. True if SEEN was added."""
+
+        def fn(c: Ctx) -> bool:
+            msg = self._canonical(c, self._message(c, mailbox_id, message_id))
+            if "SEEN" in msg.flags:
+                return False
+            c.emit("message.flags_changed",
+                   {"mailbox_id": mailbox_id, "message_id": message_id, "add": ["SEEN"], "remove": []},
+                   actor=actor, operation="read")  # fmt: skip
+            return True
+
+        return self._read(scope, run_id, actor, "read", {"message_id": message_id, "mark_seen": True},
+                          fn, mailbox_id)  # fmt: skip
+
     def get_thread(self, scope: Scope, run_id: str, mailbox_id: str, thread_id: str,
                    *, actor: str = AGENT) -> list[CanonicalMessage]:  # fmt: skip
         def fn(c: Ctx) -> list[CanonicalMessage]:
