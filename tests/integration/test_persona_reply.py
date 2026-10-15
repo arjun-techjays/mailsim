@@ -91,3 +91,30 @@ def test_agent_owner_and_persona_generations(env, tmp_path):
     acts = ctl.actions(run)
     assert all("id" in x and "virtual_time" in x for x in acts)
     assert [x["id"] for x in acts] == sorted(x["id"] for x in acts)
+
+
+def test_actions_record_their_exact_event_window(env, tmp_path):
+    ctl, ev, run = setup(env, tmp_path)
+    fm = ctl.mailbox_id_for(run, "finance_manager")
+    first = next(
+        m
+        for m in ev.state(run)["messages"]
+        if m["mailbox_id"] == fm and m["subject"] == "Invoice INV-001"
+    )
+    before = len(ctl.actions(run))
+    ctl.advance(run, 0)  # writes no events
+    env.engine.reply(env.scope, run, fm, first["id"], text="checking")  # agent write
+    with pytest.raises(NotFound):  # agent read failure: audited, no events
+        env.engine.get_message(env.scope, run, fm, "msg_nope")
+    ctl.advance(run, 60)
+    adv0, reply, failed_read, adv60 = ctl.actions(run)[before:]
+    events = {e["sequence"]: e for e in ev.events(run)}
+    assert adv0["seq_end"] < adv0["seq_start"], "no events => empty window"
+    assert reply["seq_start"] == adv0["seq_start"] and reply["seq_end"] >= reply["seq_start"]
+    assert {events[q]["type"] for q in range(reply["seq_start"], reply["seq_end"] + 1)} >= {
+        "message.sent",
+        "agent.action_counted",
+    }
+    assert failed_read["seq_start"] == reply["seq_end"] + 1 > failed_read["seq_end"]
+    assert adv60["seq_start"] == reply["seq_end"] + 1
+    assert events[adv60["seq_end"]]["type"] in ("clock.advanced", "ids.reserved")

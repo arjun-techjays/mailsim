@@ -172,6 +172,7 @@ class SimEngine:
         try:
             with self._sf.begin() as s:
                 run = lock_run(s, scope, run_id)
+                seq_start = run.next_seq
                 ctx = Ctx(s, run, id_generator(run))
                 self._guard(ctx, actor, operation, mailbox_id, require_running)
                 guarded = True
@@ -202,6 +203,8 @@ class SimEngine:
                         result=_summary(result),
                         outcome="ok",
                         virtual_time=run.virtual_time,
+                        seq_start=seq_start,
+                        seq_end=run.next_seq - 1,
                     )
                 )
                 return result
@@ -231,20 +234,10 @@ class SimEngine:
     ) -> None:
         with self._sf.begin() as s:
             try:
-                run = lock_run(s, scope, run_id) if count else get_run(s, scope, run_id)
+                run = lock_run(s, scope, run_id)  # exact placement in the log
             except NotFound:
                 return
-            s.add(
-                m.ActionRow(
-                    run_id=run.id,
-                    actor=actor,
-                    operation=operation,
-                    input=input_,
-                    result=exc.to_dict(),
-                    outcome=str(exc.code),
-                    virtual_time=run.virtual_time,
-                )
-            )
+            seq_start = run.next_seq
             if count:
                 append(
                     s,
@@ -257,6 +250,19 @@ class SimEngine:
                         outcome=str(exc.code),
                     ),
                 )
+            s.add(
+                m.ActionRow(
+                    run_id=run.id,
+                    actor=actor,
+                    operation=operation,
+                    input=input_,
+                    result=exc.to_dict(),
+                    outcome=str(exc.code),
+                    virtual_time=run.virtual_time,
+                    seq_start=seq_start,
+                    seq_end=run.next_seq - 1,
+                )
+            )
 
     def _guard(
         self, ctx: Ctx, actor: str, operation: str, mailbox_id: str | None, require_running: bool
@@ -507,6 +513,8 @@ class SimEngine:
                     result={"status": run.status},
                     outcome="ok" if failure is None else str(failure.code),
                     virtual_time=run.virtual_time,
+                    seq_start=1,
+                    seq_end=run.next_seq - 1,
                 )
             )
             run_id = run.id
@@ -740,6 +748,8 @@ class SimEngine:
                     result={"replay_run_id": replay.id, "matches": original_hash == replay_hash},
                     outcome="ok",
                     virtual_time=orig.virtual_time,
+                    seq_start=orig.next_seq,
+                    seq_end=orig.next_seq - 1,
                 )
             )
             return ReplayResult(
@@ -796,7 +806,8 @@ class SimEngine:
             return [
                 {"id": r.id, "actor": r.actor, "operation": r.operation, "input": r.input,
                  "result": r.result, "outcome": r.outcome,
-                 "virtual_time": iso(r.virtual_time) if r.virtual_time else None}
+                 "virtual_time": iso(r.virtual_time) if r.virtual_time else None,
+                 "seq_start": r.seq_start, "seq_end": r.seq_end}
                 for r in rows
             ]  # fmt: skip
 

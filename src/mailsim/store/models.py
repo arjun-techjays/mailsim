@@ -136,6 +136,10 @@ class ActionRow(Base):
     result: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     outcome: Mapped[str] = mapped_column(String, nullable=False)
     virtual_time: Mapped[datetime | None] = mapped_column(TS)
+    # Event-log window written by this command: sequences seq_start..seq_end (empty when
+    # seq_end < seq_start). Lets evaluators place every action exactly in the log.
+    seq_start: Mapped[int | None] = mapped_column(BigInteger)
+    seq_end: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = _created()
 
 
