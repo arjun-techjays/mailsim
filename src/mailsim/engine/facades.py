@@ -171,6 +171,12 @@ class Controller:
                                      text=text, generation=generation,
                                      in_reply_to_message_id=in_reply_to_message_id)  # fmt: skip
 
+    def agent_mailbox_owner(self, run_id: str) -> str:
+        return self._e.agent_mailbox_owner(self.scope, run_id)
+
+    def persona_generations(self, run_id: str) -> list[dict[str, Any]]:
+        return self._e.persona_generations(self.scope, run_id)
+
     def mailbox_id_for(self, run_id: str, persona_id: str) -> str:
         return self._e.mailbox_id_for(self.scope, run_id, persona_id)
 

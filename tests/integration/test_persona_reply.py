@@ -75,3 +75,19 @@ def test_persona_external_recipient_in_event_mode(env, tmp_path):
                             text="t", generation=GEN)  # fmt: skip
     assert res["external_recipients"] == ["x@real.example"]
     assert any(e["type"] == "delivery.external_attempt" for e in ev.events(run))
+
+
+def test_agent_owner_and_persona_generations(env, tmp_path):
+    ctl, ev, run = setup(env, tmp_path)
+    assert ctl.agent_mailbox_owner(run) == "finance_manager"
+    assert ctl.persona_generations(run) == []
+    ctl.persona_reply(
+        run, "cfo", to=["finance@example.test"], subject="s", text="t", generation=GEN
+    )
+    gens = ctl.persona_generations(run)
+    assert [g["persona_id"] for g in gens] == ["cfo"] and gens[0]["sequence"] > 0
+    ctl.reset_run(run)
+    assert ctl.persona_generations(run) == [], "current epoch only"
+    acts = ctl.actions(run)
+    assert all("id" in x and "virtual_time" in x for x in acts)
+    assert [x["id"] for x in acts] == sorted(x["id"] for x in acts)
