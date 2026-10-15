@@ -16,6 +16,9 @@ import { StartRunPage } from './pages/StartRunPage';
 import { ConceptsPage } from './pages/ConceptsPage';
 import { ConnectAgentPage } from './pages/ConnectAgentPage';
 import { HomePage } from './pages/HomePage';
+// ---- builder (UX-F1)
+import { ScenarioBuilderPage } from './builder/ScenarioBuilderPage';
+// ---- end builder (UX-F1)
 
 const guarded = (el: ReactNode) => <RequireSession>{el}</RequireSession>;
 
@@ -26,6 +29,11 @@ export const routes: RouteObject[] = [
       { index: true, element: <HomePage /> }, // UX-F3: getting started (was HomeRedirect)
       { path: 'connect', element: <ConnectPage /> },
       { path: 'scenarios', element: guarded(<ScenariosPage />) },
+      // ---- builder (UX-F1)
+      { path: 'scenarios/new', element: guarded(<ScenarioBuilderPage mode="new" />) },
+      { path: 'scenarios/:key/edit', element: guarded(<ScenarioBuilderPage mode="edit" />) },
+      { path: 'scenarios/:key/clone', element: guarded(<ScenarioBuilderPage mode="clone" />) },
+      // ---- end builder (UX-F1)
       { path: 'scenarios/:key', element: guarded(<ScenarioDetailPage />) },
       { path: 'scenarios/:key/start', element: guarded(<StartRunPage />) },
       { path: 'scenarios/:key/compare', element: guarded(<ComparePage />) },

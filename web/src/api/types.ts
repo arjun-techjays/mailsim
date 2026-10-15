@@ -58,3 +58,17 @@ export type AgentKeyInfo = S['KeyInfo'] & { prefix?: string | null };
 export type ConnectionTestRequest = S['ConnectionTestRequest'];
 export type ConnectionTestResult = S['ConnectionTestResult'];
 export type AgentInterface = S['InterfaceEndpoint']['interface'];
+// ---- builder (UX-F1)
+export type AuthoringMeta = S['AuthoringMeta'];
+export type ValidationIssue = S['ValidationIssue'];
+export type ScenarioCreate = S['ScenarioCreate'];
+export type ScenarioDraft = S['ScenarioDraft'];
+export type DraftValidation = S['DraftValidation'];
+export type ComposeMessage = S['ComposeMessage'];
+export type ComposeAttachment = S['ComposeAttachment'];
+export type ComposedFixture = S['ComposedFixture'];
+export type EmlSummary = S['EmlSummary'];
+export type ScenarioVersionDocument = S['ScenarioVersionDocument'];
+export type ParsedDocument = S['ParsedDocument'];
+export type RenderedYaml = S['RenderedYaml'];
+// ---- end builder (UX-F1)

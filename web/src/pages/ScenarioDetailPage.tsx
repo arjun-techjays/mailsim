@@ -7,6 +7,7 @@ import { PageIntro } from '../components/PageIntro';
 import { WhatIsThis } from '../guide/Concepts';
 import { Empty, Loading } from '../components/Status';
 import { usePageTitle } from '../hooks/usePageTitle';
+import { PublishedNotice } from '../builder/PublishedNotice'; // builder (UX-F1)
 
 function AnswerKeys({ scenarioKey }: { scenarioKey: string }) {
   const api = useApi();
@@ -80,6 +81,7 @@ export function ScenarioDetailPage() {
           mailboxes; the answer key (evaluators only) decides how runs are graded.
         </p>
       </PageIntro>
+      <PublishedNotice scenarioKey={key} /> {/* builder (UX-F1) */}
       {q.isPending ? (
         <Loading />
       ) : q.isError ? (
@@ -92,6 +94,24 @@ export function ScenarioDetailPage() {
                 Start a run
               </Link>
             </ShowFor>
+            {/* ---- builder (UX-F1) */}
+            {q.data.latest_version && (
+              <ShowFor roles={['controller']}>
+                <Link
+                  className="button"
+                  to={`/scenarios/${encodeURIComponent(key)}/edit?from=${q.data.latest_version.version}`}
+                >
+                  Edit (new version)
+                </Link>
+                <Link
+                  className="button"
+                  to={`/scenarios/${encodeURIComponent(key)}/clone?from=${q.data.latest_version.version}`}
+                >
+                  Clone
+                </Link>
+              </ShowFor>
+            )}
+            {/* ---- end builder (UX-F1) */}
             <ShowFor roles={['evaluator']}>
               <Link className="button" to={`/scenarios/${encodeURIComponent(key)}/compare`}>
                 Compare builds

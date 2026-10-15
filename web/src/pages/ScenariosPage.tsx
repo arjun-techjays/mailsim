@@ -38,8 +38,9 @@ export function ScenariosPage() {
       <PageIntro next={[{ to: '/', label: 'Getting started checklist' }]}>
         <p>
           A scenario is a test case for an email agent: the personas involved, what is already in their mailboxes and
-          what happens over time. Personas get their mailboxes automatically when a run starts. Open a scenario to start
-          a run, write its answer key or compare agent builds.
+          what happens over time. Use <strong>New scenario</strong> to build one: add personas, give each a mailbox (and
+          mark the one your agent uses), put emails in them and schedule events. Open a scenario to edit it, start a
+          run, write its answer key or compare agent builds.
         </p>
         <WhatIsThis term="scenario" />
       </PageIntro>
