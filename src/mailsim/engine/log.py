@@ -17,6 +17,7 @@ from typing import Any
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
+from mailsim.domain.clock import parse_ts
 from mailsim.domain.ids import IdGenerator
 from mailsim.store import models as m
 from mailsim.store.repos import Scope, get_run
@@ -56,6 +57,7 @@ class Event:
     outcome: str = "ok"
     baseline: bool = False
     virtual_time: datetime | None = field(default=None)
+    id_counter_after: int | None = None  # set when copying recorded events (replay)
 
 
 def lock_run(session: Session, scope: Scope, run_id: str) -> m.Run:
@@ -74,6 +76,8 @@ def append(session: Session, run: m.Run, event: Event) -> int:
     """Insert the event and apply its projection. Caller must hold the run lock."""
     if event.type == "run.reset":  # the reset event itself belongs to the new epoch
         run.epoch = int(event.payload["epoch"])
+    if event.id_counter_after is not None:
+        run.id_counter = event.id_counter_after
     seq = run.next_seq
     run.next_seq = seq + 1
     session.add(
@@ -88,6 +92,7 @@ def append(session: Session, run: m.Run, event: Event) -> int:
             outcome=event.outcome,
             virtual_time=event.virtual_time or run.virtual_time,
             payload=event.payload,
+            id_counter_after=run.id_counter,
         )
     )
     session.flush()
@@ -112,8 +117,6 @@ def wipe_projection(session: Session, run_id: str) -> None:
 
 @projector("clock.set")
 def _clock_set(session: Session, run: m.Run, p: dict[str, Any]) -> None:
-    from mailsim.domain.clock import parse_ts
-
     run.virtual_time = parse_ts(p["at"])
     if p.get("initial"):
         run.start_time = run.virtual_time
@@ -121,8 +124,6 @@ def _clock_set(session: Session, run: m.Run, p: dict[str, Any]) -> None:
 
 @projector("clock.advanced")
 def _clock_advanced(session: Session, run: m.Run, p: dict[str, Any]) -> None:
-    from mailsim.domain.clock import parse_ts
-
     run.virtual_time = parse_ts(p["to"])
 
 
@@ -138,6 +139,11 @@ def _reset(session: Session, run: m.Run, p: dict[str, Any]) -> None:
     run.agent_actions = 0
     run.virtual_time = run.start_time
     run.status = "READY"  # reset restores the baseline; the run must be started again
+
+
+@projector("agent.action_counted")
+def _agent_action(session: Session, run: m.Run, p: dict[str, Any]) -> None:
+    run.agent_actions += 1
 
 
 @projector("run.seeded")

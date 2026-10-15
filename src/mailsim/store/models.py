@@ -120,6 +120,7 @@ class EventRow(Base):
     outcome: Mapped[str] = mapped_column(String, nullable=False, default="ok")
     virtual_time: Mapped[datetime | None] = mapped_column(TS)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    id_counter_after: Mapped[int | None] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = _created()
 
 

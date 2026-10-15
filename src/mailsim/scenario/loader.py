@@ -36,13 +36,36 @@ class LoadedScenario:
         return self.doc.scenario.version
 
 
+class _NoAliasSafeLoader(yaml.SafeLoader):
+    """SafeLoader that refuses anchors/aliases (blocks billion-laughs expansion) and caps
+    the number of nodes, so a 1 MB file cannot expand into unbounded memory."""
+
+    max_nodes = 50_000
+
+    def __init__(self, stream: bytes) -> None:
+        super().__init__(stream)
+        self._nodes = 0
+
+    def compose_node(self, parent: Any, index: Any) -> Any:
+        if self.check_event(yaml.AliasEvent):
+            raise yaml.YAMLError("YAML aliases are not allowed in scenario files")
+        event = self.peek_event()  # type: ignore[no-untyped-call]
+        if getattr(event, "anchor", None) is not None:
+            raise yaml.YAMLError("YAML anchors are not allowed in scenario files")
+        self._nodes += 1
+        if self._nodes > self.max_nodes:
+            raise yaml.YAMLError("scenario document has too many nodes")
+        return super().compose_node(parent, index)
+
+
 def parse_source(source: bytes, *, is_json: bool = False) -> object:
     if len(source) > MAX_SCENARIO_BYTES:
         raise InvalidRequest("scenario file too large")
     try:
         if is_json:
             return json.loads(source)
-        return yaml.safe_load(source)  # safe_load only: never construct arbitrary objects
+        # Safe loading only (never constructs arbitrary objects), without aliases/anchors.
+        return yaml.load(source, Loader=_NoAliasSafeLoader)  # noqa: S506
     except (yaml.YAMLError, json.JSONDecodeError, UnicodeDecodeError) as exc:
         raise InvalidRequest(
             f"scenario is not valid {'JSON' if is_json else 'YAML'}: {exc}"

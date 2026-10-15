@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from mailsim.domain.errors import Conflict, NotFound
@@ -23,20 +24,22 @@ def create_scenario_version(
     - Version lower than the latest: CONFLICT (versions only move forward).
     """
     get_project(session, scope)
-    scenario = session.execute(
-        select(m.Scenario)
-        .where(m.Scenario.project_id == scope.project_id, m.Scenario.key == loaded.key)
-        .with_for_update()
-    ).scalar_one_or_none()
-    if scenario is None:
-        scenario = m.Scenario(
+    # Race-free find-or-create: concurrent first publishes converge on one Scenario row.
+    session.execute(
+        pg_insert(m.Scenario)
+        .values(
             id=new_control_id("scn"),
             tenant_id=scope.tenant_id,
             project_id=scope.project_id,
             key=loaded.key,
         )
-        session.add(scenario)
-        session.flush()
+        .on_conflict_do_nothing(index_elements=["project_id", "key"])
+    )
+    scenario = session.execute(
+        select(m.Scenario)
+        .where(m.Scenario.project_id == scope.project_id, m.Scenario.key == loaded.key)
+        .with_for_update()
+    ).scalar_one()
 
     existing = session.execute(
         select(m.ScenarioVersion).where(

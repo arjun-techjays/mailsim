@@ -84,6 +84,7 @@ class Ctx:
         operation: str = "",
         baseline: bool = False,
     ) -> int:
+        save_ids(self.run, self.gen)  # the event records the id counter it leaves behind
         return append(
             self.session,
             self.run,
@@ -156,9 +157,17 @@ class SimEngine:
                     # untyped failures (e.g. header injection) become audited INVALID_REQUESTs
                     raise InvalidRequest(f"invalid input: {exc}"[:300]) from exc
                 if actor == AGENT:
-                    run.agent_actions += 1
+                    ctx.emit(
+                        "agent.action_counted",
+                        {"operation": operation, "outcome": "ok"},
+                        actor=AGENT,
+                        operation=operation,
+                    )
                     self._arm_triggers(ctx, operation)
-                save_ids(run, ctx.gen)
+                if ctx.gen.counter != run.id_counter:
+                    # ids were drawn after the last event: record it so replay stays exact
+                    ctx.emit("ids.reserved", {"counter": ctx.gen.counter}, actor=actor,
+                             operation=operation)  # fmt: skip
                 s.add(
                     m.ActionRow(
                         run_id=run.id,
@@ -191,7 +200,7 @@ class SimEngine:
     ) -> None:
         with self._sf.begin() as s:
             try:
-                run = get_run(s, scope, run_id)
+                run = lock_run(s, scope, run_id) if count else get_run(s, scope, run_id)
             except NotFound:
                 return
             s.add(
@@ -206,7 +215,16 @@ class SimEngine:
                 )
             )
             if count:
-                run.agent_actions += 1
+                append(
+                    s,
+                    run,
+                    Event(
+                        "agent.action_counted",
+                        {"operation": operation, "outcome": str(exc.code)},
+                        actor=AGENT,
+                        operation=operation,
+                    ),
+                )
 
     def _guard(
         self, ctx: Ctx, actor: str, operation: str, mailbox_id: str | None, require_running: bool
@@ -659,7 +677,8 @@ class SimEngine:
                     s,
                     replay,
                     Event(ev.type, ev.payload, actor=ev.actor, operation=ev.operation,
-                          outcome=ev.outcome, baseline=ev.baseline, virtual_time=ev.virtual_time),
+                          outcome=ev.outcome, baseline=ev.baseline, virtual_time=ev.virtual_time,
+                          id_counter_after=ev.id_counter_after),
                 )  # fmt: skip
                 missing.extend(self._missing_blobs(ev.payload))
             replay_hash = state_hash(snapshot(s, replay.id))
@@ -850,7 +869,9 @@ class SimEngine:
                 select(m.Mailbox).where(m.Mailbox.run_id == c.run.id)
             ).scalars()
         }
-        recipients = [spec["to"]] if isinstance(spec["to"], str) else list(spec["to"])
+        recipients = (
+            [spec["to"]] if isinstance(spec["to"], str) else list(dict.fromkeys(spec["to"]))
+        )
         raw = build_mime(
             message_id=c.gen.message_id_header(c.config["domain"]),
             from_=Address(email=personas[spec["from"]]),
