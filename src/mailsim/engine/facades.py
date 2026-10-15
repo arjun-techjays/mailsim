@@ -69,8 +69,17 @@ class AgentMailbox:
         return self._e.send(*self._a(), to=to, subject=subject, text=text, cc=cc, bcc=bcc,
                             html=html, actor=AGENT)  # fmt: skip
 
-    def reply(self, message_id: str, *, text: str, reply_all: bool = False) -> dict[str, Any]:
-        return self._e.reply(*self._a(), message_id, text=text, reply_all=reply_all, actor=AGENT)
+    def reply(self, message_id: str, *, text: str, reply_all: bool = False,
+              to: list[str] | None = None, cc: list[str] | None = None,
+              bcc: list[str] | None = None, subject: str | None = None,
+              html: str | None = None) -> dict[str, Any]:  # fmt: skip
+        """One `reply` operation; `to`/`cc`/`bcc`/`subject`/`html` override the derived reply."""
+        return self._e.reply(*self._a(), message_id, text=text, reply_all=reply_all, to=to, cc=cc,
+                             bcc=bcc, subject=subject, html=html, actor=AGENT)  # fmt: skip
+
+    def mailbox_info(self) -> dict[str, Any]:
+        """{mailbox_id, email, run_id, virtual_time} of this agent's own mailbox (a read)."""
+        return self._e.mailbox_info(*self._a(), actor=AGENT)
 
     def forward(self, message_id: str, *, to: list[str], text: str = "") -> dict[str, Any]:
         return self._e.forward(*self._a(), message_id, to=to, text=text, actor=AGENT)
