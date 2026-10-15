@@ -851,6 +851,12 @@
             "title": "Fired",
             "type": "array"
           },
+          "persona_replies": {
+            "default": 0,
+            "description": "persona messages delivered by the persona runtime in this step",
+            "title": "Persona Replies",
+            "type": "integer"
+          },
           "virtual_time": {
             "title": "Virtual Time",
             "type": "string"

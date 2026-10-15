@@ -80,7 +80,7 @@ def test_clock_advance_tick_and_limits(api, run):
         fired["fired"] == ["vendor-follow-up"] and fired["virtual_time"] == "2026-10-15T09:11:40Z"
     )
     tick = api.call("POST", f"/v1/runs/{rid}/scheduler/tick", expect=200).json()
-    assert tick == {"fired": [], "virtual_time": "2026-10-15T09:11:40Z"}
+    assert tick == {"fired": [], "virtual_time": "2026-10-15T09:11:40Z", "persona_replies": 0}
     err(api.call("POST", f"/v1/runs/{rid}/clock/advance", json={"seconds": -1}), 400,
         "INVALID_REQUEST")  # fmt: skip
     body = err(api.call("POST", f"/v1/runs/{rid}/clock/advance", json={"seconds": 99999}), 429,

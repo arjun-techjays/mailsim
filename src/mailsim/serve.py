@@ -33,6 +33,9 @@ from mailsim.api.app import create_app
 from mailsim.api.auth import bootstrap
 from mailsim.domain.errors import SimError
 from mailsim.engine.core import SimEngine
+from mailsim.llm.gateway import LLMGateway
+from mailsim.llm.judge import LLMJudge
+from mailsim.personas.runtime import PersonaRuntime
 from mailsim.store.blob import FilesystemBlobStore
 from mailsim.store.db import make_engine, make_session_factory, run_migrations
 
@@ -62,7 +65,14 @@ def build_state(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
                              "engine": SimEngine(session_factory, blobs)}  # fmt: skip
     if "MAILSIM_MAX_BODY_BYTES" in env:
         state["max_body_bytes"] = int(env["MAILSIM_MAX_BODY_BYTES"])
-    state["evaluation_service"] = evaluation_service(**state)
+    # LLM gateway (stub by default; see mailsim.llm.config for providers and budgets): it
+    # backs the semantic judge (bound to the evaluated run) and the persona runtime.
+    gateway = LLMGateway.from_config(session_factory=session_factory)
+    state["llm_gateway"] = gateway
+    state["persona_runtime_factory"] = lambda ctl: PersonaRuntime(ctl, gateway)
+    state["evaluation_service"] = evaluation_service(
+        **state, judge_factory=lambda run_id: LLMJudge(gateway, run_id=run_id)
+    )
     return state
 
 

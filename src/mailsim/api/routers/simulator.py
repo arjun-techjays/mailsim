@@ -12,7 +12,7 @@ from mailsim.api import schemas as s
 from mailsim.api.deps import Controller, Inspector
 from mailsim.api.errors import ErrorEnvelope
 from mailsim.api.idempotency import idempotent
-from mailsim.api.routers._common import controller, inspector
+from mailsim.api.routers._common import controller, inspector, run_personas
 from mailsim.domain.errors import InvalidRequest, PermissionDenied, UnsupportedOperation
 from mailsim.engine.facades import EvaluatorView
 
@@ -68,8 +68,10 @@ def advance(
     idempotency_key: Idem = None,
 ) -> Response:
     def run() -> s.ClockResult:
+        ctl = controller(request, principal)
+        result = ctl.advance(run_id, body.seconds)
         return s.ClockResult.model_validate(
-            controller(request, principal).advance(run_id, body.seconds)
+            {**result, "persona_replies": run_personas(request, ctl, run_id)}
         )
 
     return idempotent(request, principal, idempotency_key, body.model_dump(mode="json"), 200, run)
@@ -77,7 +79,11 @@ def advance(
 
 @router.post("/scheduler/tick", response_model=s.ClockResult)
 def tick(request: Request, run_id: str, principal: Controller) -> s.ClockResult:
-    return s.ClockResult.model_validate(controller(request, principal).tick(run_id))
+    ctl = controller(request, principal)
+    result = ctl.tick(run_id)
+    return s.ClockResult.model_validate(
+        {**result, "persona_replies": run_personas(request, ctl, run_id)}
+    )
 
 
 @router.get("/state", response_model=dict[str, Any])
