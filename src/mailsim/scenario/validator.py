@@ -12,9 +12,9 @@ from mailsim.domain.clock import parse_ts
 from mailsim.domain.errors import InvalidRequest, SimError
 from mailsim.mime.limits import MimeLimits
 from mailsim.mime.parse import parse_mime
+from mailsim.scenario.answer_key import AnswerKeyBody, find_leaks, secret_strings
 from mailsim.scenario.schema import (
     AGENT_OPERATIONS,
-    ASSERTION_TYPES,
     TRIGGER_ACTIONS,
     ScenarioBody,
     ScenarioDoc,
@@ -182,10 +182,38 @@ def validate_semantics(
 
     for d in _dupes([a.id for a in body.evaluation.assertions]):
         err("scenario.evaluation.assertions", f"duplicate assertion id {d!r}")
-    for i, a in enumerate(body.evaluation.assertions):
-        if a.type not in ASSERTION_TYPES:
-            err(f"scenario.evaluation.assertions[{i}].type", f"unknown assertion type {a.type!r}")
+    for i, p in enumerate(body.personas):
+        for j, rule in enumerate(p.behavior.script):
+            if rule.on.from_ is not None and rule.on.from_ not in pset:
+                err(f"scenario.personas[{i}].behavior.script[{j}].on.from",
+                    f"unknown persona {rule.on.from_!r}")  # fmt: skip
+        if p.behavior.script and p.behavior.mode != "scripted":
+            err(f"scenario.personas[{i}].behavior", "script rules require mode: scripted")
+    leaks = find_leaks(_inline_secrets(body), agent_visible_texts(body))
+    for leak in leaks:
+        err("scenario", f"evaluation text leaks into agent-visible content: {leak[:60]!r}")
     return r
+
+
+def _inline_secrets(body: ScenarioBody) -> list[str]:
+    # model_construct: duplicates are reported separately, never crash the leak scan
+    key = AnswerKeyBody.model_construct(
+        scenario=body.id, version=1, assertions=body.evaluation.assertions
+    )
+    return secret_strings(key)
+
+
+def agent_visible_texts(body: ScenarioBody, fixtures: list[bytes] | None = None) -> list[str]:
+    """Everything an agent could ever read that comes from the scenario author."""
+    texts: list[str] = []  # title/tags/evaluation are never shown to the agent
+    for ev in body.events:
+        texts += [ev.event.subject, ev.event.body]
+    for p in body.personas:
+        texts += [r.reply.body for r in p.behavior.script]
+        texts += [r.reply.subject for r in p.behavior.script if r.reply.subject]
+    for raw in fixtures or []:
+        texts.append(raw.decode("utf-8", "replace"))
+    return texts
 
 
 def validate_scenario(
@@ -220,6 +248,23 @@ def validate_scenario(
             return None
 
     sem = validate_semantics(report.doc.scenario, fixture_check)
+    if base_dir is not None:
+        raws = []
+        for mb in report.doc.scenario.mailboxes:
+            for im in mb.initial_messages:
+                try:
+                    raws.append(resolve_fixture(base_dir, im.fixture).read_bytes())
+                except (InvalidRequest, OSError):
+                    continue  # already reported by fixture_check
+        for leak in find_leaks(
+            _inline_secrets(report.doc.scenario), agent_visible_texts(report.doc.scenario, raws)
+        ):
+            if not any(leak[:60] in e.message for e in sem.errors):
+                sem.errors.append(
+                    Issue(
+                        "scenario.fixtures", f"evaluation text leaks into a fixture: {leak[:60]!r}"
+                    )
+                )
     report.errors.extend(sem.errors)
     report.warnings.extend(sem.warnings)
     return report

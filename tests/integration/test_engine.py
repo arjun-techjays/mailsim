@@ -426,6 +426,7 @@ def test_thread_merge_when_bridge_message_arrives(env):
 
 def test_reset_restores_baseline_in_new_epoch_and_keeps_history(env):
     run = env.run()
+    baseline_state = env.engine.state(env.scope, run)
     baseline = env.engine.state_hash(env.scope, run)
     fm, first, _ = agent_reply(env, run)
     env.engine.advance(env.scope, run, 700)
@@ -449,6 +450,13 @@ def test_reset_restores_baseline_in_new_epoch_and_keeps_history(env):
     again = env.engine.state(env.scope, run)
     again["run"]["epoch"] = 0
     again["run"]["status"] = "RUNNING"  # baseline hash was taken while running
+    # the id counter keeps counting across epochs (determinism is per event log)
+    assert again["run"]["id_counter"] > baseline_state["run"]["id_counter"]
+    again["run"]["id_counter"] = baseline_state["run"]["id_counter"]
+    # IMAP UIDVALIDITY changes per epoch by design (clients must resync after a reset)
+    assert {f["uid_validity"] for f in again["folders"]} == {2}
+    for f in again["folders"]:
+        f["uid_validity"] = 1
     from mailsim.engine.snapshot import state_hash
 
     assert state_hash(again) == baseline

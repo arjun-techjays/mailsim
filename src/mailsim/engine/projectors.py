@@ -14,7 +14,32 @@ from sqlalchemy.orm import Session
 
 from mailsim.domain.clock import parse_ts
 from mailsim.engine.log import projector
+from mailsim.providers.ids import gmail_id, graph_id
 from mailsim.store import models as m
+
+
+def _map_ids(session: Session, run: m.Run, entity_type: str, entity_id: str) -> None:
+    for provider, fn in (("gmail", gmail_id), ("graph", graph_id)):
+        session.add(m.ProviderId(run_id=run.id, provider=provider, entity_type=entity_type,
+                                 external_id=fn(entity_id), entity_id=entity_id))  # fmt: skip
+
+
+def _unmap_ids(session: Session, run: m.Run, entity_type: str, entity_ids: list[str]) -> None:
+    session.execute(
+        delete(m.ProviderId).where(
+            m.ProviderId.run_id == run.id,
+            m.ProviderId.entity_type == entity_type,
+            m.ProviderId.entity_id.in_(entity_ids),
+        )
+    )
+
+
+def _next_uid(session: Session, run: m.Run, folder_id: str) -> int:
+    folder = session.get(m.Folder, (folder_id, run.id))
+    assert folder is not None, f"unknown folder {folder_id}"
+    uid = folder.uid_next
+    folder.uid_next = uid + 1
+    return uid
 
 
 @projector("org.created")
@@ -59,7 +84,7 @@ def _mailbox(session: Session, run: m.Run, p: dict[str, Any]) -> None:
     for f in p["folders"]:
         session.add(
             m.Folder(run_id=run.id, id=f["id"], mailbox_id=p["id"], name=f["name"],
-                     system_type=f["system_type"])
+                     system_type=f["system_type"], uid_next=1, uid_validity=run.epoch + 1)
         )  # fmt: skip
 
 
@@ -71,6 +96,7 @@ def _insert_message(session: Session, run: m.Run, p: dict[str, Any]) -> None:
             m.Thread(run_id=run.id, id=t["id"], mailbox_id=msg["mailbox_id"],
                      subject_key=t["subject_key"])
         )  # fmt: skip
+        _map_ids(session, run, "thread", t["id"])
         session.flush()
     merged = p.get("merged_threads") or []
     if merged:
@@ -80,6 +106,7 @@ def _insert_message(session: Session, run: m.Run, p: dict[str, Any]) -> None:
             .values(thread_id=msg["thread_id"])
         )
         session.execute(delete(m.Thread).where(m.Thread.run_id == run.id, m.Thread.id.in_(merged)))
+        _unmap_ids(session, run, "thread", merged)
     session.add(
         m.Message(
             run_id=run.id, id=msg["id"], mailbox_id=msg["mailbox_id"],
@@ -91,9 +118,16 @@ def _insert_message(session: Session, run: m.Run, p: dict[str, Any]) -> None:
             received_at=parse_ts(msg["received_at"]) if msg["received_at"] else None,
             labels=msg["labels"], flags=msg["flags"], headers=msg["headers"],
             is_draft=msg["is_draft"], raw_blob_ref=msg["raw_blob_ref"],
-            provider_ids={},
+            provider_ids=msg.get("provider_ids") or {},
+            imap_uid=_next_uid(session, run, msg["folder_id"]),
         )
     )  # fmt: skip
+    _map_ids(session, run, "message", msg["id"])
+    draft_id = (msg.get("provider_ids") or {}).get("draft_id")
+    if draft_id:  # drafts: stable external draft id -> the message currently holding the draft
+        for provider, fn in (("gmail", gmail_id), ("graph", graph_id)):
+            session.add(m.ProviderId(run_id=run.id, provider=provider, entity_type="draft",
+                                     external_id=fn(draft_id), entity_id=msg["id"]))  # fmt: skip
     session.flush()
     for a in msg["attachments"]:
         session.add(
@@ -103,7 +137,13 @@ def _insert_message(session: Session, run: m.Run, p: dict[str, Any]) -> None:
         )  # fmt: skip
 
 
-for _t in ("message.delivered", "message.sent", "draft.created"):
+for _t in (
+    "message.delivered",
+    "message.sent",
+    "draft.created",
+    "message.inserted",
+    "message.copied",
+):
     projector(_t)(_insert_message)
 
 
@@ -115,7 +155,12 @@ def _msg(session: Session, run: m.Run, message_id: str) -> m.Message:
 
 @projector("message.moved")
 def _moved(session: Session, run: m.Run, p: dict[str, Any]) -> None:
-    _msg(session, run, p["message_id"]).folder_id = p["folder_id"]
+    row = _msg(session, run, p["message_id"])
+    if row.folder_id == p["folder_id"]:
+        return  # same-folder move: no new UID, origin kept for untrash
+    row.previous_folder_id = row.folder_id
+    row.folder_id = p["folder_id"]
+    row.imap_uid = _next_uid(session, run, p["folder_id"])  # IMAP: a moved message gets a new UID
 
 
 @projector("message.labels_changed")
@@ -140,10 +185,13 @@ def _deleted(session: Session, run: m.Run, p: dict[str, Any]) -> None:
     session.execute(
         delete(m.Message).where(m.Message.run_id == run.id, m.Message.id == p["message_id"])
     )
+    _unmap_ids(session, run, "message", [p["message_id"]])
+    _unmap_ids(session, run, "draft", [p["message_id"]])
     if p.get("empty_thread"):
         session.execute(
             delete(m.Thread).where(m.Thread.run_id == run.id, m.Thread.id == p["empty_thread"])
         )
+        _unmap_ids(session, run, "thread", [p["empty_thread"]])
 
 
 @projector("delivery.sunk")

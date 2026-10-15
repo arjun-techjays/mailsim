@@ -73,6 +73,17 @@ def test_no_socket_is_opened_when_sending_to_external_recipients(env, tmp_path, 
     assert no_network == []
 
 
+# The ONLY reviewed exceptions (module -> files). Everything else in FORBIDDEN is banned in
+# every file, including the exempt ones (ruff per-file-ignores disable the whole rule).
+ALLOWED = {
+    "ssl": {"src/mailsim/protocols/tls.py"},
+    "subprocess": {"src/mailsim/runner/command.py"},
+    "anthropic": {"src/mailsim/llm/providers/anthropic.py"},
+    "httpx": {"src/mailsim/llm/providers/openai_compatible.py"},
+}
+ALWAYS_FORBIDDEN = FORBIDDEN | {"anthropic", "openai", "aiosmtpd.handlers", "mcp.client"}
+
+
 def test_source_tree_has_no_mail_or_network_imports():
     offenders = []
     for path in (ROOT / "src").rglob("*.py"):
@@ -83,9 +94,43 @@ def test_source_tree_has_no_mail_or_network_imports():
                 names = [a.name for a in node.names]
             elif isinstance(node, ast.ImportFrom) and node.module:
                 names = [node.module]
+            rel = str(path.relative_to(ROOT))
             for n in names:
-                if n in FORBIDDEN or n.split(".")[0] in FORBIDDEN:
-                    offenders.append(f"{path.relative_to(ROOT)}: {n}")
+                hit = next(
+                    (x for x in sorted(ALWAYS_FORBIDDEN) if n == x or n.startswith(f"{x}.")), None
+                )
+                if hit and rel not in ALLOWED.get(hit, set()):
+                    offenders.append(f"{rel}: {n}")
+    assert offenders == []
+
+
+def test_forbidden_matcher_catches_submodules():
+    for n in ("mcp.client.stdio", "aiosmtpd.handlers", "smtplib", "http.client"):
+        assert next((x for x in ALWAYS_FORBIDDEN if n == x or n.startswith(f"{x}.")), None), n
+
+
+def test_exempt_directories_contain_only_listed_files():
+    """A new file in an exempted directory is not silently exempt (CI gate)."""
+    exempt_dirs = {"src/mailsim/llm/providers", "src/mailsim/protocols", "src/mailsim/runner"}
+    allowed_files = set().union(*ALLOWED.values())
+    for d in exempt_dirs:
+        for path in (ROOT / d).glob("*.py"):
+            rel = str(path.relative_to(ROOT))
+            if path.name == "__init__.py" or rel in allowed_files:
+                continue
+            text = path.read_text()
+            assert not any(f"import {m}" in text for m in ALWAYS_FORBIDDEN), rel
+
+
+def test_interfaces_never_reach_through_facades():
+    """Facades keep the engine in `_e`; nothing outside mailsim/engine may touch it."""
+    offenders = []
+    for path in (ROOT / "src").rglob("*.py"):
+        if "mailsim/engine/" in str(path):
+            continue
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.Attribute) and node.attr == "_e":
+                offenders.append(str(path.relative_to(ROOT)))
     assert offenders == []
 
 

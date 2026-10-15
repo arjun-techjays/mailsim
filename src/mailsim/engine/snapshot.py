@@ -24,6 +24,7 @@ _TABLES: tuple[type[Any], ...] = (
     m.Attachment,
     m.ScheduledEvent,
     m.SinkMessage,
+    m.ProviderId,
 )
 
 
@@ -41,6 +42,8 @@ def snapshot(session: Session, run_id: str) -> dict[str, Any]:
             "status": run.status,
             "epoch": run.epoch,
             "virtual_time": iso(run.virtual_time) if run.virtual_time else None,
+            "agent_actions": run.agent_actions,
+            "id_counter": run.id_counter,
         }
     }
     for model in _TABLES:
