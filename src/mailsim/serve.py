@@ -14,9 +14,10 @@ Environment: ``MAILSIM_DATABASE_URL`` (default: the local Compose database),
   from the environment and, unless ``--no-protocols``, the IMAP/SMTP listeners beside it on
   the same host (``--imap-port 1143 --smtp-port 1587``, ``--tls-self-signed`` /
   ``--tls-cert``/``--tls-key``; a non-loopback host needs TLS or ``--allow-insecure-remote``).
-  Listeners that cannot start (port in use, ...) are reported and the API keeps serving. ``--local-no-auth`` (or ``MAILSIM_LOCAL_NO_AUTH=1``) is a LOCAL
-  DEVELOPMENT convenience: key-less requests act as a controller+evaluator operator for one
-  project (``MAILSIM_LOCAL_PROJECT_ID``, else the only project, else a new "local" project).
+  Listeners that cannot start (port in use, ...) are reported and the API keeps serving.
+  ``--local-no-auth`` (or ``MAILSIM_LOCAL_NO_AUTH=1``) is a LOCAL DEVELOPMENT convenience:
+  key-less requests act as a controller+evaluator operator for one project
+  (``MAILSIM_LOCAL_PROJECT_ID``, else the only project, else a new "local" project).
   It refuses to start unless bound to a loopback address. Agent interfaces (agent mailbox
   REST, Gmail, Graph, IMAP/SMTP, MCP agent tools) still require agent keys, and hidden
   answer keys stay unreachable for agents.

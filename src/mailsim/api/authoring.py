@@ -40,11 +40,12 @@ MAX_FIXTURES = 200
 MAX_FIXTURE_TOTAL_BYTES = 25 * 1024 * 1024
 MAX_FIXTURE_PATH_CHARS = 255
 TEXT_PREVIEW_CHARS = 500
+MAX_HTML_PREVIEW_CHARS = 256 * 1024
 MAX_FILENAME_CHARS = 150
 MAX_ATTACHMENT_TOTAL_BYTES = 10 * 1024 * 1024
 _MSGID = re.compile(r"^<[^<>\s]+@[^<>\s]+>$")
 _MIME_TYPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$")
-_TAG = re.compile(r"<[^>]*>")
+_TAG = re.compile(r"<[^<>]*>")  # linear: no backtracking over unclosed "<"
 _SLUG = re.compile(r"[^a-z0-9]+")
 
 
@@ -58,10 +59,17 @@ def tmpdir() -> tempfile.TemporaryDirectory[str]:
     return tempfile.TemporaryDirectory(prefix="mailsim-scn-")
 
 
-def answer_key_errors(exc: ValidationError, data: object) -> list[tuple[str, str]]:
-    """(dotted path, message) per answer-key schema error. Errors of an assertion's `check:`
-    block are reported under ``answer_key.assertions.<i>.check[.<field>]`` (also the check
-    model's own cross-field rules, which pydantic places on the assertion), and pydantic's
+@dataclass
+class KeyIssue:
+    loc: list[str]  # pydantic location, with the "check" segment restored
+    path: str  # the same, dotted
+    message: str
+
+
+def answer_key_errors(exc: ValidationError, data: object) -> list[KeyIssue]:
+    """One entry per answer-key schema error. Errors of an assertion's `check:` block are
+    reported under ``answer_key.assertions.<i>.check[.<field>]`` (also the check model's own
+    cross-field rules, which pydantic places on the assertion), and pydantic's
     "Value error, " prefix is dropped."""
     out = []
     for err in exc.errors()[:200]:
@@ -69,8 +77,19 @@ def answer_key_errors(exc: ValidationError, data: object) -> list[tuple[str, str
         message = str(err["msg"]).removeprefix("Value error, ")
         if len(loc) == 3 and loc[:2] == ["answer_key", "assertions"] and _check_fails(data, loc):
             loc.append("check")
-        out.append((dotted(".".join(loc) or "<root>"), message))
+        path = dotted(".".join(loc) or "<root>")
+        out.append(KeyIssue(path.split(".") if loc else [], path, message))
     return out
+
+
+def answer_key_data(source: str | None, document: dict[str, Any] | None) -> object:
+    """The answer key a request carries: exactly one of `source` (YAML/JSON text, parsed
+    safely) or `document`. InvalidRequest otherwise or when the text does not parse."""
+    if (source is None) == (document is None):
+        raise InvalidRequest("provide exactly one of `source` or `document`")
+    if source is not None:
+        return parse_source(source.encode(), is_json=source.lstrip().startswith("{"))
+    return document
 
 
 def _check_fails(data: object, loc: list[str]) -> bool:
@@ -292,7 +311,7 @@ def summarize_eml(content_b64: str) -> u.EmlSummary:
         raise InvalidRequest("not an RFC 5322 message: there is no From header")
     text = parsed.body_text
     if not text and parsed.body_html:
-        text = " ".join(_TAG.sub(" ", parsed.body_html).split())
+        text = " ".join(_TAG.sub(" ", parsed.body_html[:MAX_HTML_PREVIEW_CHARS]).split())
     return u.EmlSummary.model_validate({
         "message_id": parsed.message_id,
         "from": _fmt(parsed.from_) if parsed.from_ else None,

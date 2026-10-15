@@ -146,6 +146,7 @@ class ActionRow(Base):
     # api, cli); None for engine-internal callers and rows written before migration 0009.
     interface: Mapped[str | None] = mapped_column(String(16))
     created_at: Mapped[datetime] = _created()
+    __table_args__ = (Index("ix_actions_run_id_id", "run_id", "id"),)  # activity polling
 
 
 class AnswerKey(Base):

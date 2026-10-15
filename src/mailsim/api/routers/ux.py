@@ -11,6 +11,7 @@ no HTTP client). Keys are never echoed back.
 from __future__ import annotations
 
 import base64
+import functools
 import json
 import logging
 from collections.abc import Callable
@@ -47,7 +48,7 @@ from mailsim.llm.config import LLMConfig
 from mailsim.scenario import answer_key as ak
 from mailsim.scenario import answer_keys as keys_service
 from mailsim.scenario import schema as scenario_schema
-from mailsim.scenario.loader import parse_source
+from mailsim.scenario.loader import check_finite, parse_source
 from mailsim.store import models as m
 from mailsim.store import repos
 
@@ -125,6 +126,11 @@ def _not_running(interface: str) -> str:
 @router.get("/meta/authoring", response_model=u.AuthoringMeta)
 def authoring_meta(principal: Inspector) -> u.AuthoringMeta:
     """Schemas and enumerations for the scenario builder and the answer-key editor."""
+    return _authoring_meta()
+
+
+@functools.cache
+def _authoring_meta() -> u.AuthoringMeta:  # static per process: built once
     types = [
         u.AssertionTypeInfo(
             type=t, default_category=ak.DEFAULT_CATEGORY[t],
@@ -218,8 +224,12 @@ def yaml_to_json(body: u.YamlToJson, principal: Inspector) -> u.ParsedDocument:
 @router.post("/tools/json-to-yaml", response_model=u.RenderedYaml)
 def json_to_yaml(body: u.JsonToYaml, principal: Inspector) -> u.RenderedYaml:
     """Render a document as YAML (stable key order: the form's order)."""
-    text = yaml.safe_dump(body.document, sort_keys=False, allow_unicode=True,
-                          default_flow_style=False)  # fmt: skip
+    check_finite(body.document)
+    try:
+        text = yaml.safe_dump(body.document, sort_keys=False, allow_unicode=True,
+                              default_flow_style=False)  # fmt: skip
+    except RecursionError:
+        raise InvalidRequest("the document is nested too deeply") from None
     if len(text) > s.MAX_SOURCE_CHARS:
         raise InvalidRequest("the rendered YAML is larger than a scenario source may be")
     return u.RenderedYaml(source=text)
@@ -287,20 +297,17 @@ def validate_answer_key(
     leaked text is cut to 60 characters). 404 when the scenario does not exist."""
     if (body.source is None) == (body.document is None):
         raise InvalidRequest("provide exactly one of `source` or `document`")
-    data: object = body.document
-    if body.source is not None:
-        try:
-            data = parse_source(body.source.encode(),
-                                is_json=body.source.lstrip().startswith("{"))  # fmt: skip
-        except InvalidRequest as exc:
-            issue = s.ValidationIssue(path="<source>", message=exc.message)
-            return u.AnswerKeyValidation(ok=False, errors=[issue], warnings=[])
+    try:
+        data = authoring.answer_key_data(body.source, body.document)
+    except InvalidRequest as exc:
+        issue = s.ValidationIssue(path="<source>", message=exc.message)
+        return u.AnswerKeyValidation(ok=False, errors=[issue], warnings=[])
     document = json.loads(json.dumps(data, default=str)) if isinstance(data, dict) else None
     try:
         doc = ak.AnswerKeyDoc.model_validate(data)
     except ValidationError as exc:
-        errors = [s.ValidationIssue(path=path, message=message)
-                  for path, message in authoring.answer_key_errors(exc, data)]  # fmt: skip
+        errors = [s.ValidationIssue(path=e.path, message=e.message)
+                  for e in authoring.answer_key_errors(exc, data)]  # fmt: skip
         return u.AnswerKeyValidation(ok=False, errors=errors, warnings=[], document=document)
     key = doc.answer_key
     errors, warnings = [], []
@@ -564,10 +571,11 @@ async def connection_test(
     - gmail / graph / mcp_http not mounted: null (summary "... is not served by this server")
     - unexpected failure: INTERNAL"""
     result = await _connection_test(request, run_id, body, principal)
+    key = body.api_key.strip()
     for name in ("summary", "error_message"):  # defence in depth: never echo the key
         value = getattr(result, name)
-        if value and body.api_key.strip() in value:
-            setattr(result, name, value.replace(body.api_key.strip(), "[redacted]"))
+        if key and value and key in value:
+            setattr(result, name, value.replace(key, "[redacted]"))
     return result
 
 

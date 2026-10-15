@@ -17,11 +17,13 @@ PREFIXES: tuple[tuple[str, str], ...] = (
     ("/v1/mailboxes/", "rest"),
     ("/gmail/", "gmail"),
     ("/graph/", "graph"),
-    ("/mcp", "mcp_http"),
+    ("/mcp/", "mcp_http"),
 )
 
 
 def interface_for_path(path: str) -> str:
+    if path == "/mcp":
+        return "mcp_http"
     return next((name for prefix, name in PREFIXES if path.startswith(prefix)), "api")
 
 

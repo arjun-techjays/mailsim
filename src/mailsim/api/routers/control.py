@@ -39,7 +39,7 @@ from mailsim.engine.pagination import decode_cursor, encode_cursor
 from mailsim.evaluation.contract import BuildComparison, EvaluationReport
 from mailsim.scenario import answer_keys as keys_service
 from mailsim.scenario.answer_key import AnswerKeyDoc
-from mailsim.scenario.loader import load_scenario, parse_source
+from mailsim.scenario.loader import load_scenario
 from mailsim.scenario.service import create_scenario_version
 from mailsim.store import models as m
 from mailsim.store import repos
@@ -224,17 +224,15 @@ def create_answer_key(
 ) -> s.AnswerKeyOut:
     """Publish a hidden answer-key version (controller or evaluator). The response is
     metadata only."""
-    if body.document is not None and body.source is None:
-        data: object = body.document
-    elif body.source is not None and body.document is None:
-        data = parse_source(body.source.encode(), is_json=body.source.lstrip().startswith("{"))
-    else:
-        raise InvalidRequest("provide exactly one of `source` or `document`")
+    data = authoring.answer_key_data(body.source, body.document)
     try:
         doc = AnswerKeyDoc.model_validate(data)
     except ValidationError as exc:
-        errors = [{"loc": loc, "msg": msg} for loc, msg in authoring.answer_key_errors(exc, data)]
-        raise InvalidRequest("answer key validation failed", details={"errors": errors}) from None
+        found = authoring.answer_key_errors(exc, data)
+        raise InvalidRequest("answer key validation failed", details={
+            "errors": [{"loc": e.loc, "msg": e.message} for e in found],
+            "issues": [{"path": e.path, "message": e.message} for e in found],
+        }) from None  # fmt: skip
     if doc.answer_key.scenario != scenario_key:
         raise InvalidRequest(f"answer key is for {doc.answer_key.scenario!r}, not {scenario_key!r}")
     with sessions(request).begin() as session:

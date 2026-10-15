@@ -6,9 +6,9 @@ except the evaluator-only answer-key document endpoints.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import Field
+from pydantic import Field, StringConstraints
 
 from mailsim.api.schemas import (
     _M,
@@ -232,7 +232,7 @@ class RunConnection(_M):
 
 class ConnectionTestRequest(_M):
     interface: Interface
-    api_key: str = Field(min_length=1, max_length=200)
+    api_key: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 
 
 class ConnectionTestResult(_M):

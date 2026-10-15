@@ -125,15 +125,14 @@ def _dupes(values: list[str]) -> list[str]:
     return out
 
 
-def validate_semantics(
-    body: ScenarioBody,
-    fixture_check: Callable[[str], str | None] | None = None,
-) -> ValidationReport:
-    """Reference and rule checks. `fixture_check(path)` returns an error text or None."""
-    r = ValidationReport()
+def validate_authoring(body: ScenarioBody) -> list[Issue]:
+    """Format rules for scenarios being AUTHORED (validate, drafts, publish). Runs of versions
+    published before these rules existed only get `validate_semantics`, so stored specs
+    keep working."""
+    out: list[Issue] = []
 
     def err(path: str, msg: str) -> None:
-        r.errors.append(Issue(path, msg))
+        out.append(Issue(path, msg))
 
     if len(body.id) > 100 or not _SCENARIO_ID.fullmatch(body.id):
         err("scenario.id", "use lowercase letters, digits, '.', '_' or '-' (starting with a "
@@ -148,18 +147,34 @@ def validate_semantics(
     for i, ev in enumerate(body.events):
         if len(ev.id) > 64 or not _ID.fullmatch(ev.id):
             err(f"scenario.events[{i}].id", _ID_RULE)
+    for i, p in enumerate(body.personas):
+        if "@" in p.email and not is_address(p.email):  # no "@": validate_semantics reports it
+            err(f"scenario.personas[{i}].email",
+                "not an email address: use a plain local@domain.tld (ASCII, no spaces, names, "
+                "brackets or commas, at most 254 characters)")  # fmt: skip
+    if not is_domain(body.organization.domain):
+        err("scenario.organization.domain", "not a domain name (labels of letters, digits, '-')")
+    return out
+
+
+def validate_semantics(
+    body: ScenarioBody,
+    fixture_check: Callable[[str], str | None] | None = None,
+) -> ValidationReport:
+    """Reference and rule checks. `fixture_check(path)` returns an error text or None."""
+    r = ValidationReport()
+
+    def err(path: str, msg: str) -> None:
+        r.errors.append(Issue(path, msg))
+
     persona_ids = [p.id for p in body.personas]
     for d in _dupes(persona_ids):
         err("scenario.personas", f"duplicate persona id {d!r}")
     for d in _dupes([p.email.lower() for p in body.personas]):
         err("scenario.personas", f"duplicate persona email {d!r}")
     for i, p in enumerate(body.personas):
-        if not is_address(p.email):
-            err(f"scenario.personas[{i}].email",
-                "not an email address: use a plain local@domain.tld (ASCII, no spaces, names, "
-                "brackets or commas, at most 254 characters)")  # fmt: skip
-    if not is_domain(body.organization.domain):
-        err("scenario.organization.domain", "not a domain name (labels of letters, digits, '-')")
+        if "@" not in p.email:
+            err(f"scenario.personas[{i}].email", "not an email address")
     pset = set(persona_ids)
 
     for d in _dupes([p.id for p in body.organization.policies]):
@@ -307,6 +322,7 @@ def validate_scenario(
             return None
 
     sem = validate_semantics(report.doc.scenario, fixture_check)
+    sem.errors[:0] = validate_authoring(report.doc.scenario)
     if base_dir is not None:
         raws = []
         for mb in report.doc.scenario.mailboxes:

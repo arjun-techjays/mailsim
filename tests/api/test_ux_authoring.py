@@ -496,8 +496,11 @@ def test_answer_key_publish_errors_are_structured(api):
     r = api.call("POST", f"/v1/scenarios/{KEY}/answer-keys", json={"document": bad},
                  expect=400).json()["error"]  # fmt: skip
     assert r["message"] == "answer key validation failed"
-    assert r["details"]["errors"][0]["loc"] == "answer_key.assertions.0.check.count.min"
+    assert r["details"]["errors"][0]["loc"] == ["answer_key", "assertions", "0", "check", "count",
+                                                "min"]  # fmt: skip
     assert r["details"]["errors"][0]["msg"]
+    assert r["details"]["issues"][0] == {"path": "answer_key.assertions.0.check.count.min",
+                                         "message": r["details"]["errors"][0]["msg"]}  # fmt: skip
 
 
 def test_run_mailboxes_carry_persona_and_folder_counts(api):
@@ -553,3 +556,52 @@ def test_tools_never_log_request_or_response_bodies(api, caplog):
         api.call("POST", "/v1/tools/json-to-yaml", "evaluator",
                  json={"document": {"a": marker}}, expect=200)  # fmt: skip
     assert caplog.records and marker not in caplog.text
+
+
+def test_inspect_eml_strips_unclosed_tags_in_linear_time(api):
+    import time
+
+    raw = (b"From: a@example.test\r\nTo: b@example.test\r\nSubject: s\r\n"
+           b"Content-Type: text/html\r\n\r\n" + b"<" * 200_000)  # fmt: skip
+    started = time.monotonic()
+    r = api.call("POST", "/v1/scenario-drafts/inspect-eml", json={"content_b64": b64(raw)},
+                 expect=200).json()  # fmt: skip
+    assert time.monotonic() - started < 5
+    assert len(r["text_preview"]) <= 500
+
+
+@pytest.mark.parametrize("source", ["[" * 5000 + "]" * 5000, "a: " + "[" * 5000,
+                                    '{"a": ' + "[" * 5000 + "]" * 5000 + "}"])  # fmt: skip
+def test_deeply_nested_text_is_an_error_not_a_500(api, source):
+    r = api.call("POST", "/v1/tools/yaml-to-json", json={"source": source}, expect=200).json()
+    assert r["document"] is None and r["error"]["message"]
+    v = api.call("POST", "/v1/scenario-drafts/validate", json={"source": source}, expect=200).json()
+    assert not v["ok"]
+
+
+@pytest.mark.parametrize(
+    "source", ["a: .nan\n", "a: [1, -.inf]\n", '{"a": NaN}', '{"a": -Infinity}']
+)
+def test_nan_and_infinity_are_refused(api, source):
+    r = api.call("POST", "/v1/tools/yaml-to-json", json={"source": source}, expect=200).json()
+    assert r["document"] is None and r["error"]["path"] == "<source>"
+    assert "NaN/Infinity is not allowed" in r["error"]["message"]
+    k = api.call("POST", f"/v1/scenarios/{KEY}/answer-keys/validate", "evaluator",
+                 json={"source": source}, expect=200).json()  # fmt: skip
+    assert k["errors"][0]["path"] == "<source>"
+
+
+def test_json_to_yaml_refuses_non_finite_and_too_deep_documents(api):
+    r = api.client.post("/v1/tools/json-to-yaml", headers={**api.h("controller"),
+                        "content-type": "application/json"},
+                        content=b'{"document": {"a": NaN}}')  # fmt: skip
+    assert r.status_code == 400 and "NaN" in r.json()["error"]["message"]
+
+
+def test_json_to_yaml_reports_too_deep_documents(api, monkeypatch):
+    def deep(*_a, **_kw):
+        raise RecursionError
+
+    monkeypatch.setattr("mailsim.api.routers.ux.yaml.safe_dump", deep)
+    r = api.call("POST", "/v1/tools/json-to-yaml", json={"document": {"a": 1}}, expect=400)
+    assert "nested too deeply" in r.json()["error"]["message"]

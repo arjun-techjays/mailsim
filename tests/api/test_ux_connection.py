@@ -448,3 +448,17 @@ def test_connection_tests_never_log_the_key(run, caplog):
             run.test(interface)
         run.test("rest", key=run.key + "x")
     assert caplog.records and run.key not in caplog.text
+
+
+def test_whitespace_only_keys_are_rejected_by_the_schema(api, run):
+    r = api.call("POST", f"/v1/runs/{run.id}/connection-tests",
+                 json={"interface": "rest", "api_key": "   "}, expect=400)  # fmt: skip
+    assert r.json()["error"]["code"] == "INVALID_REQUEST"
+    assert run.test("rest", key=f"  {run.key}  ")["ok"]  # surrounding whitespace is stripped
+
+
+def test_mcp_paths_are_matched_exactly():
+    from mailsim.api.interface import interface_for_path
+
+    assert [interface_for_path(p) for p in ("/mcp", "/mcp/x", "/mcpx", "/mcp-tools")] == [
+        "mcp_http", "mcp_http", "api", "api"]  # fmt: skip
