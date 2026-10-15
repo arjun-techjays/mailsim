@@ -7,9 +7,6 @@
   gap: 8px 12px;
   align-items: center;
   margin: 8px 0 12px;
-  position: sticky;
-  top: 0;
-  z-index: 2;
   padding: 8px 0;
   background: var(--bg, #fff);
   border-bottom: 1px solid var(--border, #c4c4c4);
@@ -79,7 +76,7 @@
   flex-direction: column;
   gap: 4px;
   position: sticky;
-  top: 64px;
+  top: 8px;
 }
 .b-nav-item {
   width: 100%;
@@ -191,7 +188,7 @@
 
 .b-yaml {
   position: sticky;
-  top: 64px;
+  top: 8px;
 }
 .b-yaml h2 {
   margin-top: 0;
