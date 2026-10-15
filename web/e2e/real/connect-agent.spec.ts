@@ -61,6 +61,24 @@ test('connect a real run through every served interface', async ({ page, request
   }
   await expectAccessible(page, 'connect (real)');
 
+  // URLs shown on the page (= the ones in the snippets) work with the agent key as-is
+  const mailboxId = (await page.getByTestId('mailbox-id').textContent()) as string;
+  await page.getByRole('radio', { name: /Neutral REST/ }).check();
+  const restUrl = (await page.getByTestId('endpoint-url').first().textContent()) as string;
+  expect(restUrl).toMatch(/\/v1$/);
+  const folders = await request.get(`${restUrl}/mailboxes/${encodeURIComponent(mailboxId)}/folders`, { headers: { Authorization: `Bearer ${key}` } });
+  expect(folders.status(), 'REST folders via the shown base URL').toBe(200);
+  await page.getByRole('radio', { name: /Gmail API/ }).check();
+  const gmailUrl = (await page.getByTestId('endpoint-url').first().textContent()) as string;
+  expect(gmailUrl).toMatch(/\/gmail\/v1$/);
+  const profile = await request.get(`${gmailUrl}/users/me/profile`, { headers: { Authorization: `Bearer ${key}` } });
+  expect(profile.status(), 'Gmail profile via the shown base URL').toBe(200);
+  await expect(page.getByTestId('snippet-gmail-curl')).toContainText(`${gmailUrl}/users/me/messages`);
+  await page.getByRole('radio', { name: /Microsoft Graph/ }).check();
+  const graphUrl = (await page.getByTestId('endpoint-url').first().textContent()) as string;
+  const me = await request.get(`${graphUrl}/me`, { headers: { Authorization: `Bearer ${key}` } });
+  expect(me.status(), 'Graph /me via the shown base URL').toBe(200);
+
   // the dev proxy forwards the agent interfaces, so a dashboard-origin client reaches them
   const gmail = await request.get('/gmail/v1/users/me/profile', { headers: { Authorization: `Bearer ${key}` } });
   expect(gmail.status()).toBe(200);
@@ -73,7 +91,8 @@ test('connect a real run through every served interface', async ({ page, request
   await page.getByRole('button', { name: 'Use this key' }).click();
   await page.getByRole('radio', { name: /Neutral REST/ }).check();
   await page.getByRole('button', { name: 'Test REST connection' }).click();
-  await expect(page.getByTestId('test-fail-rest')).toContainText('failed');
+  await expect(page.getByTestId('test-fail-rest')).toContainText('(UNAUTHENTICATED');
+  await expect(page.getByTestId('test-fail-rest')).toContainText('invalid_key');
 
   // mint (revokes the original key), then revoke the new one
   await page.getByRole('button', { name: 'Mint a new agent key' }).click();

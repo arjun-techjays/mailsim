@@ -55,7 +55,7 @@ export function ConnectPage() {
       <PageIntro next={[{ to: '/concepts', label: 'Concepts: what the dashboard does' }]}>
         <p>
           Sign the dashboard in to a mailsim API server. Use a controller key to run scenarios and connect agents, or an
-          evaluator key to grade runs. Bootstrap prints both (<code>python -m mailsim.serve bootstrap</code>); in local
+          evaluator key to grade runs. Bootstrap prints both (<code>uv run python -m mailsim.serve bootstrap</code>); in local
           no-auth mode, open the link the server printed instead. This is not where your agent connects: open a run and
           use <strong>Connect your agent</strong> for that.
         </p>

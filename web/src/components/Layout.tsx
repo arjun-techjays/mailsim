@@ -32,8 +32,12 @@ export function Layout() {
     disconnect();
     navigate('/connect');
   };
+  // Held agent keys belong to one dashboard session: a new provider (empty store) for every
+  // session identity, so a key never survives Disconnect / reconnect. Not secret: the key's
+  // public prefix only.
+  const sessionScope = session ? `${session.baseUrl}|${session.role}|${session.apiKey.slice(0, 16)}` : 'none';
   return (
-    <AgentKeyProvider>
+    <AgentKeyProvider key={sessionScope}>
       <a className="skip-link" href="#main">
         Skip to main content
       </a>

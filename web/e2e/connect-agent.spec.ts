@@ -144,6 +144,29 @@ test.describe('connect your agent', () => {
     await expect(page.getByTestId('no-key')).toBeVisible();
   });
 
+  test('an operator key is refused as PERMISSION_DENIED; keys are dropped on Disconnect', async ({ page }) => {
+    await open(page, '?interface=rest');
+    await useKey(page, KEYS.controller);
+    await page.getByRole('button', { name: 'Test REST connection' }).click();
+    await expect(page.getByTestId('test-fail-rest')).toContainText('REST: failed (PERMISSION_DENIED)');
+    await expect(page.getByTestId('test-fail-rest')).toContainText('controller or evaluator key');
+
+    await page.getByRole('button', { name: 'Mint a new agent key' }).click();
+    await page.getByRole('button', { name: 'Mint key' }).click();
+    await expect(page.getByTestId('minted-notice')).toBeFocused();
+    await expect(page.getByTestId('held-marker')).toBeVisible();
+    // client-side: Disconnect, reconnect, come back without a reload
+    await page.getByRole('button', { name: 'Disconnect' }).click();
+    await page.getByLabel('API key').fill(KEYS.controller);
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Runs' }).click();
+    await page.getByTestId('runs-table').getByRole('link', { name: 'run_demo' }).click();
+    await page.getByRole('link', { name: 'Connect your agent' }).click();
+    await expect(page.getByTestId('agent-keys').getByRole('row', { name: /key_minted_0001/ })).toContainText('active');
+    await expect(page.getByTestId('no-key')).toBeVisible(); // the minted key is no longer held
+    await expect(page.getByTestId('held-marker')).toHaveCount(0);
+  });
+
   test('start a run, then "Next: connect your agent" carries the key in memory', async ({ page }) => {
     await new ConnectPage(page).connectAs(KEYS.controller, 'controller');
     await page.goto('/scenarios/finance.invoice-bank-change/start');

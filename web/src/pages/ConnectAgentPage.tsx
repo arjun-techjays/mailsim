@@ -47,7 +47,7 @@ function ConnectContent({ runId }: { runId: string }) {
           </dd>
           <dt>Persona</dt>
           <dd>
-            <code>{c.persona_id}</code> (mailbox <code>{c.mailbox_id}</code>)
+            <code>{c.persona_id}</code> (mailbox <code data-testid="mailbox-id">{c.mailbox_id}</code>)
           </dd>
           <dt>Run status</dt>
           <dd>

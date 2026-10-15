@@ -1,11 +1,11 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { RunConnection } from '../api/types';
 import { useApi } from '../auth/session';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { CopyButton } from '../components/CopyButton';
 import { ErrorDisplay } from '../components/ErrorDisplay';
-import { connectionKey, maskKey, useAgentKeys } from './agentKeys';
+import { connectionKey, keyPrefix, maskKey, useAgentKeys } from './agentKeys';
 
 type Pending = { kind: 'mint' } | { kind: 'revoke'; keyIds: string[] } | null;
 
@@ -24,6 +24,16 @@ export function KeyPanel({ conn, revealed, onReveal }: { conn: RunConnection; re
   const [minted, setMinted] = useState(false);
   const opener = useRef<HTMLElement | null>(null);
   const active = conn.agent_keys.filter((k) => !k.revoked);
+  /** The listed key this tab holds (matched by its public prefix). */
+  const heldId = held?.prefix ? conn.agent_keys.find((k) => k.prefix === held.prefix)?.key_id : undefined;
+  const mintedNotice = useRef<HTMLParagraphElement>(null);
+  const keysHeading = useRef<HTMLHeadingElement>(null);
+  const [focusAfter, setFocusAfter] = useState<'minted' | 'keys' | null>(null);
+  useEffect(() => {
+    if (focusAfter === 'minted') mintedNotice.current?.focus();
+    if (focusAfter === 'keys') keysHeading.current?.focus();
+    if (focusAfter) setFocusAfter(null);
+  }, [focusAfter]);
 
   const refresh = () => qc.invalidateQueries({ queryKey: connectionKey(conn.run_id) });
   const close = () => {
@@ -39,8 +49,14 @@ export function KeyPanel({ conn, revealed, onReveal }: { conn: RunConnection; re
     mutationFn: () => api.mintAgentKey(conn.run_id),
     gcTime: 0,
     onSuccess: (cred) => {
-      keys.set(conn.run_id, { apiKey: cred.api_key, mailboxAddress: cred.mailbox_address, mailboxId: cred.mailbox_id });
+      keys.set(conn.run_id, {
+        apiKey: cred.api_key,
+        prefix: keyPrefix(cred.api_key),
+        mailboxAddress: cred.mailbox_address,
+        mailboxId: cred.mailbox_id,
+      });
       setMinted(true);
+      setFocusAfter('minted');
       onReveal(true);
       setPending(null);
       mint.reset(); // the secret lives in the key store only
@@ -52,9 +68,11 @@ export function KeyPanel({ conn, revealed, onReveal }: { conn: RunConnection; re
       for (const id of ids) await api.revokeKey(id);
     },
     onSuccess: (_v, ids) => {
-      // When no active key is left, the key this tab holds (if any) is one of the revoked ones.
-      if (active.every((k) => ids.includes(k.key_id))) keys.forget(conn.run_id);
-      close();
+      // Forget the held key when IT was revoked, or when no active key is left (then the held
+      // key, whatever it was, cannot work any more).
+      if ((heldId && ids.includes(heldId)) || active.every((k) => ids.includes(k.key_id))) keys.forget(conn.run_id);
+      setPending(null);
+      setFocusAfter('keys'); // the Revoke button is gone: continue from the key list
     },
     onSettled: () => void refresh(),
   });
@@ -66,7 +84,7 @@ export function KeyPanel({ conn, revealed, onReveal }: { conn: RunConnection; re
       setPasteError('Paste the agent key first.');
       return;
     }
-    keys.set(conn.run_id, { apiKey: v, mailboxAddress: conn.mailbox_address, mailboxId: conn.mailbox_id });
+    keys.set(conn.run_id, { apiKey: v, prefix: keyPrefix(v), mailboxAddress: conn.mailbox_address, mailboxId: conn.mailbox_id });
     setPaste('');
     setPasteError('');
     setMinted(false);
@@ -78,7 +96,7 @@ export function KeyPanel({ conn, revealed, onReveal }: { conn: RunConnection; re
       {held ? (
         <>
           {minted && (
-            <p role="status" className="notice">
+            <p className="notice" ref={mintedNotice} tabIndex={-1} data-testid="minted-notice">
               New agent key minted. Copy it now: the API never shows it again. The run’s earlier agent keys were revoked.
             </p>
           )}
@@ -157,7 +175,9 @@ export function KeyPanel({ conn, revealed, onReveal }: { conn: RunConnection; re
       )}
       {mint.isError && <ErrorDisplay error={mint.error} title="Could not mint an agent key" />}
 
-      <h3>This run’s agent keys</h3>
+      <h3 ref={keysHeading} tabIndex={-1}>
+        This run’s agent keys
+      </h3>
       {conn.agent_keys.length === 0 ? (
         <p className="empty">No agent keys have been issued for this run.</p>
       ) : (
@@ -180,7 +200,10 @@ export function KeyPanel({ conn, revealed, onReveal }: { conn: RunConnection; re
                 </th>
                 <td>{k.created_at}</td>
                 <td>{k.expires_at ?? 'with the run'}</td>
-                <td>{k.revoked ? 'revoked' : 'active'}</td>
+                <td>
+                  {k.revoked ? 'revoked' : 'active'}
+                  {k.key_id === heldId && <strong data-testid="held-marker"> · held in this tab</strong>}
+                </td>
                 <td>
                   {!k.revoked && (
                     <button type="button" onClick={(e) => ask({ kind: 'revoke', keyIds: [k.key_id] }, e.currentTarget)}>

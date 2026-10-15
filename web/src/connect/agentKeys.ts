@@ -7,6 +7,8 @@ import { createContext, useContext } from 'react';
  */
 export interface HeldKey {
   apiKey: string;
+  /** 12-hex prefix of msk_<prefix>_<secret>, matched against KeyInfo.prefix; null if not that format. */
+  prefix: string | null;
   mailboxAddress: string;
   mailboxId: string;
 }
@@ -23,6 +25,11 @@ export function useAgentKeys(): AgentKeyStore {
   const v = useContext(AgentKeyContext);
   if (!v) throw new Error('useAgentKeys must be used inside <AgentKeyProvider>');
   return v;
+}
+
+/** The public 12-hex prefix of an `msk_<prefix>_<secret>` key, or null. */
+export function keyPrefix(key: string): string | null {
+  return /^msk_([0-9a-f]{12})_/.exec(key)?.[1] ?? null;
 }
 
 /** `msk_0123456789ab_secret` -> `msk_0123456789ab_••••••••` (prefix only, never the secret). */

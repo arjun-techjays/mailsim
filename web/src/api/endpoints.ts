@@ -18,14 +18,13 @@ import type {
   RunCreated,
   RunOut,
   ScenarioOut,
-} from './types';
-import type {
+  // connect & status (UX-F3)
   AgentCredential,
   ConnectionTestRequest,
   ConnectionTestResult,
   RunConnection,
   SystemStatus,
-} from './types'; // connect & status (UX-F3)
+} from './types';
 
 const seg = encodeURIComponent;
 

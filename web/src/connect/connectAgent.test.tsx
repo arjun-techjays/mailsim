@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { setMockListeners } from '../mocks/connect';
 import { MOCK_KEYS } from '../mocks/db';
@@ -112,10 +112,44 @@ describe('Connect your agent', () => {
     await pasteKey(user, 'msk_000000000000_wrong');
     await user.click(screen.getByRole('button', { name: 'Test Microsoft Graph connection' }));
     const fail = await screen.findByTestId('test-fail-graph');
-    expect(fail).toHaveTextContent('Microsoft Graph: failed (InvalidAuthenticationToken, 401)');
+    expect(fail).toHaveTextContent('Microsoft Graph: failed (UNAUTHENTICATED, 401)');
     expect(fail).toHaveTextContent('Access token is empty or invalid.');
+    expect(fail).toHaveTextContent('invalid_key');
     expect(fail).toHaveTextContent('Mint a new agent key');
     expect(screen.getByTestId('agent-key-value')).toHaveTextContent('msk_000000000000_••••••••');
+    // the result sits in an always-mounted alert region
+    expect(fail.parentElement).toHaveAttribute('role', 'alert');
+  });
+
+  it('PERMISSION_DENIED: an operator key, and another run’s agent key', async () => {
+    const { user } = await openConnect(`${PAGE}?interface=rest`);
+    await pasteKey(user, MOCK_KEYS.controller);
+    await user.click(screen.getByRole('button', { name: 'Test REST connection' }));
+    const fail = await screen.findByTestId('test-fail-rest');
+    expect(fail).toHaveTextContent('REST: failed (PERMISSION_DENIED)');
+    expect(fail).toHaveTextContent('controller or evaluator key');
+  });
+
+  it('another run’s agent key is reported as other_run', async () => {
+    const { user } = await openConnect('/runs/run_empty/connect?interface=gmail');
+    await pasteKey(user, MOCK_KEYS.agent);
+    await user.click(screen.getByRole('button', { name: 'Test Gmail API connection' }));
+    expect(await screen.findByTestId('test-fail-gmail')).toHaveTextContent('belongs to another run');
+  });
+
+  it('a 400 INVALID_REQUEST is shown as a generic failed test', async () => {
+    server.use(
+      http.post('*/v1/runs/:runId/connection-tests', () =>
+        HttpResponse.json({ error: { code: 'INVALID_REQUEST', message: 'request validation failed', details: {}, request_id: 'r' } }, { status: 400 }),
+      ),
+    );
+    const { user } = await openConnect(`${PAGE}?interface=rest`);
+    await pasteKey(user, 'x');
+    await user.click(screen.getByRole('button', { name: 'Test REST connection' }));
+    const inv = await screen.findByTestId('test-invalid-rest');
+    expect(inv).toHaveTextContent('could not run this test (INVALID_REQUEST)');
+    expect(inv).toHaveTextContent('request validation failed');
+    expect(screen.queryByTestId('api-error')).toBeNull();
   });
 
   it('failed tests show details; API errors show the envelope', async () => {
@@ -172,12 +206,59 @@ describe('Connect your agent', () => {
     await user.click(mintButton);
     await user.click(screen.getByRole('button', { name: 'Mint key' }));
     expect(await screen.findByText(/New agent key minted/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('minted-notice')).toHaveFocus());
     expect(screen.getByTestId('agent-key-value')).toHaveTextContent('msk_000000000001_mockMintedAgentKeyForTests0001abcdef');
     const keys = screen.getByTestId('agent-keys');
     await within(keys).findByRole('rowheader', { name: 'key_minted_0001' });
     const oldRow = within(keys).getByRole('rowheader', { name: 'key_mk_agent' }).closest('tr') as HTMLElement;
     expect(oldRow).toHaveTextContent('revoked');
     expect(mockDb.keys[MOCK_KEYS.agent]).toBeUndefined();
+    const newRow = within(keys).getByRole('rowheader', { name: 'key_minted_0001' }).closest('tr') as HTMLElement;
+    expect(within(newRow).getByTestId('held-marker')).toHaveTextContent('held in this tab');
+  });
+
+  it('revoking the held key forgets it even when another key stays active; revoking another keeps it', async () => {
+    const held = 'msk_aaaaaaaaaaaa_heldheldheldheldheldheldheldheld';
+    const keyRow = (key_id: string, prefix: string) => ({ key_id, prefix, created_at: 'T0', expires_at: null, revoked: false });
+    server.use(
+      http.get('*/v1/runs/:runId/connection', async () => {
+        return HttpResponse.json({
+          run_id: 'run_demo',
+          run_status: 'RUNNING',
+          mailbox_id: 'mbx_finance',
+          mailbox_address: 'finance@acme.test',
+          persona_id: 'finance',
+          interfaces: [],
+          agent_keys: [keyRow('k_held', 'aaaaaaaaaaaa'), keyRow('k_other', 'bbbbbbbbbbbb'), keyRow('k_third', 'cccccccccccc')],
+        });
+      }),
+      http.delete('*/v1/keys/:keyId', () => new HttpResponse(null, { status: 204 })),
+    );
+    const { user } = await openConnect();
+    await pasteKey(user, held);
+    const heldRow = screen.getByRole('rowheader', { name: 'k_held' }).closest('tr') as HTMLElement;
+    expect(within(heldRow).getByTestId('held-marker')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Revoke k_other' }));
+    await user.click(screen.getByRole('button', { name: 'Revoke' }));
+    await waitFor(() => expect(screen.getByRole('heading', { level: 3, name: 'This run’s agent keys' })).toHaveFocus());
+    expect(screen.getByTestId('agent-key-value')).toBeInTheDocument(); // still held
+    await user.click(screen.getByRole('button', { name: 'Revoke k_held' }));
+    await user.click(screen.getByRole('button', { name: 'Revoke' }));
+    expect(await screen.findByTestId('no-key')).toBeInTheDocument(); // k_third stays active
+  });
+
+  it('held keys do not survive Disconnect and reconnecting', async () => {
+    const { user, router } = await openConnect();
+    await user.click(screen.getByRole('button', { name: 'Mint a new agent key' }));
+    await user.click(screen.getByRole('button', { name: 'Mint key' }));
+    await screen.findByTestId('held-marker');
+    await user.click(screen.getByRole('button', { name: 'Disconnect' }));
+    await user.type(screen.getByLabelText('API key'), MOCK_KEYS.controller);
+    await user.click(screen.getByRole('button', { name: /^Connect$/ }));
+    await screen.findByTestId('detected-role');
+    await act(() => router.navigate(PAGE));
+    expect(await screen.findByTestId('no-key')).toBeInTheDocument();
+    expect(screen.queryByTestId('held-marker')).toBeNull();
   });
 
   it('mint fails for a finished run', async () => {

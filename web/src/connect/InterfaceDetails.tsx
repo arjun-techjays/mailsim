@@ -139,8 +139,10 @@ export function InterfaceDetails({
           ))}
         {isMail && (
           <>
-            <dt>Security</dt>
-            <dd>{security(ep('imap').tls)}</dd>
+            <dt>IMAP security</dt>
+            <dd data-testid="imap-security">{security(ep('imap').tls)}</dd>
+            <dt>SMTP security</dt>
+            <dd data-testid="smtp-security">{security(ep('smtp').tls)}</dd>
             <dt>Username</dt>
             <dd>
               <code>{ep('imap').username ?? conn.mailbox_address}</code>

@@ -87,7 +87,9 @@ export const INTERFACE_LABEL: Record<AgentInterface, string> = {
 };
 
 export const KEY_PLACEHOLDER = '<AGENT_KEY>';
-export const DEFAULT_STDIO_COMMAND = ['python', '-m', 'mailsim.serve', 'mcp-stdio'];
+/** One convention for every command: run from the mailsim checkout with uv. */
+export const DEFAULT_STDIO_COMMAND = ['uv', 'run', 'python', '-m', 'mailsim.serve', 'mcp-stdio'];
+export const SAME_AS_SERVER = '<same as the API server>';
 export const START_PROTOCOLS = 'uv run python -m mailsim.serve protocols';
 
 export interface Snippet {
@@ -105,9 +107,29 @@ export function endpointFor(conn: RunConnection, iface: AgentInterface): Interfa
   return conn.interfaces.find((e) => e.interface === iface);
 }
 
-/** Root URL for google-api-python-client's api_endpoint: the base URL without /gmail/v1. */
+// base_url is the service root (contract): rest <origin>/v1, gmail <origin>/gmail/v1,
+// graph <origin>/graph/v1.0, mcp_http <origin>/mcp. Normalise defensively anyway: anything
+// after the service root is cut, and the root is re-appended where it was missing.
+const trim = (u: string) => u.trim().replace(/\/+$/, '');
+
+/** Root URL for google-api-python-client's api_endpoint: everything from /gmail/v1 on is cut. */
 export function gmailRoot(baseUrl: string): string {
-  return `${baseUrl.replace(/\/+$/, '').replace(/\/gmail\/v1$/, '')}/`;
+  return `${trim(baseUrl).replace(/\/gmail\/v1(\/.*)?$/, '')}/`;
+}
+
+/** Gmail service root: <root>/gmail/v1. */
+export function gmailBase(baseUrl: string): string {
+  return `${gmailRoot(baseUrl)}gmail/v1`;
+}
+
+/** Graph service root: <root>/graph/v1.0. */
+export function graphBase(baseUrl: string): string {
+  return `${trim(baseUrl).replace(/\/graph\/v1\.0(\/.*)?$/, '')}/graph/v1.0`;
+}
+
+/** REST service root: <root>/v1. */
+export function restBase(baseUrl: string): string {
+  return `${trim(baseUrl).replace(/\/v1(\/.*)?$/, '')}/v1`;
 }
 
 /** host:port of a URL (what kiota's AllowedHostsValidator compares). */
@@ -119,14 +141,18 @@ export function hostOf(url: string): string {
   }
 }
 
+// Never interpolate a value raw: Python strings go through JSON escaping (a valid Python
+// literal), shell words are single-quoted, JSON is produced by JSON.stringify.
 const py = (s: string) => JSON.stringify(s);
 const sh = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+/** Ports as numbers only (anything else falls back to the default). */
+const port = (p: number | null | undefined, dflt: number) => (Number.isInteger(Number(p)) && Number(p) > 0 ? Number(p) : dflt);
 /** argv as a shell command line (quotes only where needed). */
 export function shellJoin(argv: readonly string[]): string {
   return argv.map((a) => (/^[A-Za-z0-9_./:=@%+-]+$/.test(a) ? a : sh(a))).join(' ');
 }
 
-function gmailSnippets(base: string, address: string, key: string): Snippet[] {
+function gmailSnippets(base: string, key: string): Snippet[] {
   const root = gmailRoot(base);
   return [
     {
@@ -137,7 +163,7 @@ function gmailSnippets(base: string, address: string, key: string): Snippet[] {
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-AGENT_KEY = ${py(key)}  # agent key for ${address}
+AGENT_KEY = ${py(key)}  # the run's agent key
 
 gmail = build(
     "gmail",
@@ -154,13 +180,13 @@ print(gmail.users().messages().list(userId="me", q="is:unread").execute())`,
       title: 'curl',
       language: 'shell',
       code: `curl -H ${sh(`Authorization: Bearer ${key}`)} \\
-  ${sh(`${base.replace(/\/+$/, '')}/users/me/messages?q=is:unread`)}`,
+  ${sh(`${gmailBase(base)}/users/me/messages?q=is:unread`)}`,
     },
   ];
 }
 
 function graphSnippets(base: string, key: string): Snippet[] {
-  const b = base.replace(/\/+$/, '');
+  const b = graphBase(base);
   return [
     {
       id: 'graph-python',
@@ -234,7 +260,7 @@ from email.message import EmailMessage
 ADDRESS = ${py(address)}  # username = the mailbox address
 AGENT_KEY = ${py(key)}  # password = the agent key
 
-imap = imaplib.IMAP4(${py(imap.host ?? '127.0.0.1')}, ${imap.port ?? 1143})
+imap = imaplib.IMAP4(${py(imap.host ?? '127.0.0.1')}, ${port(imap.port, 1143)})
 ${tlsLine(imap, 'imap')}imap.login(ADDRESS, AGENT_KEY)
 imap.select("INBOX")
 typ, data = imap.uid("FETCH", "1:*", "(FLAGS ENVELOPE)")
@@ -247,7 +273,7 @@ msg["To"] = ADDRESS  # simulated addresses only; others follow the scenario's de
 msg["Subject"] = "Hello from my agent"
 msg.set_content("Sent through the mailsim SMTP listener.")
 
-with smtplib.SMTP(${py(smtp.host ?? '127.0.0.1')}, ${smtp.port ?? 1587}) as s:
+with smtplib.SMTP(${py(smtp.host ?? '127.0.0.1')}, ${port(smtp.port, 1587)}) as s:
 ${tlsLine(smtp, '    s')}    s.login(ADDRESS, AGENT_KEY)
     s.send_message(msg)`,
     },
@@ -255,7 +281,8 @@ ${tlsLine(smtp, '    s')}    s.login(ADDRESS, AGENT_KEY)
 }
 
 function mcpHttpSnippets(url: string, key: string): Snippet[] {
-  const config = { mcpServers: { mailsim: { type: 'http', url, headers: { Authorization: `Bearer ${key}` } } } };
+  // The config reads the key from the environment (docs/compat/mcp.md): safe to commit.
+  const config = { mcpServers: { mailsim: { type: 'http', url, headers: { Authorization: 'Bearer ${MAILSIM_API_KEY}' } } } };
   return [
     {
       id: 'mcp-http-claude',
@@ -264,12 +291,13 @@ function mcpHttpSnippets(url: string, key: string): Snippet[] {
       code: `claude mcp add --transport http mailsim ${sh(url)} \\
   --header ${sh(`Authorization: Bearer ${key}`)}`,
     },
+    { id: 'mcp-http-env', title: 'Environment for the config file', language: 'shell', code: `export MAILSIM_API_KEY=${sh(key)}` },
     { id: 'mcp-http-json', title: 'MCP client config (.mcp.json)', language: 'json', code: JSON.stringify(config, null, 2) },
   ];
 }
 
 function mcpStdioSnippets(command: readonly string[], key: string): Snippet[] {
-  const env = { MAILSIM_API_KEY: key, MAILSIM_DATABASE_URL: '<same as the API server>', MAILSIM_BLOB_DIR: '<same as the API server>' };
+  const env = { MAILSIM_API_KEY: key, MAILSIM_DATABASE_URL: SAME_AS_SERVER, MAILSIM_BLOB_DIR: SAME_AS_SERVER };
   const config = { mcpServers: { mailsim: { command: command[0], args: command.slice(1), env } } };
   return [
     {
@@ -277,8 +305,8 @@ function mcpStdioSnippets(command: readonly string[], key: string): Snippet[] {
       title: 'Claude Code',
       language: 'shell',
       code: `claude mcp add mailsim --env MAILSIM_API_KEY=${sh(key)} \\
-  --env MAILSIM_DATABASE_URL="$MAILSIM_DATABASE_URL" \\
-  --env MAILSIM_BLOB_DIR="$MAILSIM_BLOB_DIR" \\
+  --env MAILSIM_DATABASE_URL=${sh(SAME_AS_SERVER)} \\
+  --env MAILSIM_BLOB_DIR=${sh(SAME_AS_SERVER)} \\
   -- ${shellJoin(command)}`,
     },
     { id: 'mcp-stdio-json', title: 'MCP client config (Claude Desktop, .mcp.json)', language: 'json', code: JSON.stringify(config, null, 2) },
@@ -292,7 +320,7 @@ function mcpStdioSnippets(command: readonly string[], key: string): Snippet[] {
 }
 
 function restSnippets(base: string, mailboxId: string, address: string, key: string): Snippet[] {
-  const mbx = `${base.replace(/\/+$/, '')}/mailboxes/${encodeURIComponent(mailboxId)}`;
+  const mbx = `${restBase(base)}/mailboxes/${encodeURIComponent(mailboxId)}`;
   const auth = sh(`Authorization: Bearer ${key}`);
   const body = JSON.stringify({ to: [address], subject: 'Hello from my agent', text: 'Sent through the REST API.' });
   return [
@@ -318,7 +346,7 @@ export function snippetsFor(choice: ChoiceId, conn: RunConnection, key: string |
   const url = (i: AgentInterface) => ep(i).base_url ?? '';
   switch (choice) {
     case 'gmail':
-      return gmailSnippets(url('gmail'), conn.mailbox_address, k);
+      return gmailSnippets(url('gmail'), k);
     case 'graph':
       return graphSnippets(url('graph'), k);
     case 'imap_smtp':
@@ -352,9 +380,10 @@ export const NOTES: Record<ChoiceId, string[]> = {
   mcp_http: [
     'Stateless streamable HTTP: no Mcp-Session-Id and no SSE stream; GET and DELETE answer 405.',
     'Tool failures come back as tool results with isError: true and an error code.',
+    'Do not commit keys: the .mcp.json above reads the key from MAILSIM_API_KEY in the environment.',
   ],
   mcp_stdio: [
-    'The process connects to the database directly: give it the same MAILSIM_DATABASE_URL and MAILSIM_BLOB_DIR as the API server, and run it from the mailsim checkout.',
+    'The process connects to the database directly: replace the <same as the API server> placeholders with the MAILSIM_DATABASE_URL and MAILSIM_BLOB_DIR the API server uses, and run it from the mailsim checkout.',
     'A missing or invalid key makes the process exit with status 2.',
   ],
   rest: [

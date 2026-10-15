@@ -1,23 +1,31 @@
 import type { ConnectionTestResult } from '../api/types';
 import { START_PROTOCOLS } from './snippets';
 
-const AUTH_CODES = ['UNAUTHENTICATED', 'AUTHENTICATIONFAILED', 'AUTHENTICATION_FAILED', 'InvalidAuthenticationToken'];
-
-/** What to do about a failed test, by error code. */
+/**
+ * What to do about a failed test. Contract (UX-B): invalid/revoked/expired keys give
+ * UNAUTHENTICATED (details.reason "invalid_key"); a valid key that is not this run's agent key
+ * gives PERMISSION_DENIED (details.reason "not_agent_key" | "other_run"); a stopped IMAP/SMTP
+ * listener gives LISTENER_DOWN.
+ */
 export function testHint(r: ConnectionTestResult): string {
-  const code = r.error_code ?? '';
-  if (AUTH_CODES.includes(code)) {
-    return 'The key was rejected: it may have been revoked, belong to another run, or the run may have ended. Mint a new agent key above and test again.';
+  const reason = typeof r.details?.reason === 'string' ? r.details.reason : '';
+  switch (r.error_code) {
+    case 'UNAUTHENTICATED':
+      return 'The key is not valid: it may be mistyped, revoked, or the run may have ended. Mint a new agent key above and test again.';
+    case 'PERMISSION_DENIED':
+      if (reason === 'not_agent_key') {
+        return 'This is a controller or evaluator key. Agents must use the run’s agent key: paste it or mint a new one above.';
+      }
+      if (reason === 'other_run') return 'This agent key belongs to another run. Use this run’s key, or mint a new one above.';
+      return 'The key is not allowed to use this run’s mailbox. Use this run’s agent key.';
+    case 'LISTENER_DOWN':
+      return `The ${r.interface.toUpperCase()} listener is not running. Start it next to the API server: ${START_PROTOCOLS}`;
+    case 'RUN_NOT_ACTIVE':
+      return 'The run is not RUNNING. Start it from the run page, then test again.';
+    default:
+      if (r.interface === 'mcp_stdio') {
+        return 'The server could not start mcp-stdio. Check that it runs from the mailsim checkout with the database settings.';
+      }
+      return 'Check the server log for details.';
   }
-  if (code === 'RUN_NOT_ACTIVE') return 'The run is not RUNNING. Start it from the run page, then test again.';
-  if (code === 'PERMISSION_DENIED' || code === 'ErrorAccessDenied') {
-    return 'The key is valid but is not an agent key for this mailbox. Use this run’s agent key.';
-  }
-  if (r.interface === 'imap' || r.interface === 'smtp') {
-    return `Is the listener running? Start it with: ${START_PROTOCOLS}`;
-  }
-  if (r.interface === 'mcp_stdio') {
-    return 'The server could not start mcp-stdio. Check that it runs from the mailsim checkout with the database settings.';
-  }
-  return 'Check the server log for details.';
 }

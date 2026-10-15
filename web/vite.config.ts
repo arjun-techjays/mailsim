@@ -38,18 +38,24 @@ export default defineConfig(({ mode }) => {
   // /v1 for the dashboard; /gmail, /upload/gmail, /graph and /mcp so a client running on the
   // dashboard's origin can reach the agent interfaces too (same target as /v1).
   const apiProxy = Object.fromEntries(
-    ['/v1', '/gmail', '/upload/gmail', '/graph', '/mcp'].map((p) => [p, { target: apiTarget, changeOrigin: true }]),
+    // xfwd: false: never add X-Forwarded-* headers (the API must see a plain loopback client).
+    ['/v1', '/gmail', '/upload/gmail', '/graph', '/mcp'].map((p) => [p, { target: apiTarget, changeOrigin: true, xfwd: false }]),
   );
   return {
     plugins: [react(), cspMeta()],
     // public/ only holds the MSW worker: serve/copy it in mock mode only.
     publicDir: mode === 'mock' ? 'public' : false,
+    // Loopback only: the proxies forward agent interfaces and (in local no-auth mode) operator
+    // requests to the API, so the dev/preview servers must never listen on other interfaces.
+    // Do not override this with --host when a real API is behind the proxy.
     server: {
+      host: '127.0.0.1',
       port: Number(env.PORT ?? 5173),
       strictPort: true,
       proxy: mode === 'mock' ? undefined : apiProxy,
     },
     preview: {
+      host: '127.0.0.1',
       port: Number(env.PORT ?? 4173),
       strictPort: true,
       headers: SECURITY_HEADERS,

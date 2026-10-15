@@ -37,6 +37,9 @@ interface ConnState {
 
 const STATE = new WeakMap<MockDb, ConnState>();
 
+/** 12-hex prefix of an msk_<prefix>_<secret> key (mock fixture keys have none). */
+const prefixOf = (secret: string) => /^msk_([0-9a-f]{12})_/.exec(secret)?.[1] ?? null;
+
 function state(db: MockDb): ConnState {
   let s = STATE.get(db);
   if (!s) {
@@ -46,7 +49,7 @@ function state(db: MockDb): ConnState {
   // Agent keys created elsewhere (run creation, fixtures) get metadata on first sight.
   for (const [secret, info] of Object.entries(db.keys)) {
     if (info.role === 'agent' && info.runId && !s.meta.some((m) => m.secret === secret)) {
-      s.meta.push({ secret, runId: info.runId, key_id: `key_${secret}`, created_at: isoAt(s.meta.length), revoked: false });
+      s.meta.push({ secret, runId: info.runId, key_id: `key_${secret}`, prefix: prefixOf(secret), created_at: isoAt(s.meta.length), revoked: false });
     }
   }
   return s;
@@ -112,14 +115,15 @@ export function createConnectHandlers(db: MockDb) {
     imap: () => ({ summary: 'LOGIN and SELECT INBOX succeeded (3 messages).', status_code: null, details: { exists: 3 } }),
     smtp: () => ({ summary: 'EHLO and AUTH PLAIN succeeded (235 2.7.0). No mail was sent.', status_code: 235, details: {} }),
   };
-  const DENIED: Record<AgentInterface, Pick<ConnectionTestResult, 'status_code' | 'error_code' | 'error_message'>> = {
-    rest: { status_code: 401, error_code: 'UNAUTHENTICATED', error_message: 'missing or invalid API key' },
-    gmail: { status_code: 401, error_code: 'UNAUTHENTICATED', error_message: 'Request had invalid authentication credentials.' },
-    graph: { status_code: 401, error_code: 'InvalidAuthenticationToken', error_message: 'Access token is empty or invalid.' },
-    mcp_http: { status_code: 401, error_code: 'UNAUTHENTICATED', error_message: 'missing or invalid API key' },
-    mcp_stdio: { status_code: null, error_code: 'UNAUTHENTICATED', error_message: 'mcp-stdio exited with status 2: missing or invalid API key' },
-    imap: { status_code: null, error_code: 'AUTHENTICATIONFAILED', error_message: 'NO [AUTHENTICATIONFAILED] invalid credentials' },
-    smtp: { status_code: 535, error_code: 'AUTHENTICATION_FAILED', error_message: '535 5.7.8 Authentication credentials invalid' },
+  /** Wire-level message the interface gave (status_code + error_message); the code is unified. */
+  const DENIED: Record<AgentInterface, Pick<ConnectionTestResult, 'status_code' | 'error_message'>> = {
+    rest: { status_code: 401, error_message: 'missing or invalid API key' },
+    gmail: { status_code: 401, error_message: 'Request had invalid authentication credentials.' },
+    graph: { status_code: 401, error_message: 'InvalidAuthenticationToken: Access token is empty or invalid.' },
+    mcp_http: { status_code: 401, error_message: 'missing or invalid API key' },
+    mcp_stdio: { status_code: null, error_message: 'mcp-stdio exited with status 2: missing or invalid API key' },
+    imap: { status_code: null, error_message: 'NO [AUTHENTICATIONFAILED] invalid credentials' },
+    smtp: { status_code: 535, error_message: '535 5.7.8 Authentication credentials invalid' },
   };
 
   return [
@@ -149,7 +153,7 @@ export function createConnectHandlers(db: MockDb) {
       const mbx = r.mailboxes[0] as MockMailbox;
       const keys: AgentKeyInfo[] = state(db)
         .meta.filter((m) => m.runId === r.run.id)
-        .map(({ key_id, created_at, expires_at, revoked }) => ({ key_id, created_at, expires_at: expires_at ?? null, revoked }));
+        .map(({ key_id, prefix, created_at, expires_at, revoked }) => ({ key_id, prefix, created_at, expires_at: expires_at ?? null, revoked }));
       const out: RunConnection = {
         run_id: r.run.id,
         run_status: r.run.status,
@@ -168,7 +172,7 @@ export function createConnectHandlers(db: MockDb) {
       const r = lookupRun(String(params.runId));
       if (r instanceof Response) return r;
       const body = (await req.json()) as ConnectionTestRequest;
-      if (!INTERFACES.includes(body.interface) || !body.api_key) {
+      if (!INTERFACES.includes(body.interface) || !body.api_key) { // FastAPI validation -> 400 envelope
         return fail(400, 'INVALID_REQUEST', 'request validation failed', { errors: [{ loc: ['body', 'interface'], msg: 'invalid' }] });
       }
       const iface = body.interface;
@@ -187,8 +191,29 @@ export function createConnectHandlers(db: MockDb) {
         return ok(out);
       }
       const key = db.keys[body.api_key];
-      if (!key || key.role !== 'agent' || key.runId !== r.run.id) {
-        return ok({ ...base, ok: false, summary: 'The agent key was rejected.', ...DENIED[iface] } satisfies ConnectionTestResult);
+      // Contract: invalid/revoked/expired -> UNAUTHENTICATED (reason invalid_key); a valid key
+      // that is not this run's agent key -> PERMISSION_DENIED (not_agent_key | other_run).
+      if (!key) {
+        return ok({
+          ...base,
+          ok: false,
+          summary: 'The agent key was rejected.',
+          error_code: 'UNAUTHENTICATED',
+          ...DENIED[iface],
+          details: { reason: 'invalid_key' },
+        } satisfies ConnectionTestResult);
+      }
+      if (key.role !== 'agent' || key.runId !== r.run.id) {
+        const reason = key.role !== 'agent' ? 'not_agent_key' : 'other_run';
+        return ok({
+          ...base,
+          ok: false,
+          summary: reason === 'not_agent_key' ? 'This is not an agent key.' : 'This agent key belongs to another run.',
+          status_code: null,
+          error_code: 'PERMISSION_DENIED',
+          error_message: reason === 'not_agent_key' ? `a ${key.role} key cannot act as the agent` : 'the key is bound to another run',
+          details: { reason },
+        } satisfies ConnectionTestResult);
       }
       if (r.run.status !== 'RUNNING') {
         return ok({
@@ -221,7 +246,7 @@ export function createConnectHandlers(db: MockDb) {
         delete db.keys[m.secret];
       }
       db.keys[secret] = { role: 'agent', project: who.project, runId: r.run.id, mailboxId: mbx.id };
-      s.meta.push({ secret, runId: r.run.id, key_id: `key_minted_${n}`, created_at: isoAt(600 + s.minted), revoked: false });
+      s.meta.push({ secret, runId: r.run.id, key_id: `key_minted_${n}`, prefix: prefixOf(secret), created_at: isoAt(600 + s.minted), revoked: false });
       const cred: AgentCredential = { api_key: secret, mailbox_id: mbx.id, mailbox_address: mbx.email, run_id: r.run.id };
       return ok(cred, 201);
     }),

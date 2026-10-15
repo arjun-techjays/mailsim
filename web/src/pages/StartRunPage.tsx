@@ -6,7 +6,7 @@ import { useApi } from '../auth/session';
 import { rememberRun } from '../auth/storage';
 import { CopyButton } from '../components/CopyButton';
 import { PageIntro } from '../components/PageIntro';
-import { useAgentKeys } from '../connect/agentKeys';
+import { keyPrefix, useAgentKeys } from '../connect/agentKeys';
 import { WhatIsThis } from '../guide/Concepts';
 import { ErrorDisplay } from '../components/ErrorDisplay';
 import { Loading } from '../components/Status';
@@ -84,7 +84,14 @@ export function StartRunPage() {
       setCreated(data);
       rememberRun({ id: data.run.id, scenarioKey: key });
       const cred = data.agent_credentials[0];
-      if (cred) agentKeys.set(data.run.id, { apiKey: cred.api_key, mailboxAddress: cred.mailbox_address, mailboxId: cred.mailbox_id });
+      if (cred) {
+        agentKeys.set(data.run.id, {
+          apiKey: cred.api_key,
+          prefix: keyPrefix(cred.api_key),
+          mailboxAddress: cred.mailbox_address,
+          mailboxId: cred.mailbox_id,
+        });
+      }
     },
   });
 
