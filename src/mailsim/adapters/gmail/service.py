@@ -376,11 +376,19 @@ class GmailService:
             self.mb.resolve_external_id("gmail", "thread", thread_id)
 
     def _reply_target(self, parsed: ParsedMessage) -> CanonicalMessage | None:
-        ref = parsed.in_reply_to or (parsed.references[-1] if parsed.references else None)
-        if ref is None:
+        """In-Reply-To first, then References newest to oldest: the first one that names a
+        (non-draft) message of this mailbox; received copies win over sent ones."""
+        refs = [r for r in (parsed.in_reply_to, *reversed(parsed.references)) if r]
+        if not refs:
             return None
-        found = [x for x in self.all_messages() if x.message_id_header == ref and not x.is_draft]
-        return min(found, key=lambda x: lb.folder_type(x) == "sent", default=None)
+        by_header: dict[str, list[CanonicalMessage]] = {}
+        for x in self.all_messages():
+            if not x.is_draft and x.message_id_header:
+                by_header.setdefault(x.message_id_header, []).append(x)
+        for ref in refs:
+            if ref in by_header:
+                return min(by_header[ref], key=lambda x: lb.folder_type(x) == "sent")
+        return None
 
     def send(self, raw: bytes, thread_id: str | None) -> CanonicalMessage:
         """Gmail `send`. A message whose In-Reply-To (or last References id) names a message of

@@ -112,17 +112,20 @@ MESSAGE_VISIBILITY = frozenset({"show", "hide"})
 LABEL_VISIBILITY = frozenset({"labelShow", "labelShowIfUnread", "labelHide"})
 _HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
 MAX_REGISTERED_LABELS = 1000
+MAX_REGISTRY_KEYS = 256  # (run, mailbox) buckets kept; the least recently written is evicted
 
 
 def check_settings(body: dict[str, Any]) -> dict[str, Any]:
     """Strictly validated cosmetic settings from a labels.create/update/patch body."""
     out: dict[str, Any] = {}
     if "messageListVisibility" in body:
-        if body["messageListVisibility"] not in MESSAGE_VISIBILITY:
+        v = body["messageListVisibility"]
+        if not isinstance(v, str) or v not in MESSAGE_VISIBILITY:
             raise InvalidRequest("messageListVisibility must be one of show, hide")
         out["messageListVisibility"] = body["messageListVisibility"]
     if "labelListVisibility" in body:
-        if body["labelListVisibility"] not in LABEL_VISIBILITY:
+        v = body["labelListVisibility"]
+        if not isinstance(v, str) or v not in LABEL_VISIBILITY:
             raise InvalidRequest("labelListVisibility must be one of labelShow, "
                                  "labelShowIfUnread, labelHide")  # fmt: skip
         out["labelListVisibility"] = body["labelListVisibility"]
@@ -159,7 +162,7 @@ class LabelRegistry:
     a SINGLE server process, does not survive a restart, and `labels.create` is not an audited
     or budgeted engine write. Entries are kept per (run, mailbox) with the history id they were
     recorded at, so the owner can drop them when the run was reset since (`clear`); at most
-    MAX_REGISTERED_LABELS per (run, mailbox).
+    MAX_REGISTERED_LABELS per (run, mailbox) and at most MAX_REGISTRY_KEYS buckets (LRU by write).
     """
 
     def __init__(self) -> None:
@@ -177,7 +180,12 @@ class LabelRegistry:
 
     def put(self, key: tuple[str, str], name: str, settings: dict[str, Any], since: int) -> None:
         with self._lock:
-            bucket = self._labels.setdefault(key, {})
+            if key not in self._labels and len(self._labels) >= MAX_REGISTRY_KEYS:
+                oldest = next(iter(self._labels))  # finished runs age out (bounded memory)
+                self._labels.pop(oldest)
+                self._since.pop(oldest, None)
+            bucket = self._labels.pop(key, {})
+            self._labels[key] = bucket  # most recently written last
             if name not in bucket and len(bucket) >= MAX_REGISTERED_LABELS:
                 raise InvalidRequest(f"too many labels (at most {MAX_REGISTERED_LABELS})")
             self._since.setdefault(key, since)

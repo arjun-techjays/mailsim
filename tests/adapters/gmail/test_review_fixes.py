@@ -43,6 +43,8 @@ def test_label_settings_are_validated(gm):
     for body in ({"name": "a", "messageListVisibility": "x"},
                  {"name": "a", "labelListVisibility": "show"},
                  {"name": "a", "color": "#000000"},
+                 {"name": "a", "messageListVisibility": ["show"]},
+                 {"name": "a", "labelListVisibility": {"x": 1}},
                  {"name": "a", "color": {"textColor": "#000000"}},
                  {"name": "a", "color": {"textColor": "#00000", "backgroundColor": "#ffffff"}},
                  {"name": "a", "color": {"textColor": "#000000", "backgroundColor": "#ffffff",
@@ -65,6 +67,17 @@ def test_label_registry_is_capped(gm, monkeypatch):
     gm.post("/labels", json={"name": "two"})
     r = gm.call("POST", "/labels", 400, json={"name": "three"})
     assert gm.error(r)[1] == "INVALID_REQUEST"
+
+
+def test_label_registry_keeps_a_bounded_number_of_buckets(monkeypatch):
+    monkeypatch.setattr(lb, "MAX_REGISTRY_KEYS", 2)
+    reg = lb.LabelRegistry()
+    reg.put(("r1", "m"), "A", {}, 1)
+    reg.put(("r2", "m"), "B", {}, 1)
+    reg.put(("r1", "m"), "C", {}, 1)  # r1 written most recently
+    reg.put(("r3", "m"), "D", {}, 1)  # evicts r2, the least recently written
+    assert reg.get(("r2", "m")) == {} and reg.since(("r2", "m")) is None
+    assert set(reg.get(("r1", "m"))) == {"A", "C"} and set(reg.get(("r3", "m"))) == {"D"}
 
 
 @pytest.mark.db
@@ -102,6 +115,17 @@ def test_custom_reply_is_one_reply_under_shipped_permissions(env, tmp_path):
     headers = {h["name"]: h["value"] for h in got["payload"]["headers"]}
     assert headers["Subject"] == "AW: Invoice INV-001" and headers["Cc"] == "finance@example.test"
     assert headers["In-Reply-To"] == "<invoice-001@example.test>"
+
+
+@pytest.mark.db
+def test_reply_target_falls_back_to_older_references(env, tmp_path):
+    g = Gm(env, tmp_path, _shipped)
+    raw = raw_message({"To": "vendor@example.test", "Subject": "Re: Invoice INV-001",
+                       "In-Reply-To": "<not-here@example.test>",
+                       "References": "<invoice-001@example.test> <not-here@example.test>"},
+                      "Following up.")  # fmt: skip
+    g.post("/messages/send", json={"raw": b64(raw)})  # a reply (send is not allowed here)
+    assert "MAILSIM_ANSWERED" in g.get(f"/messages/{g.gid(INVOICE)}")["labelIds"]
 
 
 @pytest.mark.db
