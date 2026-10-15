@@ -60,8 +60,9 @@ cli -> engine -> scenario -> store -> (mime | threads | providers) -> domain
 
 * Determinism is per event log: after a reset the id counter keeps counting, so agent-created ids
   differ from a fresh run's (baseline ids are re-applied unchanged). Replay reproduces the log exactly.
-* Reset is allowed only from READY/RUNNING. Every agent command that passes the permission/mailbox
-  guard consumes action budget, whether it succeeds or fails.
+* Reset is allowed only from READY/RUNNING. Only agent WRITES consume the action budget
+  (`max_agent_actions`), whether they succeed or fail; reads and polling (list, get, search,
+  threads, change feed) are free but still recorded as actions for efficiency metrics.
 * The audit action log records recipients, counts and sizes but not subjects, bcc or bodies.
 * `actor` is a trusted-caller argument; Phase 2/3 must expose agent-facing facades that hard-code it.
 

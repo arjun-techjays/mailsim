@@ -62,12 +62,13 @@ def test_concurrent_agent_actions_respect_the_budget(env, tmp_path):
         write_variant(tmp_path, lambda s: s["evaluation"]["limits"].update(max_agent_actions=6))
     )
     fm = env.mbx(run, "finance_manager")
+    target = env.engine.list_messages(env.scope, run, fm, actor="controller")[0].id
     ok, limited = [], []
 
     def worker() -> None:
         for _ in range(4):
             try:
-                env.engine.list_folders(env.scope, run, fm)
+                env.engine.move(env.scope, run, fm, target, "archive")  # a write
                 ok.append(1)
             except SimulationLimitExceeded:
                 limited.append(1)

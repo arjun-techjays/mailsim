@@ -4,13 +4,13 @@ from sqlalchemy.schema import MetaData
 
 from mailsim.store.db import run_migrations
 from mailsim.store.models import Base
-from tests.conftest import recreate_database
+from tests.conftest import TEST_DB, recreate_database
 
 pytestmark = pytest.mark.db
 
 
 def test_upgrade_downgrade_upgrade_and_no_drift():
-    url = recreate_database("mailsim_migration_test")
+    url = recreate_database(f"{TEST_DB}_migration")
     run_migrations(url)
     engine = create_engine(url)
     assert set(inspect(engine).get_table_names()) >= set(Base.metadata.tables) | {"alembic_version"}

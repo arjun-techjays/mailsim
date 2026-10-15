@@ -248,12 +248,23 @@ def test_prohibited_operations_and_action_budget(env, tmp_path):
     msg = env.engine.list_messages(env.scope, run, fm)[0]
     with pytest.raises(PermissionDenied):
         env.engine.delete(env.scope, run, fm, msg.id)
-    env.engine.get_message(env.scope, run, fm, msg.id)
-    env.engine.search_messages(env.scope, run, fm, "invoice")
+    for _ in range(10):  # reads and polling are free (but still recorded as actions)
+        env.engine.get_message(env.scope, run, fm, msg.id)
+        env.engine.search_messages(env.scope, run, fm, "invoice")
+        env.engine.list_changes(env.scope, run, fm, 0)
+    assert env.engine.run_info(env.scope, run)["agent_actions"] == 0
+    assert (
+        sum(a["operation"] in ("read", "search") for a in env.engine.actions(env.scope, run)) >= 31
+    )
+    for flag in ("SEEN", "FLAGGED", "ANSWERED"):  # writes consume the budget
+        env.engine.set_flags(env.scope, run, fm, msg.id, add=[flag])
     with pytest.raises(SimulationLimitExceeded):
-        env.engine.list_folders(env.scope, run, fm)
+        env.engine.set_flags(env.scope, run, fm, msg.id, add=["SEEN"])
+    env.engine.list_folders(env.scope, run, fm)  # reads still work once the budget is spent
     assert env.engine.run_info(env.scope, run)["agent_actions"] == 3
-    assert env.engine.actions(env.scope, run)[-1]["outcome"] == "SIMULATION_LIMIT_EXCEEDED"
+    assert [a["outcome"] for a in env.engine.actions(env.scope, run)][
+        -2
+    ] == "SIMULATION_LIMIT_EXCEEDED"
 
 
 def test_external_delivery_blocked_and_audited(env):
@@ -648,12 +659,14 @@ def test_failed_agent_calls_consume_the_action_budget(env, tmp_path):
         write_variant(tmp_path, lambda s: s["evaluation"]["limits"].update(max_agent_actions=3))
     )
     fm = env.mbx(run, "finance_manager")
-    for _ in range(3):
+    for _ in range(3):  # failed WRITES consume budget
         with pytest.raises(NotFound):
-            env.engine.get_message(env.scope, run, fm, "msg_nope")
+            env.engine.move(env.scope, run, fm, "msg_nope", "archive")
+    with pytest.raises(NotFound):  # failed reads do not
+        env.engine.get_message(env.scope, run, fm, "msg_nope")
     assert env.engine.run_info(env.scope, run)["agent_actions"] == 3
     with pytest.raises(SimulationLimitExceeded):
-        env.engine.get_message(env.scope, run, fm, "msg_nope")
+        env.engine.move(env.scope, run, fm, "msg_nope", "archive")
     assert env.engine.run_info(env.scope, run)["agent_actions"] == 3  # denied-by-limit is free
 
 
