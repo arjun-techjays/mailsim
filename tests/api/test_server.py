@@ -141,3 +141,22 @@ def test_facade_helpers_refuse_the_wrong_role():
     with pytest.raises(PermissionDenied):
         _common.agent(request, ev)
     assert _common.evaluator(request, ev).scope.tenant_id == "t"
+
+
+def test_mount_adapters_skips_missing_and_mounts_present(monkeypatch):
+    from fastapi import APIRouter, FastAPI
+
+    module = types.ModuleType("fake_adapter")
+    module.__spec__ = importlib.machinery.ModuleSpec("fake_adapter", None)
+    module.router = APIRouter(prefix="/fake")
+
+    @module.router.get("/ping")
+    def ping() -> dict[str, str]:
+        return {"ok": "yes"}
+
+    monkeypatch.setitem(sys.modules, "fake_adapter", module)
+    app = FastAPI()
+    assert server.mount_adapters(app, ("mailsim._missing_adapter_", "fake_adapter")) == [
+        "fake_adapter"
+    ]
+    assert TestClient(app).get("/fake/ping").json() == {"ok": "yes"}

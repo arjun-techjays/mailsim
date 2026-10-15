@@ -116,7 +116,8 @@ name = "Layering"
 type = "layers"
 layers = [
   "(mailsim.cli) | (mailsim.serve)",
-  "(mailsim.api) | (mailsim.adapters) | (mailsim.protocols) | (mailsim.mcp) | (mailsim.runner) | (mailsim.bench)",
+  "(mailsim.adapters) | (mailsim.protocols) | (mailsim.mcp) | (mailsim.runner) | (mailsim.bench)",
+  "(mailsim.api)",
   "(mailsim.evaluation) | (mailsim.personas)",
   "(mailsim.llm)",
   "(mailsim.engine)",
