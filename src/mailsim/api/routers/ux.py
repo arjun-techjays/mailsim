@@ -299,8 +299,8 @@ def validate_answer_key(
     try:
         doc = ak.AnswerKeyDoc.model_validate(data)
     except ValidationError as exc:
-        errors = [authoring.issue(".".join(str(p) for p in e["loc"]) or "<root>", e["msg"])
-                  for e in exc.errors()]  # fmt: skip
+        errors = [s.ValidationIssue(path=path, message=message)
+                  for path, message in authoring.answer_key_errors(exc, data)]  # fmt: skip
         return u.AnswerKeyValidation(ok=False, errors=errors, warnings=[], document=document)
     key = doc.answer_key
     errors, warnings = [], []

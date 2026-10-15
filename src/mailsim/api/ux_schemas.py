@@ -119,7 +119,10 @@ class ComposeMessage(_M):
     subject: str = Field(default="", max_length=998)
     text: str | None = None
     html: str | None = None
-    date: str | None = Field(default=None, description="ISO 8601; default: the current UTC time")
+    date: str | None = Field(
+        default=None,
+        description="ISO 8601; default: current UTC time; clients should send the scenario clock start",
+    )
     message_id: str | None = Field(default=None, description="default: generated <...@domain>")
     in_reply_to: str | None = Field(default=None, description="Message-ID of an earlier message")
     references: list[str] = Field(default_factory=list)
@@ -146,6 +149,7 @@ class EmlSummary(_M):
     subject: str
     date: str | None
     in_reply_to: str | None
+    references: list[str] = Field(default_factory=list, description="Message-IDs, oldest first")
     attachments: list[str]
     text_preview: str
 

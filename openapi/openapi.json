@@ -1294,7 +1294,7 @@
                 "type": "null"
               }
             ],
-            "description": "ISO 8601; default: the current UTC time",
+            "description": "ISO 8601; default: current UTC time; clients should send the scenario clock start",
             "title": "Date"
           },
           "fixture_path": {
@@ -1679,6 +1679,14 @@
             ],
             "title": "Message Id"
           },
+          "references": {
+            "description": "Message-IDs, oldest first",
+            "items": {
+              "type": "string"
+            },
+            "title": "References",
+            "type": "array"
+          },
           "subject": {
             "title": "Subject",
             "type": "string"
@@ -2045,6 +2053,48 @@
           "ref"
         ],
         "title": "EvidenceRef",
+        "type": "object"
+      },
+      "FolderCountOut": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "system_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Type"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          },
+          "unread": {
+            "default": 0,
+            "description": "messages without the SEEN flag",
+            "title": "Unread",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "system_type"
+        ],
+        "title": "FolderCountOut",
         "type": "object"
       },
       "FolderOut": {
@@ -2484,13 +2534,59 @@
             "title": "Email",
             "type": "string"
           },
+          "folders": {
+            "items": {
+              "$ref": "#/components/schemas/FolderCountOut"
+            },
+            "title": "Folders",
+            "type": "array"
+          },
           "id": {
             "title": "Id",
             "type": "string"
           },
+          "is_agent": {
+            "default": false,
+            "title": "Is Agent",
+            "type": "boolean"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "persona display name",
+            "title": "Name"
+          },
           "owner_id": {
             "title": "Owner Id",
             "type": "string"
+          },
+          "persona_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Persona Id"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
           }
         },
         "required": [

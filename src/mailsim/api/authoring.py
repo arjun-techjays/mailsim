@@ -22,6 +22,8 @@ from email.utils import parseaddr
 from pathlib import Path
 from typing import Any, Protocol
 
+from pydantic import ValidationError
+
 from mailsim.api import schemas as s
 from mailsim.api import ux_schemas as u
 from mailsim.domain.clock import iso, parse_ts
@@ -30,6 +32,7 @@ from mailsim.domain.models import Address
 from mailsim.mime.build import build_mime
 from mailsim.mime.parse import ParsedAttachment, parse_mime, sanitize_filename
 from mailsim.scenario import validator
+from mailsim.scenario.answer_key import CHECK_MODELS
 from mailsim.scenario.loader import parse_source
 from mailsim.scenario.validator import dotted
 
@@ -37,6 +40,8 @@ MAX_FIXTURES = 200
 MAX_FIXTURE_TOTAL_BYTES = 25 * 1024 * 1024
 MAX_FIXTURE_PATH_CHARS = 255
 TEXT_PREVIEW_CHARS = 500
+MAX_FILENAME_CHARS = 150
+MAX_ATTACHMENT_TOTAL_BYTES = 10 * 1024 * 1024
 _MSGID = re.compile(r"^<[^<>\s]+@[^<>\s]+>$")
 _MIME_TYPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$")
 _TAG = re.compile(r"<[^>]*>")
@@ -51,6 +56,33 @@ class DraftLike(Protocol):
 
 def tmpdir() -> tempfile.TemporaryDirectory[str]:
     return tempfile.TemporaryDirectory(prefix="mailsim-scn-")
+
+
+def answer_key_errors(exc: ValidationError, data: object) -> list[tuple[str, str]]:
+    """(dotted path, message) per answer-key schema error. Errors of an assertion's `check:`
+    block are reported under ``answer_key.assertions.<i>.check[.<field>]`` (also the check
+    model's own cross-field rules, which pydantic places on the assertion), and pydantic's
+    "Value error, " prefix is dropped."""
+    out = []
+    for err in exc.errors()[:200]:
+        loc = [str(p) for p in err["loc"]]
+        message = str(err["msg"]).removeprefix("Value error, ")
+        if len(loc) == 3 and loc[:2] == ["answer_key", "assertions"] and _check_fails(data, loc):
+            loc.append("check")
+        out.append((dotted(".".join(loc) or "<root>"), message))
+    return out
+
+
+def _check_fails(data: object, loc: list[str]) -> bool:
+    """Whether the assertion at `loc` has a `check:` block its type's check model rejects."""
+    try:
+        assertion = data["answer_key"]["assertions"][int(loc[2])]  # type: ignore[index]
+        CHECK_MODELS[assertion["type"]].model_validate(assertion["check"])
+    except ValidationError:
+        return True
+    except (KeyError, IndexError, TypeError, ValueError):
+        return False
+    return False
 
 
 def issue(path: str, message: str) -> s.ValidationIssue:
@@ -207,17 +239,23 @@ def compose_eml(body: u.ComposeMessage, *, now: datetime | None = None) -> u.Com
     if in_reply_to is not None and in_reply_to not in references:
         references.append(in_reply_to)
     attachments = []
+    total = 0
     for att in body.attachments:
-        filename = sanitize_filename(_no_newlines("attachments.filename", att.filename))
-        ctype = _no_newlines("attachments.content_type", att.content_type).strip().lower()
+        # filenames are sanitised (no path, control characters, CR/LF; quotes are escaped and
+        # non-ASCII is RFC 2231-encoded by the MIME writer); unknown types become octet-stream
+        filename = sanitize_filename(att.filename.replace('"', "'"))[:MAX_FILENAME_CHARS]
+        ctype = att.content_type.strip().lower()
         if not _MIME_TYPE.fullmatch(ctype):
-            raise InvalidRequest(f"attachments: not a MIME type: {ctype[:100]!r}",
-                                 details={"field": "attachments.content_type"})  # fmt: skip
+            ctype = "application/octet-stream"
         try:
             content = base64.b64decode(att.content_b64, validate=True)
         except (binascii.Error, ValueError):
             raise InvalidRequest(f"attachment {filename!r} is not valid base64",
                                  details={"field": "attachments.content_b64"}) from None  # fmt: skip
+        total += len(content)
+        if total > MAX_ATTACHMENT_TOTAL_BYTES:
+            raise InvalidRequest(f"attachments exceed {MAX_ATTACHMENT_TOTAL_BYTES} bytes in total",
+                                 details={"field": "attachments"})  # fmt: skip
         attachments.append(ParsedAttachment(filename, ctype, content, False, None))
     path = body.fixture_path or (
         f"fixtures/{slugify(subject)}-{message_id.strip('<>').split('@')[0][:8]}.eml"
@@ -260,7 +298,7 @@ def summarize_eml(content_b64: str) -> u.EmlSummary:
         "from": _fmt(parsed.from_) if parsed.from_ else None,
         "to": [_fmt(a) for a in parsed.to], "cc": [_fmt(a) for a in parsed.cc],
         "subject": parsed.subject, "date": iso(parsed.date) if parsed.date else None,
-        "in_reply_to": parsed.in_reply_to,
+        "in_reply_to": parsed.in_reply_to, "references": parsed.references,
         "attachments": [a.filename for a in parsed.attachments],
         "text_preview": (text or "")[:TEXT_PREVIEW_CHARS],
     })  # fmt: skip

@@ -31,6 +31,10 @@ _INDEX = re.compile(r"\[(\d+)\]")
 _ASSERTION = re.compile(r"^(.*\bassertions\.\d+)\.([^.]+)")
 _ASSERTION_FIELDS = frozenset(AnswerAssertion.model_fields)
 MAX_ADDRESS_CHARS = 254
+_SCENARIO_ID = re.compile(r"[a-z0-9][a-z0-9._-]*")
+_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+_ID_RULE = ("use letters, digits, '.', '_' or '-' (starting with a letter or digit), at most "
+            "64 characters")  # fmt: skip
 _LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 _DOMAIN = re.compile(rf"{_LABEL}(?:\.{_LABEL})+")
 _ADDRESS = re.compile(rf"[A-Za-z0-9.!#$%&'*+/=?^_`{{|}}~-]+@{_LABEL}(?:\.{_LABEL})+")
@@ -131,6 +135,19 @@ def validate_semantics(
     def err(path: str, msg: str) -> None:
         r.errors.append(Issue(path, msg))
 
+    if len(body.id) > 100 or not _SCENARIO_ID.fullmatch(body.id):
+        err("scenario.id", "use lowercase letters, digits, '.', '_' or '-' (starting with a "
+            "letter or digit), at most 100 characters")  # fmt: skip
+    if not body.title.strip():
+        err("scenario.title", "must not be empty")
+    for i, p in enumerate(body.personas):
+        if len(p.id) > 64 or not _ID.fullmatch(p.id):
+            err(f"scenario.personas[{i}].id", _ID_RULE)
+        if not p.role.strip():
+            err(f"scenario.personas[{i}].role", "must not be empty")
+    for i, ev in enumerate(body.events):
+        if len(ev.id) > 64 or not _ID.fullmatch(ev.id):
+            err(f"scenario.events[{i}].id", _ID_RULE)
     persona_ids = [p.id for p in body.personas]
     for d in _dupes(persona_ids):
         err("scenario.personas", f"duplicate persona id {d!r}")

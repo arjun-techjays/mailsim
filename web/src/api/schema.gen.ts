@@ -1534,7 +1534,7 @@ export interface components {
             cc?: string[];
             /**
              * Date
-             * @description ISO 8601; default: the current UTC time
+             * @description ISO 8601; default: current UTC time; clients should send the scenario clock start
              */
             date?: string | null;
             /**
@@ -1693,6 +1693,11 @@ export interface components {
             in_reply_to: string | null;
             /** Message Id */
             message_id: string | null;
+            /**
+             * References
+             * @description Message-IDs, oldest first
+             */
+            references?: string[];
             /** Subject */
             subject: string;
             /** Text Preview */
@@ -1825,6 +1830,26 @@ export interface components {
             note?: string | null;
             /** Ref */
             ref: string;
+        };
+        /** FolderCountOut */
+        FolderCountOut: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** System Type */
+            system_type: string | null;
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
+            /**
+             * Unread
+             * @description messages without the SEEN flag
+             * @default 0
+             */
+            unread: number;
         };
         /** FolderOut */
         FolderOut: {
@@ -1977,10 +2002,26 @@ export interface components {
         MailboxOut: {
             /** Email */
             email: string;
+            /** Folders */
+            folders?: components["schemas"]["FolderCountOut"][];
             /** Id */
             id: string;
+            /**
+             * Is Agent
+             * @default false
+             */
+            is_agent: boolean;
+            /**
+             * Name
+             * @description persona display name
+             */
+            name?: string | null;
             /** Owner Id */
             owner_id: string;
+            /** Persona Id */
+            persona_id?: string | null;
+            /** Role */
+            role?: string | null;
         };
         /**
          * MeOut

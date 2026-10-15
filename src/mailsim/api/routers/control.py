@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, Protocol
 
 from fastapi import APIRouter, Header, Query, Request, Response
+from pydantic import ValidationError
 from sqlalchemy import Select, select, tuple_
 from sqlalchemy.orm import Session
 
@@ -231,9 +232,9 @@ def create_answer_key(
         raise InvalidRequest("provide exactly one of `source` or `document`")
     try:
         doc = AnswerKeyDoc.model_validate(data)
-    except ValueError as exc:
-        raise InvalidRequest("answer key validation failed",
-                             details={"errors": str(exc)[:2000]}) from None  # fmt: skip
+    except ValidationError as exc:
+        errors = [{"loc": loc, "msg": msg} for loc, msg in authoring.answer_key_errors(exc, data)]
+        raise InvalidRequest("answer key validation failed", details={"errors": errors}) from None
     if doc.answer_key.scenario != scenario_key:
         raise InvalidRequest(f"answer key is for {doc.answer_key.scenario!r}, not {scenario_key!r}")
     with sessions(request).begin() as session:

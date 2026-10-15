@@ -438,3 +438,13 @@ def test_listener_credential_failures_use_the_protocol_code(api, run, interface,
     api.app.state.protocols = FakeListeners(result=(False, None, "authentication failed"))
     res = run.test(interface)
     assert (res["ok"], res["error_code"]) == (False, code)
+
+
+def test_connection_tests_never_log_the_key(run, caplog):
+    import logging
+
+    with caplog.at_level(logging.DEBUG):
+        for interface in ("rest", "mcp_stdio", "imap"):
+            run.test(interface)
+        run.test("rest", key=run.key + "x")
+    assert caplog.records and run.key not in caplog.text

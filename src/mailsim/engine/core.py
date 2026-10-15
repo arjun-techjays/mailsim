@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import any_, func, literal, select, tuple_
 from sqlalchemy.orm import Session, sessionmaker
 
 from mailsim.domain.clock import iso, parse_ts
@@ -1742,12 +1742,43 @@ class SimEngine:
                                       page_size, after, order)  # fmt: skip
 
     def list_mailboxes(self, scope: Scope, run_id: str) -> list[dict[str, Any]]:
+        """Mailboxes with their persona and per-folder message / unread counts (aggregates)."""
         with self._sf() as s:
-            get_run(s, scope, run_id)
+            run = get_run(s, scope, run_id)
             rows = s.execute(
                 select(m.Mailbox).where(m.Mailbox.run_id == run_id).order_by(m.Mailbox.owner_id)
             ).scalars()
-            return [{"id": r.id, "owner_id": r.owner_id, "email": r.email} for r in rows]
+            sv = s.get(m.ScenarioVersion, run.scenario_version_id)
+            personas = {p["id"]: p for p in (sv.spec["scenario"]["personas"] if sv else [])}
+            agent = run.config.get("agent", {}).get("mailbox_owner")
+            folders: dict[str, list[dict[str, Any]]] = {}
+            for f in s.execute(
+                select(m.Folder).where(m.Folder.run_id == run_id).order_by(m.Folder.id)
+            ).scalars():
+                folders.setdefault(f.mailbox_id, []).append(
+                    {"id": f.id, "name": f.name, "system_type": f.system_type, "total": 0,
+                     "unread": 0}
+                )  # fmt: skip
+            unread = func.count().filter(~(literal("SEEN") == any_(m.Message.flags)))
+            counts = {
+                fid: (total, n_unread)
+                for fid, total, n_unread in s.execute(
+                    select(m.Message.folder_id, func.count(), unread)
+                    .where(m.Message.run_id == run_id)
+                    .group_by(m.Message.folder_id)
+                ).all()
+            }
+            for entries in folders.values():
+                for entry in entries:
+                    entry["total"], entry["unread"] = counts.get(entry["id"], (0, 0))
+            out = []
+            for r in rows:
+                persona = personas.get(r.owner_id, {})
+                out.append({"id": r.id, "owner_id": r.owner_id, "email": r.email,
+                            "persona_id": r.owner_id, "name": persona.get("name"),
+                            "role": persona.get("role"), "is_agent": r.owner_id == agent,
+                            "folders": folders.get(r.id, [])})  # fmt: skip
+            return out
 
     def events_page(self, scope: Scope, run_id: str, *, after_sequence: int = 0, limit: int = 100,
                     event_type: str | None = None, actor: str | None = None,

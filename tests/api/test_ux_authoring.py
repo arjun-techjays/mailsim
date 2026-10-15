@@ -245,6 +245,7 @@ def test_compose_eml_builds_a_threaded_multipart_message(api):
         "to": ["finance@example.test"], "cc": ["Boss <boss@example.test>"],
         "subject": "Updated bank details", "date": "2026-10-01T09:00:00Z",
         "in_reply_to": "<orig-1@example.test>", "attachments": ["inv.pdf"],
+        "references": ["<root@example.test>", "<orig-1@example.test>"],
         "text_preview": "Please use the new account.\n",
     }  # fmt: skip
 
@@ -275,8 +276,6 @@ def test_compose_defaults(api):
     {"references": ["<a@b>\nX: y"]},
     {"date": "2026-10-01\n"},
     {"fixture_path": "fixtures/a\n.eml"},
-    {"attachments": [{"filename": "a\r\n.pdf", "content_b64": ""}]},
-    {"attachments": [{"filename": "a.pdf", "content_type": "text/plain\nX: y", "content_b64": ""}]},
 ])  # fmt: skip
 def test_compose_rejects_header_injection(api, fields):
     r = compose(api, expect=400, **fields)
@@ -291,7 +290,6 @@ def test_compose_rejects_header_injection(api, fields):
     ({"in_reply_to": "<a b@c>"}, "Message-ID"),
     ({"fixture_path": "../escape.eml"}, "fixture path"),
     ({"fixture_path": "scenario.yaml"}, "collides"),
-    ({"attachments": [{"filename": "a", "content_type": "bogus", "content_b64": ""}]}, "MIME type"),
     ({"attachments": [{"filename": "a", "content_b64": "%%%"}]}, "base64"),
     ({"attachments": [{"filename": "run.exe", "content_b64": b64(b"MZ")}]}, "not allowed"),
 ])  # fmt: skip
@@ -336,7 +334,9 @@ def test_version_document_round_trips(api, other_api, caplog):
     api.publish()
     doc = api.call("GET", f"/v1/scenarios/{KEY}/versions/1/document", expect=200).json()
     assert doc["scenario_key"] == KEY and doc["version"] == 1 and doc["spec_hash"]
+    assert example_dict()["scenario"]["evaluation"]["assertions"]  # published WITH inline ones
     assert doc["document"]["scenario"]["evaluation"]["assertions"] == []  # stored = stripped
+    assert "answer_key" not in str(doc) and "rubric" not in str(doc["document"])
     assert doc["fixtures"] == fixtures()
     again = api.call("POST", "/v1/scenarios",
                      json={"document": doc["document"], "fixtures": doc["fixtures"]},
@@ -447,3 +447,109 @@ def test_publish_errors_carry_dotted_issues(api):
                  expect=400).json()["error"]  # fmt: skip
     assert r["details"]["issues"][0]["path"] == "scenario.personas.1.email"
     assert isinstance(r["details"]["errors"][0], str)
+
+
+def test_compose_sanitises_attachment_names_and_types(api):
+    out = compose(api, attachments=[
+        {"filename": 'evil"\r\nX-Injected: 1/../na"me.txt', "content_type": "text/plain\r\nX: y",
+         "content_b64": b64(b"a")},
+        {"filename": "Überweisung " + "x" * 200 + ".pdf", "content_type": "Application/PDF",
+         "content_b64": b64(b"%PDF")},
+    ])  # fmt: skip
+    raw = base64.b64decode(out["content_b64"])
+    assert b"X-Injected" not in raw.split(b"\r\n\r\n")[0] and b"\r\nX: y" not in raw
+    parts = [p for p in message_from_bytes(raw).walk() if p.get_filename()]
+    assert parts[0].get_filename() == "na'me.txt"
+    assert parts[0].get_content_type() == "application/octet-stream"
+    assert parts[1].get_filename().startswith("Überweisung") and len(parts[1].get_filename()) == 150
+    assert parts[1].get_content_type() == "application/pdf"
+    assert b"filename*" in raw and b"utf-8''" in raw  # RFC 2231 for the non-ASCII name
+
+
+def test_compose_caps_total_attachment_bytes(api, monkeypatch):
+    monkeypatch.setattr(authoring, "MAX_ATTACHMENT_TOTAL_BYTES", 3)
+    r = compose(api, expect=400, attachments=[{"filename": "a", "content_b64": b64(b"ab")},
+                                              {"filename": "b", "content_b64": b64(b"cd")}])  # fmt: skip
+    assert "in total" in r["error"]["message"]
+
+
+@pytest.mark.parametrize(("mutate", "path"), [
+    (lambda s: s.update(id="Bad Key"), "scenario.id"),
+    (lambda s: s.update(id="x" * 101), "scenario.id"),
+    (lambda s: s.update(title="  "), "scenario.title"),
+    (lambda s: s["personas"][0].update(id="-me"), "scenario.personas.0.id"),
+    (lambda s: s["personas"][0].update(role=" "), "scenario.personas.0.role"),
+    (lambda s: s["events"][0].update(id="e v"), "scenario.events.0.id"),
+])  # fmt: skip
+def test_ids_titles_and_roles_are_validated(api, mutate, path):
+    doc = example_dict()
+    mutate(doc["scenario"])
+    r = api.call("POST", "/v1/scenario-drafts/validate",
+                 json={"document": doc, "fixtures": fixtures()}, expect=200).json()  # fmt: skip
+    assert path in [e["path"] for e in r["errors"]]
+
+
+def test_answer_key_publish_errors_are_structured(api):
+    api.publish()
+    bad = copy.deepcopy(ANSWER_KEY)
+    bad["answer_key"]["assertions"][0]["check"] = {"operation": "reply", "count": {"min": -1}}
+    r = api.call("POST", f"/v1/scenarios/{KEY}/answer-keys", json={"document": bad},
+                 expect=400).json()["error"]  # fmt: skip
+    assert r["message"] == "answer key validation failed"
+    assert r["details"]["errors"][0]["loc"] == "answer_key.assertions.0.check.count.min"
+    assert r["details"]["errors"][0]["msg"]
+
+
+def test_run_mailboxes_carry_persona_and_folder_counts(api):
+    from tests.api.conftest import open_agent
+
+    api.publish(open_agent)
+    created = api.create_run()
+    run, (key, mbx) = created["run"]["id"], api.agent(created)
+    first = api.call("GET", f"/v1/mailboxes/{mbx}/messages?folder=inbox", key=key,
+                     expect=200).json()["items"][0]  # fmt: skip
+    api.call("PATCH", f"/v1/mailboxes/{mbx}/messages/{first['id']}", key=key,
+             json={"add_flags": ["SEEN"]}, expect=200)  # fmt: skip
+    boxes = {b["persona_id"]: b for b in api.call("GET", f"/v1/runs/{run}/mailboxes",
+                                                  "evaluator", expect=200).json()}  # fmt: skip
+    agent = boxes["finance_manager"]
+    assert agent["is_agent"] and agent["role"] and agent["id"] == mbx
+    assert not boxes["vendor"]["is_agent"]
+    inbox = next(f for f in agent["folders"] if f["system_type"] == "inbox")
+    assert inbox["total"] == 2 and inbox["unread"] == 1
+    assert {f["system_type"] for f in agent["folders"]} >= {"inbox", "sent", "drafts"}
+    injected = api.call("POST", f"/v1/runs/{run}/mailboxes/{mbx}/inject",
+                        json={"message": {"from": "vendor@example.test", "to": [
+                            "finance@example.test"], "text": "x"}}, expect=201).json()  # fmt: skip
+    got = api.call("GET", f"/v1/mailboxes/{mbx}/messages/{injected['message_id']}", key=key,
+                   expect=200).json()  # fmt: skip
+    assert got["id"] == injected["message_id"]  # the canonical message id
+
+
+def test_answer_key_check_errors_are_flattened_under_check(api):
+    api.publish()
+    bad = copy.deepcopy(ANSWER_KEY)
+    content = next(a for a in bad["answer_key"]["assertions"] if a["type"] == "content")
+    content["check"] = {"where": {"folder": "sent"}}  # the check model's own cross-field rule
+    bad["answer_key"]["assertions"].append({"id": "x-type", "type": "nope", "requirement": "r"})
+    r = validate_key(api, bad)
+    i = bad["answer_key"]["assertions"].index(content)
+    n = len(bad["answer_key"]["assertions"]) - 1
+    by = {e["path"]: e["message"] for e in r["errors"]}
+    assert by[f"answer_key.assertions.{i}.check"] == (
+        "content check needs contains, not_contains or regex"
+    )
+    assert by[f"answer_key.assertions.{n}"] == "unknown assertion type 'nope'"
+
+
+def test_tools_never_log_request_or_response_bodies(api, caplog):
+    import logging
+
+    marker = "MARKER-7f3c-do-not-log"
+    with caplog.at_level(logging.DEBUG):
+        api.call("POST", "/v1/tools/yaml-to-json", json={"source": f"a: {marker}\n"}, expect=200)
+        api.call("POST", "/v1/tools/yaml-to-json", json={"source": f"a: [{marker}\n"}, expect=200)
+        api.call("POST", "/v1/tools/json-to-yaml", json={"document": {"a": marker}}, expect=200)
+        api.call("POST", "/v1/tools/json-to-yaml", "evaluator",
+                 json={"document": {"a": marker}}, expect=200)  # fmt: skip
+    assert caplog.records and marker not in caplog.text
