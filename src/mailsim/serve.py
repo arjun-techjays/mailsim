@@ -177,6 +177,17 @@ def _parser() -> argparse.ArgumentParser:
     b.add_argument("--migrate", action="store_true", help="apply migrations first")
     b.add_argument("--output", type=Path, help="write the keys to this file (mode 0600)")
     sub.add_parser("sweep", help="delete expired idempotency records (also done on each claim)")
+    pr = sub.add_parser("protocols", help="run the IMAP4rev1 + SMTP submission listeners "
+                                          "(agent keys; loopback unless TLS)")  # fmt: skip
+    pr.add_argument("--host", default="127.0.0.1")
+    pr.add_argument("--imap-port", type=int, default=1143)
+    pr.add_argument("--smtp-port", type=int, default=1587)
+    pr.add_argument("--tls-cert", type=Path, help="PEM certificate for STARTTLS")
+    pr.add_argument("--tls-key", type=Path, help="PEM private key (default: in --tls-cert)")
+    pr.add_argument("--tls-self-signed", action="store_true",
+                    help="STARTTLS with an ephemeral self-signed certificate (local testing)")  # fmt: skip
+    pr.add_argument("--allow-insecure-remote", action="store_true",
+                    help="allow a non-loopback bind WITHOUT TLS (credentials in clear)")  # fmt: skip
     sub.add_parser("mcp-stdio", help="serve the MCP tools on stdin/stdout for one API key "
                                      "(MAILSIM_API_KEY; logs go to stderr)")  # fmt: skip
     srv = sub.add_parser("serve", help="run the HTTP API with uvicorn")
@@ -227,6 +238,33 @@ def mcp_stdio_command(environ: Mapping[str, str] | None = None,
     return 0
 
 
+def protocols_command(args: argparse.Namespace, run: Callable[..., Any] | None = None,
+                      environ: Mapping[str, str] | None = None) -> int:  # fmt: skip
+    """`protocols`: IMAP + SMTP listeners over the agent facade (never local no-auth)."""
+    from mailsim.protocols import server as protocols
+    from mailsim.protocols import tls
+
+    env = {k: v for k, v in (os.environ if environ is None else environ).items()
+           if k != "MAILSIM_LOCAL_NO_AUTH"}  # fmt: skip
+    context = None
+    if args.tls_cert is not None:
+        context = tls.server_context(args.tls_cert, args.tls_key)
+    elif args.tls_self_signed:
+        context = tls.self_signed_context()
+    state = build_state(env)
+    try:
+        (run or protocols.run)(state["engine"], args.host, imap_port=args.imap_port,
+                               smtp_port=args.smtp_port, tls=context is not None,
+                               tls_context=context,
+                               allow_insecure_remote=args.allow_insecure_remote)  # fmt: skip
+    except ValueError as exc:  # e.g. non-loopback bind without TLS
+        print(f"protocols: {exc}", file=sys.stderr)
+        return 2
+    finally:
+        state["db_engine"].dispose()
+    return 0
+
+
 def _write_secret(path: Path, data: str) -> None:
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as fh:
@@ -240,6 +278,8 @@ def main(argv: Sequence[str] | None = None, *, serve: Callable[[str, int], Any] 
         return serve_command(args.host, args.port, args.local_no_auth, serve)
     if args.cmd == "mcp-stdio":
         return mcp_stdio_command()
+    if args.cmd == "protocols":
+        return protocols_command(args)
     if args.cmd == "sweep":
         state = build_state()
         try:

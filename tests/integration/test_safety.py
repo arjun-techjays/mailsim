@@ -104,6 +104,21 @@ def test_source_tree_has_no_mail_or_network_imports():
     assert offenders == []
 
 
+OUTBOUND_CALLS = {"open_connection", "create_connection", "sock_connect", "open_unix_connection",
+                  "create_unix_connection", "create_datagram_endpoint"}  # fmt: skip
+
+
+def test_source_tree_opens_no_outbound_sockets():
+    """asyncio needs no banned import to dial out: forbid the connect calls by name."""
+    offenders = []
+    for path in (ROOT / "src").rglob("*.py"):
+        for node in ast.walk(ast.parse(path.read_text())):
+            name = node.attr if isinstance(node, ast.Attribute) else getattr(node, "id", None)
+            if name in OUTBOUND_CALLS:
+                offenders.append(f"{path.relative_to(ROOT)}:{node.lineno}: {name}")
+    assert offenders == []
+
+
 def test_forbidden_matcher_catches_submodules():
     for n in ("mcp.client.stdio", "aiosmtpd.handlers", "smtplib", "http.client"):
         assert next((x for x in ALWAYS_FORBIDDEN if n == x or n.startswith(f"{x}.")), None), n
