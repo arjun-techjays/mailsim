@@ -53,7 +53,9 @@ with ProtocolServers(engine, imap_port=0, smtp_port=0) as servers:  # background
 loopback (the default) or to the Compose `sandbox` network only; the listeners never need
 egress. A non-loopback `host` is refused unless TLS is configured or
 `allow_insecure_remote=True` is passed. Each listener accepts at most 64 concurrent connections
-(`max_connections`; IMAP answers `* BYE`, SMTP `421`).
+(`max_connections`; IMAP answers `* BYE`, SMTP `421`; a STARTTLS upgrade still counts as one
+connection). Engine calls run on a dedicated thread pool sized for every connection of both
+listeners.
 
 ### Connecting
 
@@ -177,7 +179,8 @@ delivery), then applies the given flags/keywords; answers `[APPENDUID]`.
 25 MiB + 64 KiB (larger ones answer `NO [TOOBIG]` without the `+` continuation; an oversized
 `LITERAL+` literal closes the connection); autologout after 30 minutes idle. Plaintext pipelined
 after `STARTTLS` closes the connection (command-injection guard). Before login, literals are
-limited to 8 KiB and the idle limit is 60 seconds. Parenthesised lists and SEARCH `NOT`/`OR`
+limited to 8 KiB, a whole command to 16 KiB, and the idle limit is 60 seconds. A client that
+stops reading for 60 seconds while responses are pending is disconnected. Parenthesised lists and SEARCH `NOT`/`OR`
 nesting are capped at 32 levels; numbers in sequence sets and partial ranges at 10 digits.
 
 ## SMTP profile
@@ -188,7 +191,7 @@ TLS is configured.
 
 | Step        | Behaviour                                                                     |
 |-------------|-------------------------------------------------------------------------------|
-| `AUTH`      | required before `MAIL` (`530 5.7.0` otherwise); PLAIN or LOGIN, checked in a worker thread (never on the event loop); `535 5.7.8` on failure; at most 3 `AUTH` per connection (then `421`) and 100 of any command |
+| `AUTH`      | required before `MAIL` (`530 5.7.0` otherwise); PLAIN (an authorization identity other than the login is refused) or LOGIN, checked in a worker thread (never on the event loop); `535 5.7.8` on failure; at most 3 `AUTH` per connection (then `421`) and 100 of any command |
 | `MAIL FROM` | must be the authenticated mailbox (`553 5.7.1` otherwise); null sender refused |
 | `RCPT TO`   | per recipient: simulated mailbox -> `250`; outside the simulation -> `550 5.7.1 ... EXTERNAL_DELIVERY_BLOCKED` when the run is in `deny` mode or the agent is prohibited from `external_delivery`, otherwise a plain `250` (the `sink`/`event` policy handles it, never delivered; the mode is not revealed); bad syntax `501 5.1.3`; more than 100 -> `452 4.5.3` |
 | `DATA`      | parsed with `mailsim.mime` (25 MiB limit: `552`); `250 2.0.0 OK queued as <Message-ID> id=<message id>` |
@@ -234,4 +237,4 @@ The listeners use only `AgentMailbox` (`mailbox_info` for the login address, `ge
 message bytes with a rebuild via `mailsim.mime.build` when none is stored, `find_by_message_id`
 for replies, `mark_seen`, `list_changes`), plus one read-only store lookup the facade does not
 offer: the run's internal addresses and external-delivery decision, reduced to allow/deny and
-cached per SMTP session. It reaches neither scenario specs nor answer keys.
+re-read for every SMTP transaction (so a run reset is picked up). It reaches neither scenario specs nor answer keys.

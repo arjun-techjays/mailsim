@@ -16,7 +16,10 @@ import contextlib
 import ipaddress
 import logging
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
+
+from aiosmtpd.smtp import SMTP
 
 from mailsim.protocols.auth import Authenticator
 from mailsim.protocols.imap import IDLE_TIMEOUT, LINE_LIMIT, ImapConnection, ImapSession
@@ -57,7 +60,8 @@ class ProtocolServers:
         if reverify_seconds is not None:
             self.authenticator.reverify_seconds = reverify_seconds
         self.tls_context = tls_context or (self_signed_context(hostname) if tls else None)
-        self._smtp_transports: set[asyncio.BaseTransport] = set()
+        self._smtp_sessions: set[SMTP] = set()
+        self._executor: ThreadPoolExecutor | None = None
         self._ports = {"imap": imap_port, "smtp": smtp_port}
         self._servers: list[asyncio.Server] = []
         self._clients: set[asyncio.Task[None]] = set()
@@ -91,20 +95,25 @@ class ProtocolServers:
             self._clients.discard(task)
             self._transports.discard(writer.transport)
 
-    def _smtp_connect(self, transport: asyncio.BaseTransport) -> bool:
-        if len(self._smtp_transports) >= self.max_connections:
+    def _smtp_connect(self, protocol: SMTP) -> bool:
+        if len(self._smtp_sessions) >= self.max_connections:
             return False
-        self._smtp_transports.add(transport)
+        self._smtp_sessions.add(protocol)
         return True
 
     async def start_async(self) -> None:
         """Bind both listeners on the running loop."""
         loop = asyncio.get_running_loop()
+        # worker threads for engine calls (asyncio.to_thread): enough for every connection of
+        # both listeners, so slow clients on one listener cannot starve the other
+        self._executor = ThreadPoolExecutor(max_workers=2 * self.max_connections + 4,
+                                            thread_name_prefix="mailsim-protocols")  # fmt: skip
+        loop.set_default_executor(self._executor)
         imap = await asyncio.start_server(self._imap_client, self.host, self._ports["imap"],
                                           limit=LINE_LIMIT)  # fmt: skip
         factory = smtp_factory(self.authenticator, tls_context=self.tls_context,
                                hostname=self.hostname, on_connect=self._smtp_connect,
-                               on_disconnect=self._smtp_transports.discard)  # fmt: skip
+                               on_disconnect=self._smtp_sessions.discard)  # fmt: skip
         smtp = await loop.create_server(factory, self.host, self._ports["smtp"])
         self._servers = [imap, smtp]
         self._ports = {"imap": imap.sockets[0].getsockname()[1],
@@ -115,10 +124,12 @@ class ProtocolServers:
     async def stop_async(self) -> None:
         for server in self._servers:
             server.close()
-        for transport in [*self._transports, *self._smtp_transports]:  # clients end with us
+        for transport in self._transports:  # clients end with us
             transport.close()
+        for protocol in self._smtp_sessions:
+            protocol.close_transport()  # type: ignore[attr-defined]
         self._transports.clear()
-        self._smtp_transports.clear()
+        self._smtp_sessions.clear()
         for task in list(self._clients):
             task.cancel()
         await asyncio.gather(*self._clients, return_exceptions=True)

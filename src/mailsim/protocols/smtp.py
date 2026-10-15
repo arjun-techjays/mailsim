@@ -97,6 +97,8 @@ class SandboxHandler:
         if len(parts) != 3:
             await server.push("501 5.5.2 Can't split auth value")
             return AuthResult(success=False)
+        if parts[0] and parts[0] != parts[1]:  # no proxy authorization (parity with IMAP)
+            return AuthResult(success=False, handled=False)
         return await self._login(parts[1], parts[2])
 
     async def auth_LOGIN(self, server: SMTP, args: list[str]) -> AuthResult:
@@ -137,7 +139,12 @@ class SandboxHandler:
         agent = session.auth_data
         if not isinstance(agent, AgentSession):
             return "530 5.7.0 Authentication required"
-        if not await asyncio.to_thread(self.auth.still_valid, agent):
+        try:
+            valid = await asyncio.to_thread(self.auth.still_valid, agent)
+        except Exception:
+            log.exception("SMTP credential re-check failed")
+            valid = False
+        if not valid:
             assert server.transport is not None  # 421 is sent first, then the connection closes
             asyncio.get_running_loop().call_soon(server.transport.close)
             return "421 4.7.0 credentials revoked or expired; closing connection"
@@ -151,6 +158,7 @@ class SandboxHandler:
         if address.strip().lower() != agent.address:
             return (f"553 5.7.1 sender <{_line(address)[:200]}> is not the authenticated "
                     f"mailbox <{agent.address}>")  # fmt: skip
+        agent.policy = None  # recipient rules are re-read per transaction (survive run resets)
         envelope.mail_from = address
         envelope.mail_options.extend(mail_options)
         return "250 2.1.0 OK"
@@ -228,24 +236,32 @@ class SandboxHandler:
 class _TrackedSMTP(SMTP):
     """Reports connections to the listener (shutdown, connection cap)."""
 
-    on_connect: Callable[[asyncio.BaseTransport], bool] = staticmethod(lambda transport: True)
-    on_disconnect: Callable[[asyncio.BaseTransport], None] = staticmethod(lambda t: None)
+    on_connect: Callable[[SMTP], bool] = staticmethod(lambda protocol: True)
+    on_disconnect: Callable[[SMTP], None] = staticmethod(lambda protocol: None)
     _rejected = False
+    _counted = False  # STARTTLS calls connection_made again: count each connection once
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
-        if not self.on_connect(transport):
-            self._rejected = True
-            assert isinstance(transport, asyncio.WriteTransport)
-            transport.write(b"421 4.7.0 too many connections, try again later\r\n")
-            transport.close()
-            return
+        if not self._counted:
+            self._counted = True
+            if not self.on_connect(self):
+                self._rejected = True
+                assert isinstance(transport, asyncio.WriteTransport)
+                transport.write(b"421 4.7.0 too many connections, try again later\r\n")
+                transport.close()
+                return
         super().connection_made(transport)
 
     def connection_lost(self, error: Exception | None) -> None:
         if self._rejected:
             return
-        self.on_disconnect(self._original_transport or self.transport)  # type: ignore[arg-type]
+        self.on_disconnect(self)
         super().connection_lost(error)
+
+    def close_transport(self) -> None:
+        transport = self._original_transport or self.transport
+        assert transport is not None  # sessions leave the listener's set when they disconnect
+        transport.close()
 
     def eof_received(self) -> bool | None:
         return None if self._rejected else super().eof_received()
@@ -253,8 +269,8 @@ class _TrackedSMTP(SMTP):
 
 def smtp_factory(authenticator: Authenticator, *, tls_context: TLSContext | None = None,
                  hostname: str = "localhost",
-                 on_connect: Callable[[asyncio.BaseTransport], bool] | None = None,
-                 on_disconnect: Callable[[asyncio.BaseTransport], None] | None = None,
+                 on_connect: Callable[[SMTP], bool] | None = None,
+                 on_disconnect: Callable[[SMTP], None] | None = None,
                  ) -> Callable[[], SMTP]:  # fmt: skip
     """Protocol factory for `loop.create_server`."""
     handler = SandboxHandler(authenticator)

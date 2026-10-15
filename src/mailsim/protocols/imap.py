@@ -52,6 +52,8 @@ MAX_COMMAND = MAX_LITERAL + 2 * LINE_LIMIT
 IDLE_TIMEOUT = 30 * 60.0  # RFC 3501 autologout timer is at least 30 minutes
 PREAUTH_TIMEOUT = 60.0  # idle limit before a successful login
 PREAUTH_LITERAL = 8 * 1024  # literals accepted before login (credentials only)
+PREAUTH_COMMAND = 16 * 1024  # a whole command (lines + literals) before login
+WRITE_TIMEOUT = 60.0  # a client that stops reading is disconnected after this long
 MAX_AUTH_FAILURES = 3
 PAGE_SIZE = 500  # engine maximum page size for folder listings
 CHANGE_LIMIT = 500  # change-feed page size used to detect mailbox changes
@@ -90,6 +92,10 @@ _ERROR_CODES = {
 
 class Disconnect(Exception):
     """End the connection after sending `lines` (BYE)."""
+
+
+class WriteTimeout(Exception):
+    """The client stopped reading; the connection is aborted without a goodbye."""
 
 
 # --------------------------------------------------------------------------- helpers
@@ -237,9 +243,16 @@ class ImapSession:
         """Run one complete command (literals inline as received). `flush` streams untagged
         responses early (large FETCH results are sent per message)."""
         self._flush = flush
-        if self.agent is not None and not self.auth.still_valid(self.agent):
-            self.agent, self.selected = None, None
-            return Reply([b"* BYE [UNAVAILABLE] credentials revoked or expired\r\n"], close=True)
+        if self.agent is not None:
+            try:
+                valid = self.auth.still_valid(self.agent)
+            except Exception:
+                log.exception("IMAP credential re-check failed")
+                valid = False
+            if not valid:
+                self.agent, self.selected = None, None
+                return Reply([b"* BYE [UNAVAILABLE] credentials revoked or expired\r\n"],
+                             close=True)  # fmt: skip
         try:
             tokens = tokenize(data)
         except ParseError as exc:
@@ -259,6 +272,8 @@ class ImapSession:
             return Reply([*out, f"{tag} BAD {_one_line(str(exc))}\r\n".encode()])
         except Disconnect as exc:
             return Reply([*out, f"* BYE {_one_line(str(exc))}\r\n".encode()], close=True)
+        except WriteTimeout:
+            return Reply([], close=True)
         except SimError as exc:
             code = _ERROR_CODES.get(str(exc.code), "SERVERBUG")
             line = f"{tag} NO [{code}] {exc.code}: {_one_line(exc.message)}\r\n"
@@ -847,7 +862,7 @@ class ImapSession:
             position = {u: i + 1 for i, u in enumerate(sel.uids)}  # after any EXPUNGE just sent
             for _seq, msg in targets:
                 now = fresh.get(int(msg.imap_uid or 0))
-                if now is None or int(msg.imap_uid or 0) not in position:  # pragma: no cover
+                if now is None or int(msg.imap_uid or 0) not in position:
                     continue  # removed by another session between the write and this echo
                 uid = f"UID {now.imap_uid} " if uid_mode else ""
                 seq = position[int(msg.imap_uid or 0)]
@@ -1110,7 +1125,10 @@ class ImapConnection:
     async def _send(self, chunks: list[bytes]) -> None:
         if chunks:
             self.writer.write(b"".join(chunks))
-            await self.writer.drain()
+            try:
+                await asyncio.wait_for(self.writer.drain(), WRITE_TIMEOUT)
+            except TimeoutError:
+                raise WriteTimeout() from None
 
     @property
     def _timeout(self) -> float:
@@ -1126,8 +1144,10 @@ class ImapConnection:
         buf = bytearray(line)
         while (marker := literal_marker(line)) is not None:
             size, non_sync = marker
-            limit = MAX_LITERAL if self.session.agent is not None else PREAUTH_LITERAL
-            if size > limit or len(buf) + size > MAX_COMMAND:
+            authed = self.session.agent is not None
+            limit = MAX_LITERAL if authed else PREAUTH_LITERAL
+            total = MAX_COMMAND if authed else PREAUTH_COMMAND
+            if size > limit or len(buf) + size > total:
                 if non_sync:
                     raise Disconnect("literal too large")
                 head = bytes(buf).split(b" ", 1)[0].decode("ascii", "replace")
@@ -1139,12 +1159,16 @@ class ImapConnection:
             buf += await asyncio.wait_for(self.reader.readexactly(size), self._timeout)
             line = await self._readline()
             buf += line
+            if self.session.agent is None and len(buf) > PREAUTH_COMMAND:
+                raise Disconnect("command too large")
         return bytes(buf)
 
     async def run(self) -> None:
         try:
             await self._send([self.session.greeting()])
             await self._loop()
+        except WriteTimeout:
+            self.writer.transport.abort()  # the client stopped reading: drop it
         except Disconnect as exc:
             await self._bye(str(exc))
         except TimeoutError:
@@ -1155,11 +1179,12 @@ class ImapConnection:
             pass
         finally:
             self.writer.close()
-            with contextlib.suppress(ConnectionError, OSError):
-                await self.writer.wait_closed()
+            with contextlib.suppress(ConnectionError, OSError, TimeoutError):
+                await asyncio.wait_for(self.writer.wait_closed(), 5)
+            self.writer.transport.abort()  # no-op once closed; drops unread buffers otherwise
 
     async def _bye(self, text: str) -> None:
-        with contextlib.suppress(ConnectionError, OSError):
+        with contextlib.suppress(ConnectionError, OSError, WriteTimeout):
             await self._send([f"* BYE {text}\r\n".encode()])
 
     async def _loop(self) -> None:
@@ -1186,7 +1211,12 @@ class ImapConnection:
         loop = asyncio.get_running_loop()
 
         def flush(chunks: list[bytes]) -> None:
-            asyncio.run_coroutine_threadsafe(self._send(chunks), loop).result()
+            future = asyncio.run_coroutine_threadsafe(self._send(chunks), loop)
+            try:
+                future.result(timeout=WRITE_TIMEOUT + 5)
+            except TimeoutError:  # pragma: no cover - _send times out first
+                future.cancel()
+                raise WriteTimeout() from None
 
         return flush
 

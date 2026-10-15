@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import imaplib
 import smtplib
@@ -255,3 +256,130 @@ def test_smtp_auth_challenges(proto):
     user = base64.b64encode(AGENT.encode()).decode()
     assert s.docmd("AUTH", f"LOGIN {user}")[0] == 334
     assert s.docmd("*") == (501, b"5.7.0 Auth aborted")
+
+
+# ------------------------------------------------------------------------ re-review follow-ups
+def test_starttls_sessions_do_not_leak_connection_slots(make_proto):
+    from tests.protocols.conftest import client_tls
+
+    p = make_proto(tls=True, max_connections=2)
+    for _ in range(4):
+        s = smtplib.SMTP("127.0.0.1", p.servers.smtp_port, timeout=5)
+        s.ehlo()
+        s.starttls(context=client_tls())
+        s.ehlo()
+        s.quit()
+    deadline = time.monotonic() + 5
+    while p.servers._smtp_sessions and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not p.servers._smtp_sessions
+    s = smtplib.SMTP("127.0.0.1", p.servers.smtp_port, timeout=5)
+    assert s.noop()[0] == 250
+    s.quit()
+
+
+def test_preauth_command_size_is_capped(proto):
+    c = proto.raw()
+    c.send(b"a LOGIN {8000}\r\n")
+    assert c.line() == b"+ Ready for literal data\r\n"
+    c.send(b"x" * 8000 + b" {8000}\r\n")  # each literal is within the 8 KB limit
+    assert c.line() == b"+ Ready for literal data\r\n"
+    c.send(b"y" * 8000 + b" {1000}\r\n")  # ... but the command would pass 16 KB
+    assert c.line() == b"a NO [TOOBIG] literal too large\r\n"
+    d = proto.raw()
+    d.send(b"a LOGIN {8000}\r\n")
+    d.line()
+    d.send(b"x" * 8000 + b" " + b"y" * 9000 + b"\r\n")
+    assert d.line() == b"* BYE command too large\r\n"
+
+
+def test_non_reading_clients_are_dropped(proto, monkeypatch):
+    import socket
+
+    from mailsim.protocols import imap as imap_mod
+
+    monkeypatch.setattr(imap_mod, "WRITE_TIMEOUT", 0.5)
+    big = b"From: a@example.test\r\nSubject: big\r\n\r\n" + (b"z" * 998 + b"\r\n") * 2000
+    for _ in range(4):
+        proto.mailbox.insert_message(big, folder="inbox")
+    sock = socket.socket()
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+    sock.connect(("127.0.0.1", proto.servers.imap_port))
+    sock.sendall(f"a LOGIN {AGENT} {proto.key}\r\nb SELECT INBOX\r\n".encode())
+    sock.sendall(b"c FETCH 1:* (BODY.PEEK[])\r\nd FETCH 1:* (BODY.PEEK[])\r\n")  # never read
+    other = proto.imap()
+    deadline = time.monotonic() + 20
+    while len(proto.servers._clients) > 1 and time.monotonic() < deadline:
+        ok(other.noop())  # the other session keeps being served meanwhile
+        time.sleep(0.1)
+    assert len(proto.servers._clients) == 1
+    sock.close()
+
+
+def test_credential_recheck_failures_close_sessions(proto, monkeypatch):
+    def boom(agent):
+        raise RuntimeError("db down")
+
+    c = proto.imap()
+    s = proto.smtp()
+    monkeypatch.setattr(proto.servers.authenticator, "still_valid", boom)
+    with pytest.raises(imaplib.IMAP4.abort, match="revoked"):
+        c.noop()
+    assert s.mail(AGENT)[0] == 421
+
+
+def test_smtp_plain_rejects_foreign_authzid(proto):
+    s = proto.smtp(login=False)
+    blob = base64.b64encode(f"{VENDOR}\0{AGENT}\0{proto.key}".encode()).decode()
+    assert s.docmd("AUTH", f"PLAIN {blob}")[0] == 535
+    same = base64.b64encode(f"{AGENT}\0{AGENT}\0{proto.key}".encode()).decode()
+    assert s.docmd("AUTH", f"PLAIN {same}")[0] == 235
+
+
+def test_store_echo_skips_messages_removed_meanwhile(proto, monkeypatch):
+    from mailsim.engine.facades import AgentMailbox
+
+    real = AgentMailbox.set_flags
+
+    def flag_then_vanish(self, message_id, **kw):
+        real(self, message_id, **kw)
+        self.delete(message_id)  # e.g. another adapter deleting it concurrently
+
+    c = proto.imap()
+    ok(c.select("INBOX"))
+    monkeypatch.setattr(AgentMailbox, "set_flags", flag_then_vanish)
+    assert ok(c.store("1", "+FLAGS", "\\Flagged")) == [None]
+
+
+def test_connection_aborts_when_the_greeting_cannot_be_sent(monkeypatch):
+    from mailsim.protocols import imap as imap_mod
+
+    monkeypatch.setattr(imap_mod, "WRITE_TIMEOUT", 0.05)
+
+    class StuckWriter:
+        def __init__(self):
+            self.aborted = 0
+            self.transport = self
+
+        def write(self, data):
+            pass
+
+        async def drain(self):
+            await asyncio.sleep(10)
+
+        def abort(self):
+            self.aborted += 1
+
+        def close(self):
+            pass
+
+        async def wait_closed(self):
+            return None
+
+    async def main():
+        writer = StuckWriter()
+        session = imap_mod.ImapSession(None)  # type: ignore[arg-type]
+        await imap_mod.ImapConnection(session, asyncio.StreamReader(), writer).run()  # type: ignore[arg-type]
+        return writer.aborted
+
+    assert asyncio.run(main()) == 2  # once for the timeout, once in the final cleanup
