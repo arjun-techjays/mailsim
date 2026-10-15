@@ -252,22 +252,31 @@ use kiota's bearer provider with a static token):
 ```python
 import httpx
 from kiota_abstractions.authentication import (
-    AccessTokenProvider, AllowedHostsValidator, BaseBearerTokenAuthenticationProvider)
+    AccessTokenProvider,
+    AllowedHostsValidator,
+    BaseBearerTokenAuthenticationProvider,
+)
 from msgraph import GraphRequestAdapter, GraphServiceClient
 from msgraph.graph_request_adapter import options
 from msgraph_core import GraphClientFactory
 
 BASE = "http://127.0.0.1:8000/graph/v1.0"
 
+
 class SandboxKey(AccessTokenProvider):
-    def __init__(self, key): self.key = key
+    def __init__(self, key):
+        self.key = key
+
     async def get_authorization_token(self, uri, additional_authentication_context=None):
         return self.key
+
     def get_allowed_hosts_validator(self):
         return AllowedHostsValidator(["127.0.0.1:8000"])
 
+
 http = GraphClientFactory.create_with_default_middleware(
-    client=httpx.AsyncClient(base_url=BASE), options=options)
+    client=httpx.AsyncClient(base_url=BASE), options=options
+)
 adapter = GraphRequestAdapter(BaseBearerTokenAuthenticationProvider(SandboxKey(AGENT_KEY)), http)
 adapter.base_url = BASE
 client = GraphServiceClient(request_adapter=adapter)
