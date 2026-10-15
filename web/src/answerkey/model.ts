@@ -1,6 +1,7 @@
 // Form model of an answer key (src/mailsim/scenario/answer_key.py: AnswerKeyDoc) and the
 // conversions between the form and the stored document.
 import type { AuthoringMeta } from '../api/types';
+import { pruneEmptyOptional } from './schema';
 
 export type Check = Record<string, unknown>;
 
@@ -120,7 +121,8 @@ export function pruneCheck(v: unknown): unknown {
   return v;
 }
 
-export function toDocument(d: KeyDraft): Record<string, unknown> {
+/** `meta` (check schemas) lets empty optional groups be pruned; see pruneEmptyOptional. */
+export function toDocument(d: KeyDraft, meta?: AuthoringMeta): Record<string, unknown> {
   const version = /^\d+$/.test(d.version.trim()) ? Number(d.version) : d.version;
   return {
     answer_key_version: '1.0',
@@ -135,7 +137,10 @@ export function toDocument(d: KeyDraft): Record<string, unknown> {
         if (a.category) out.category = a.category;
         if (a.subject !== 'agent') out.subject = a.subject;
         if (a.evaluateAt === 'after_event') out.evaluate_at = { at: 'after_event', event: a.evaluateEvent };
-        if (a.type !== 'semantic' && a.useCheck) out.check = pruneCheck(a.check);
+        if (a.type !== 'semantic' && a.useCheck) {
+          const schema = meta?.assertion_types.find((t) => t.type === a.type)?.check_schema;
+          out.check = schema ? pruneEmptyOptional(pruneCheck(a.check), schema) : pruneCheck(a.check);
+        }
         if (a.rubric.trim()) out.rubric = a.rubric;
         return out;
       }),

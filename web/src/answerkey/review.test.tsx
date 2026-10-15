@@ -66,6 +66,7 @@ describe('pickers and defaults', () => {
     expect(values).toEqual(['finance@acme.test', 'billing@supplier.test', 'ceo@acme.test']);
     expect(list).toHaveTextContent('Asha Rao, Finance Manager (per_finance)');
     const label = card(0).getByLabelText('Label');
+    await user.click(label); // suggestions are fetched only once the picker is used
     await waitFor(() =>
       expect(document.getElementById(label.getAttribute('list') as string)?.querySelector('option')).toHaveAttribute('value', 'APPROVED'),
     );
@@ -81,18 +82,42 @@ describe('pickers and defaults', () => {
     expect(card(2).getByText('Not set: the default is INVALID_REQUEST, UNSUPPORTED_OPERATION, NOT_FOUND.')).toBeInTheDocument();
   });
 
-  it('content without filters explains the server default; emptied lists are dropped', { timeout: 30_000 }, async () => {
+  it('content where: absent means Sent, {} means any folder; empty optional unless is left out', { timeout: 30_000 }, async () => {
     const { user } = renderApp(NEW, sessionFor('evaluator'));
     await screen.findByText(/No assertions yet/);
     await user.selectOptions(screen.getByLabelText('New assertion type'), 'content');
     await user.click(screen.getByRole('button', { name: 'Add assertion' }));
+    // "Any folder" -> where: {} (explicitly any folder)
     await user.selectOptions(card(0).getByLabelText('Folder'), '');
-    expect(card(0).getByText(/Nothing set: the server looks at messages in the agent’s Sent folder/)).toBeInTheDocument();
+    expect(card(0).getByTestId('group-empty')).toHaveTextContent('messages in any folder');
+    expect(card(0).queryByTestId('group-default')).toBeNull();
     await user.click(card(0).getByRole('button', { name: 'Add to contains' }));
     await user.click(card(0).getByRole('button', { name: 'Remove contains 1' }));
     await user.click(screen.getByRole('button', { name: 'YAML' }));
-    const yaml = (await screen.findByLabelText('Answer key as YAML')) as HTMLTextAreaElement;
+    let yaml = (await screen.findByLabelText('Answer key as YAML')) as HTMLTextAreaElement;
+    expect(yaml.value).toContain('where: {}');
     expect(yaml.value).not.toContain('contains');
+    await user.click(screen.getByRole('button', { name: 'Form' }));
+
+    // back to the server default -> where absent (Sent folder)
+    await user.click(await card(0).findByRole('button', { name: 'Use the default instead' }));
+    expect(card(0).getByTestId('group-default')).toHaveTextContent('Not set: the server looks at messages in the agent’s Sent folder');
+    expect(card(0).queryByLabelText('Folder')).toBeNull();
+    await user.click(card(0).getByRole('button', { name: 'Set which messages filters instead' }));
+    expect(card(0).getByTestId('group-empty')).toBeInTheDocument();
+    await user.click(card(0).getByRole('button', { name: 'Use the default instead' }));
+
+    // policy: a ticked but empty "unless" is explained and pruned
+    await user.selectOptions(screen.getByLabelText('New assertion type'), 'policy');
+    await user.click(screen.getByRole('button', { name: 'Add assertion' }));
+    const unless = card(1).getByRole('group', { name: 'Unless this state held beforehand' });
+    expect(within(unless).getByTestId('group-default')).toHaveTextContent('the forbidden action is never allowed');
+    await user.click(within(unless).getByRole('checkbox', { name: /Use/ }));
+    expect(within(unless).getByTestId('group-empty')).toHaveTextContent('left out when saved');
+    await user.click(screen.getByRole('button', { name: 'YAML' }));
+    yaml = (await screen.findByLabelText('Answer key as YAML')) as HTMLTextAreaElement;
+    expect(yaml.value).not.toContain('unless');
+    expect(yaml.value).not.toMatch(/check:\n\s+contains/);
   });
 
   it('YAML apply lists unknown fields that were dropped', { timeout: 30_000 }, async () => {

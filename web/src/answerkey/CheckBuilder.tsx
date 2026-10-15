@@ -23,8 +23,12 @@ export interface Pickers {
   events: string[];
   /** Labels seen in the scenario/run, offered for `label`. */
   labels?: string[];
-  /** Server-side defaults of groups left empty, by property name (e.g. where -> "folder: sent"). */
+  /** Server-side defaults of groups left out, by property name (e.g. where -> "folder: sent"). */
   notes?: Record<string, string>;
+  /** Meaning of an explicitly empty group ({}), by property name. */
+  emptyNotes?: Record<string, string>;
+  /** Called when the label picker is first used (suggestions are fetched lazily). */
+  onLabelsWanted?: () => void;
 }
 
 interface NodeProps {
@@ -246,9 +250,14 @@ function Node(p: NodeProps) {
   if (ref === 'Count') return <CountField p={p} label={label} help={help} errors={errors} />;
 
   if (kind === 'object') {
-    const note = p.ctx.notes?.[p.name];
+    // An absent group and an explicit {} mean different things to the server (e.g. content
+    // `where` absent = Sent folder, {} = any folder): keep them apart and say which applies.
+    const absentNote = p.ctx.notes?.[p.name];
+    const emptyNote = p.ctx.emptyNotes?.[p.name];
     const present = p.value != null && typeof p.value === 'object';
-    const shown = present || !optional;
+    const empty = present && Object.keys(asObj(p.value)).length === 0;
+    const useDefault = !present && !optional && !!absentNote;
+    const shown = present || (!optional && !absentNote);
     return (
       <fieldset className="ak-group" id={id} tabIndex={-1}>
         <legend>{label}</legend>
@@ -260,7 +269,26 @@ function Node(p: NodeProps) {
           </label>
         )}
         <GroupErrors id={id} errors={errors} />
-        {note && Object.keys(asObj(p.value)).length === 0 && <p className="hint">Nothing set: {note}.</p>}
+        {!present && absentNote && (
+          <p className="hint" data-testid="group-default">
+            Not set: {absentNote}.
+          </p>
+        )}
+        {useDefault && (
+          <button type="button" onClick={() => p.onChange({})}>
+            Set {label.toLowerCase()} filters instead
+          </button>
+        )}
+        {empty && emptyNote && (
+          <p className="hint" data-testid="group-empty">
+            {label}: {emptyNote}.
+          </p>
+        )}
+        {present && !optional && absentNote && (
+          <button type="button" onClick={() => p.onChange(undefined)}>
+            Use the default instead
+          </button>
+        )}
         {shown && (
           <ObjectFields
             root={p.root}
@@ -327,7 +355,14 @@ function Node(p: NodeProps) {
         : p.name === 'event' ? events.map((e) => ({ value: e, label: e })) : personas.filter((x) => x.email).map((x) => ({ value: x.email, label: `${x.label} (${x.id})` }));
     control = (c) => (
       <>
-        <input {...c} list={`${id}-options`} value={value} onChange={(e) => setStr(e.target.value)} autoComplete="off" />
+        <input
+          {...c}
+          list={`${id}-options`}
+          value={value}
+          onChange={(e) => setStr(e.target.value)}
+          onFocus={p.name === 'label' ? p.ctx.onLabelsWanted : undefined}
+          autoComplete="off"
+        />
         <datalist id={`${id}-options`}>
           {options.map((o) => (
             <option key={o.value} value={o.value}>

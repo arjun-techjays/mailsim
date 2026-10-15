@@ -69,7 +69,7 @@ export function createApi(cfg: ApiConfig) {
     /** Caller identity (older servers without it answer 404/501; callers fall back). */
     me: () => get<MeOut>('/v1/me'),
     /** Runs of the caller's project, newest first. */
-    listRuns: (cursor: string | null, filters: { scenario_key?: string; status?: string } = {}) =>
+    listRuns: (cursor: string | null, filters: { scenario_key?: string; status?: string; page_size?: number } = {}) =>
       get<RunPage>('/v1/runs', { cursor, ...filters }),
     /** Evaluation report export; returned as text for download. */
     report: (runId: string, evaluationId: string, format: ReportFormat) =>

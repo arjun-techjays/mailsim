@@ -13,7 +13,7 @@ import {
   toDocument,
   uniqueId,
 } from './model';
-import { itemsOf, kindOf, labelFor, properties, refName, requiredKeys, resolve, unwrap } from './schema';
+import { itemsOf, kindOf, labelFor, properties, pruneEmptyOptional, refName, requiredKeys, resolve, unwrap } from './schema';
 import { byPath, clientIssues, fromServer, leakedFields, mergeIssues, normalizePath } from './validation';
 
 const meta = AUTHORING_META;
@@ -226,5 +226,24 @@ describe('review helpers', () => {
       { id: 'p', email: 'e', label: 'p' },
       { id: 'q', email: '', label: 'Q, R' },
     ]);
+  });
+});
+
+describe('pruneEmptyOptional', () => {
+  const schemaOf = (t: string) => AUTHORING_META.assertion_types.find((x) => x.type === t)?.check_schema as Record<string, unknown>;
+  it('drops empty optional groups but keeps explicit empty required/defaulted groups', () => {
+    expect(pruneEmptyOptional({ forbid: { operation: 'send' }, unless: {} }, schemaOf('policy'))).toEqual({ forbid: { operation: 'send' } });
+    expect(pruneEmptyOptional({ forbid: { operation: 'send' }, unless: { where: {} } }, schemaOf('policy'))).toEqual({
+      forbid: { operation: 'send' },
+      unless: { where: {} },
+    });
+    expect(pruneEmptyOptional({ where: {}, contains: ['x'], extra: 1 }, schemaOf('content'))).toEqual({ where: {}, contains: ['x'], extra: 1 });
+    expect(pruneEmptyOptional('x', schemaOf('content'))).toBe('x');
+    const d = { ...emptyDraft('s', 1) };
+    d.assertions = [{ ...newAssertion('policy', AUTHORING_META, []), check: { forbid: { operation: 'send' }, unless: {} } }];
+    const body = (toDocument(d, AUTHORING_META) as { answer_key: { assertions: { check: unknown }[] } }).answer_key;
+    expect(body.assertions[0]?.check).toEqual({ forbid: { operation: 'send' } });
+    d.assertions = [{ ...newAssertion('mystery', AUTHORING_META, []), useCheck: true, check: { a: {} } }];
+    expect((toDocument(d, AUTHORING_META) as { answer_key: { assertions: { check: unknown }[] } }).answer_key.assertions[0]?.check).toEqual({ a: {} });
   });
 });
