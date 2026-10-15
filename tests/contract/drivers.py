@@ -249,3 +249,195 @@ class RestDriver(NeutralDriver):
 
 
 DRIVERS.append(RestDriver)
+
+
+# ---- Wave 2 (WS-C): the Gmail API v1 compatibility profile, over HTTP with an agent key -----
+class GmailApiError(Exception):
+    """A non-2xx Gmail-shaped response; `code` is the neutral code from the ErrorInfo detail."""
+
+    def __init__(self, status: int, body: dict[str, Any]) -> None:
+        self.status, self.body = status, body
+        details = body.get("error", {}).get("details") or [{}]
+        self.code = str(details[0].get("reason") or f"HTTP_{status}")
+        super().__init__(f"{status} {self.code}: {body}")
+
+
+class GmailDriver(NeutralDriver):
+    """`/gmail/v1/users/me/...` over HTTP (FastAPI TestClient) with an agent key, using only
+    Gmail-native requests: folders and flags are label changes, replies are raw RFC 822 sends
+    with In-Reply-To, user labels are created through labels.create. The bound AgentMailbox is
+    used only to translate Gmail ids back to canonical ids for cross-driver comparison."""
+
+    name: ClassVar[str] = "gmail"
+    capabilities: ClassVar[frozenset[str]] = ALL_CAPABILITIES
+    _FOLDER_LABEL: ClassVar[dict[str, str]] = {"inbox": "INBOX", "sent": "SENT", "drafts": "DRAFT",
+                                                "trash": "TRASH"}  # fmt: skip
+    _FLAG_ADD: ClassVar[dict[str, str]] = {"FLAGGED": "STARRED", "ANSWERED": "MAILSIM_ANSWERED",
+                                            "DELETED": "MAILSIM_DELETED", "DRAFT": "DRAFT"}  # fmt: skip
+
+    def __init__(self, mailbox: AgentMailbox) -> None:
+        from fastapi.testclient import TestClient
+
+        from mailsim.api.app import create_app
+        from mailsim.api.auth import issue_key
+        from mailsim.serve import mount_adapters
+
+        engine, scope = harness_parts(mailbox)
+        sf = engine.session_factory
+        with sf.begin() as s:
+            key = issue_key(s, tenant_id=scope.tenant_id, project_id=scope.project_id,
+                            role="agent", run_id=mailbox.run_id,
+                            mailbox_id=mailbox.mailbox_id).api_key  # fmt: skip
+        app = create_app(engine=engine, session_factory=sf, blobs=engine.blobs)
+        assert mount_adapters(app, ["mailsim.adapters.gmail.api"])
+        self.mb = mailbox
+        self.http = TestClient(app, raise_server_exceptions=False)
+        self.http.headers["Authorization"] = f"Bearer {key}"
+        self.base = "/gmail/v1/users/me"
+
+    def _call(self, method: str, path: str, **kw: Any) -> Any:
+        r = self.http.request(method, self.base + path, **kw)
+        if r.status_code >= 400:
+            raise GmailApiError(r.status_code, r.json())
+        return r.json() if r.content else None
+
+    @staticmethod
+    def _text(part: dict[str, Any]) -> str:
+        import base64
+
+        data = part.get("body", {}).get("data")
+        own = base64.urlsafe_b64decode(data).decode("utf-8", "replace") if data else ""
+        return own + "".join(GmailDriver._text(p) for p in part.get("parts", []))
+
+    def _msg(self, res: dict[str, Any]) -> Msg:
+        import json
+
+        headers = {h["name"].lower(): h["value"] for h in res["payload"]["headers"]}
+        labels = set(res["labelIds"])
+        folder = next((f for f, lab in self._FOLDER_LABEL.items() if lab in labels), "archive")
+        flags = {f for f, lab in self._FLAG_ADD.items() if lab in labels}
+        if "UNREAD" not in labels:
+            flags.add("SEEN")
+        names = {bytes.fromhex(x[6:]).decode() for x in labels if x.startswith("Label_")}
+        return Msg(res["id"], self.mb.resolve_external_id("gmail", "message", res["id"]),
+                   headers["message-id"], res["threadId"], headers.get("subject", ""), folder,
+                   frozenset(flags), frozenset(names), headers.get("in-reply-to"),
+                   json.dumps(res) + self._text(res["payload"]))  # fmt: skip
+
+    def _ids(self, **params: Any) -> list[str]:
+        out, token = [], None
+        while True:
+            page = self._call("GET", "/messages", params={**params, "maxResults": 500,
+                                                           "includeSpamTrash": "true",
+                                                           **({"pageToken": token} if token else {})})  # fmt: skip
+            out += [m["id"] for m in page.get("messages", [])]
+            token = page.get("nextPageToken")
+            if token is None:
+                return out
+
+    def list(self, folder: str | None = None) -> list[Msg]:
+        if folder == "archive":
+            ids = self._ids(q="in:archive")
+        else:
+            ids = self._ids(**({"labelIds": self._FOLDER_LABEL[folder]} if folder else {}))
+        return [
+            self.get(i) for i in reversed(ids)
+        ]  # Gmail lists newest first; neutral is oldest first
+
+    def page(self, size: int, cursor: str | None) -> tuple[list[Msg], str | None]:
+        params: dict[str, Any] = {"maxResults": size, "includeSpamTrash": "true",
+                                  **({"pageToken": cursor} if cursor else {})}  # fmt: skip
+        p = self._call("GET", "/messages", params=params)
+        return [self.get(m["id"]) for m in p.get("messages", [])], p.get("nextPageToken")
+
+    def get(self, ref: str) -> Msg:
+        return self._msg(self._call("GET", f"/messages/{ref}", params={"format": "full"}))
+
+    def thread(self, thread_ref: str) -> list[Msg]:
+        t = self._call("GET", f"/threads/{thread_ref}", params={"format": "full"})
+        return [self._msg(m) for m in t["messages"]]
+
+    def search(self, text: str) -> list[Msg]:
+        return [self.get(i) for i in self._ids(q=text)]
+
+    @staticmethod
+    def _raw(headers: dict[str, str], text: str) -> str:
+        import base64
+        from email.message import EmailMessage
+
+        em = EmailMessage()
+        for k, v in headers.items():
+            em[k] = v
+        em.set_content(text)
+        return base64.urlsafe_b64encode(em.as_bytes()).decode()
+
+    def send(self, to: list[str], subject: str, text: str) -> str:
+        sent = self._call("POST", "/messages/send",
+                          json={"raw": self._raw({"To": ", ".join(to), "Subject": subject}, text)})  # fmt: skip
+        return self.get(sent["id"]).message_id_header
+
+    def reply(self, ref: str, text: str) -> None:
+        orig = self._call("GET", f"/messages/{ref}", params={"format": "metadata"})
+        h = {x["name"].lower(): x["value"] for x in orig["payload"]["headers"]}
+        subject = h.get("subject", "")
+        refs = " ".join(filter(None, [h.get("references"), h["message-id"]]))
+        headers = {"To": h["from"], "In-Reply-To": h["message-id"], "References": refs,
+                   "Subject": subject if subject.lower().startswith("re:") else f"Re: {subject}"}  # fmt: skip
+        self._call("POST", "/messages/send",
+                   json={"raw": self._raw(headers, text), "threadId": orig["threadId"]})  # fmt: skip
+
+    def _modify(self, ref: str, add: list[str] = (), remove: list[str] = ()) -> None:  # type: ignore[assignment]
+        self._call("POST", f"/messages/{ref}/modify",
+                   json={"addLabelIds": list(add), "removeLabelIds": list(remove)})  # fmt: skip
+
+    def move(self, ref: str, folder: str) -> None:
+        if folder == "trash":
+            self._call("POST", f"/messages/{ref}/trash")
+        elif folder == "archive":
+            labels = self._call("GET", f"/messages/{ref}", params={"format": "minimal"})["labelIds"]
+            self._modify(ref, remove=[x for x in labels if x in ("INBOX", "SENT")])
+        else:
+            self._modify(ref, add=[self._FOLDER_LABEL.get(folder, folder)])
+
+    def flag(self, ref: str, add: list[str]) -> None:
+        self._modify(ref, add=[self._FLAG_ADD[f] for f in add if f != "SEEN"],
+                     remove=["UNREAD"] if "SEEN" in add else [])  # fmt: skip
+
+    def label(self, ref: str, add: list[str]) -> None:
+        existing = {x["name"]: x["id"] for x in self._call("GET", "/labels")["labels"]}
+        ids = []
+        for name in add:
+            if name not in existing:
+                try:
+                    existing[name] = self._call("POST", "/labels", json={"name": name})["id"]
+                except GmailApiError as exc:  # created concurrently: it exists now
+                    assert exc.code == ErrorCode.CONFLICT
+                    existing = {x["name"]: x["id"] for x in self._call("GET", "/labels")["labels"]}
+            ids.append(existing[name])
+        self._modify(ref, add=ids)
+
+    def delete(self, ref: str) -> None:
+        self._call("DELETE", f"/messages/{ref}")
+
+    def changes(self, since: int) -> tuple[list[str], int]:
+        ids: list[str] = []
+        token = None
+        while True:
+            params: dict[str, Any] = {"startHistoryId": since,
+                                      **({"pageToken": token} if token else {})}  # fmt: skip
+            feed = self._call("GET", "/history", params=params)
+            for record in feed.get("history", []):
+                gid = record["messages"][0]["id"]
+                try:
+                    ids.append(self.mb.resolve_external_id("gmail", "message", gid))
+                except SimError:  # deleted since: no canonical id left to resolve
+                    ids.append(gid)
+            token = feed.get("nextPageToken")
+            if token is None:
+                return ids, int(feed["historyId"])
+
+    def error_code(self, exc: BaseException) -> str:
+        return exc.code if isinstance(exc, GmailApiError) else super().error_code(exc)
+
+
+DRIVERS.append(GmailDriver)
