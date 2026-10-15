@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { KEYS } from './fixtures';
+import { expectAccessible, KEYS } from './fixtures';
 import { ConnectPage } from './pages/ConnectPage';
 import { RunPage } from './pages/RunPage';
 
@@ -14,6 +14,7 @@ test.describe('API failure states', () => {
     await expect(err).toContainText('Could not load scenarios: INTERNAL (HTTP 500)');
     await expect(err).toContainText('internal error');
     await expect(err.getByTestId('request-id')).toHaveText(/^req_mock_\d+$/);
+    await expectAccessible(page, 'error envelope');
 
     await new RunPage(page).goto('run_boom');
     await expect(page.getByTestId('api-error')).toContainText('INTERNAL (HTTP 500)');

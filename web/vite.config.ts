@@ -10,6 +10,8 @@ export default defineConfig(({ mode }) => {
   const apiTarget = env.MAILSIM_API_URL ?? 'http://127.0.0.1:8000';
   return {
     plugins: [react()],
+    // public/ only holds the MSW worker: serve/copy it in mock mode only.
+    publicDir: mode === 'mock' ? 'public' : false,
     server: {
       port: Number(env.PORT ?? 5173),
       strictPort: true,
@@ -27,7 +29,7 @@ export default defineConfig(({ mode }) => {
         include: ['src/**/*.{ts,tsx}'],
         exclude: [
           'src/api/schema.gen.ts',
-          'src/mocks/browser.ts',
+          'src/mocks/**',
           'src/main.tsx',
           'src/test/**',
           'src/**/*.test.{ts,tsx}',
