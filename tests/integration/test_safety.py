@@ -77,7 +77,7 @@ def test_no_socket_is_opened_when_sending_to_external_recipients(env, tmp_path, 
 # every file, including the exempt ones (ruff per-file-ignores disable the whole rule).
 ALLOWED = {
     "ssl": {"src/mailsim/protocols/tls.py"},
-    "subprocess": {"src/mailsim/runner/command.py"},
+    "subprocess": {"src/mailsim/runner/command.py", "src/mailsim/llm/providers/claude_cli.py"},
     "anthropic": {"src/mailsim/llm/providers/anthropic.py"},
     "httpx": {"src/mailsim/llm/providers/openai_compatible.py"},
 }

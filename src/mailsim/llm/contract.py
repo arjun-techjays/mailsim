@@ -13,7 +13,7 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 DEFAULT_MODEL = "claude-sonnet-5-5"
-ProviderName = Literal["anthropic", "openai_compatible", "stub"]
+ProviderName = Literal["anthropic", "openai_compatible", "stub", "claude_cli"]
 
 
 class _M(BaseModel):
@@ -41,6 +41,8 @@ class LLMResponse(_M):
     input_tokens: int = 0
     output_tokens: int = 0
     stop_reason: str | None = None
+    usage_estimated: bool = False  # tokens estimated (chars/4) because the provider gave none
+    cost_usd: float | None = None  # reported by the provider (e.g. Claude Code CLI)
 
 
 class LLMProvider(Protocol):

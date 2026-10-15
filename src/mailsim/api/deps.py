@@ -18,6 +18,7 @@ from mailsim.auth.principal import Principal, Role
 from mailsim.domain.errors import PermissionDenied, UnsupportedOperation
 
 bearer = HTTPBearer(auto_error=False, description="Sandbox-issued API key (role-scoped)")
+OPERATOR_ROLES = frozenset({Role.CONTROLLER, Role.EVALUATOR})
 
 
 def _unauthenticated(message: str) -> HTTPException:
@@ -34,6 +35,11 @@ def get_principal(
     Missing, malformed, unknown, expired and revoked keys all answer 401 with the same
     message, so the response never reveals whether a key exists.
     """
+    operator: Principal | None = getattr(request.app.state, "local_operator", None)
+    if credentials is None and operator is not None:
+        # local no-auth mode (loopback only, opt-in): key-less requests are the operator
+        request.state.principal = operator
+        return operator
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise _unauthenticated("missing or invalid API key")
     session_factory = getattr(request.app.state, "session_factory", None)
@@ -52,6 +58,8 @@ def require_role(*roles: Role) -> Callable[[Principal], Principal]:
     allowed = frozenset(roles)
 
     def dependency(principal: Annotated[Principal, Depends(get_principal)]) -> Principal:
+        if principal.local_operator and allowed & OPERATOR_ROLES:
+            return principal
         if principal.role not in allowed:
             raise PermissionDenied("this credential's role may not call this operation")
         return principal
@@ -63,7 +71,10 @@ def require_role(*roles: Role) -> Callable[[Principal], Principal]:
 def agent_for_mailbox(
     mailbox_id: str, principal: Annotated[Principal, Depends(get_principal)]
 ) -> Principal:
-    """Agent credentials only, and only for the mailbox (and run) they were issued for."""
+    """Agent credentials only, and only for the mailbox (and run) they were issued for.
+    The local no-auth operator is never an agent: agent interfaces always demand a key."""
+    if principal.local_operator:
+        raise _unauthenticated("agent interfaces require an agent API key")
     if principal.role != Role.AGENT or principal.mailbox_id != mailbox_id:
         raise PermissionDenied("agent credentials are bound to one mailbox")
     return principal

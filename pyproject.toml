@@ -57,6 +57,7 @@ ignore = ["S101", "E501"]
 "src/mailsim/runner/command.py" = ["TID251", "S603", "S607"]  # spawn the agent under test
 "src/mailsim/llm/providers/anthropic.py" = ["TID251"]  # model egress via the allowlist proxy
 "src/mailsim/llm/providers/openai_compatible.py" = ["TID251"]  # (local Ollama endpoint)
+"src/mailsim/llm/providers/claude_cli.py" = ["TID251", "S603", "S607"]  # local Claude Code CLI
 # NOTE: per-file ignores disable the whole rule; tests/integration/test_safety.py enforces the
 # exact per-module allowlist (e.g. tls.py may import ssl and nothing else banned).
 "migrations/**" = ["S"]

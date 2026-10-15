@@ -44,6 +44,13 @@ def scope(principal: Principal) -> repos.Scope:
 
 
 def _facade[F](request: Request, principal: Principal, kind: type[F]) -> F:
+    if principal.local_operator:  # local no-auth operator: controller + evaluator views
+        sc = repos.Scope(principal.tenant_id, principal.project_id)
+        engine = app_state(request, "engine")
+        view: Controller | EvaluatorView = (
+            Controller(engine, sc) if kind is Controller else EvaluatorView(engine, sc)
+        )
+        return view  # type: ignore[return-value]
     facade = facade_for(app_state(request, "engine"), principal)
     if not isinstance(facade, kind):
         raise PermissionDenied("this credential's role may not call this operation")

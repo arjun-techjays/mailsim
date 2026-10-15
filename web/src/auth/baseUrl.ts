@@ -1,5 +1,19 @@
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
+/** True for http(s) URLs on a loopback host. */
+export function isLoopback(origin: string): boolean {
+  try {
+    return LOCAL_HOSTS.has(new URL(origin).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/** API origin the dashboard talks to by default: the build-time override, else its own origin. */
+export function defaultBaseUrl(): string {
+  return import.meta.env.VITE_DEFAULT_API_BASE || window.location.origin;
+}
+
 export type BaseUrlResult = { ok: true; origin: string } | { ok: false; error: string };
 
 /**

@@ -24,6 +24,7 @@ export function Layout() {
   const navigate = useNavigate();
   const [announcement, main] = useRouteAnnouncer();
   const operator = session && session.role !== 'agent';
+  const localNoAuth = session?.role === 'operator';
   const reconnect = () => {
     disconnect();
     navigate('/connect');
@@ -55,18 +56,29 @@ export function Layout() {
         {session && (
           <div className="session" data-testid="session-info">
             <span>
-              Role: <strong data-testid="session-role">{session.role}</strong>
+              Role:{' '}
+              <strong data-testid="session-role">
+                {session.role === 'operator' ? 'operator (local no-auth)' : session.role}
+              </strong>
             </span>
             <span className="muted" data-testid="session-origin">
               API: {session.baseUrl}
               {session.baseUrl !== window.location.origin && ' (different origin from this dashboard)'}
             </span>
-            <button type="button" onClick={reconnect}>
-              Disconnect
-            </button>
+            {!localNoAuth && (
+              <button type="button" onClick={reconnect}>
+                Disconnect
+              </button>
+            )}
           </div>
         )}
       </header>
+      {localNoAuth && (
+        <div role="note" className="notice banner" data-testid="local-no-auth-banner">
+          <strong>Local no-auth mode.</strong> This dashboard needs no key and acts as controller and evaluator for
+          the local project. Agent interfaces still require agent keys. Never expose this server beyond this machine.
+        </div>
+      )}
       {rejected && (
         <div role="alert" className="error-box banner" data-testid="key-rejected">
           <p className="error-title">The API rejected your key (401).</p>

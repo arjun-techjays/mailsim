@@ -34,11 +34,12 @@ import {
 
 type Guard = 'controller' | 'evaluator' | 'inspector' | 'agent';
 const ALLOWED: Record<Guard, Role[]> = {
-  controller: ['controller'],
-  evaluator: ['evaluator'],
-  inspector: ['controller', 'evaluator'],
+  controller: ['controller', 'operator'],
+  evaluator: ['evaluator', 'operator'],
+  inspector: ['controller', 'evaluator', 'operator'],
   agent: ['agent'],
 };
+const OPERATOR: KeyInfo = { role: 'operator', project: 'prj_main' };
 
 export function createHandlers(db: MockDb = createMockDb()) {
   const rid = () => `req_mock_${(db.counters.request += 1).toString().padStart(4, '0')}`;
@@ -60,6 +61,9 @@ export function createHandlers(db: MockDb = createMockDb()) {
     if (key === MOCK_KEYS.revocable && (db.counters.revocable += 1) > 1) {
       return fail(401, 'UNAUTHENTICATED', 'API key has been revoked');
     }
+    // Mirrors `serve --local-no-auth`: only key-less requests act as the operator (a bad key is
+    // still rejected). The mock serves no agent routes, so every guard here admits the operator.
+    if (!header && db.localNoAuth) return OPERATOR;
     if (!info) return fail(401, 'UNAUTHENTICATED', 'missing or invalid API key');
     if (!ALLOWED[guard].includes(info.role)) {
       return fail(403, 'PERMISSION_DENIED', "this credential's role may not call this operation");
@@ -175,7 +179,8 @@ export function createHandlers(db: MockDb = createMockDb()) {
         project_id: who.project,
         run_id: who.runId ?? null,
         mailbox_id: who.mailboxId ?? null,
-        key_id: `key_${key}`,
+        key_id: who.role === 'operator' ? null : `key_${key}`,
+        local_no_auth: who.role === 'operator',
       };
       return ok(me);
     }),

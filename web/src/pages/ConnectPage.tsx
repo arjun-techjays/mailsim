@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import type { Role } from '../api/types';
-import { validateBaseUrl } from '../auth/baseUrl';
+import { defaultBaseUrl, validateBaseUrl } from '../auth/baseUrl';
 import { detectRole } from '../auth/detectRole';
 import { useSession } from '../auth/session';
 import { ErrorDisplay } from '../components/ErrorDisplay';
@@ -11,11 +11,9 @@ const CAPABILITIES: Record<Role, string> = {
   controller: 'Start, cancel, reset and replay runs; inject messages; control the virtual clock.',
   evaluator: 'Inspect state and traces; view answer keys (metadata), evaluate runs and compare builds.',
   agent: 'Agent keys belong to the agent under test; the dashboard makes no requests with them.',
+  operator:
+    'Local no-auth mode: every controller and evaluator view, without a key. Agent interfaces still require agent keys.',
 };
-
-function defaultBaseUrl(): string {
-  return import.meta.env.VITE_DEFAULT_API_BASE || window.location.origin;
-}
 
 export function ConnectPage() {
   usePageTitle('Connect');

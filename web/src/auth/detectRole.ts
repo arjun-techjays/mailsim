@@ -1,10 +1,11 @@
 import { isApiError, type ApiConfig } from '../api/client';
 import { createApi } from '../api/endpoints';
 import type { Role } from '../api/types';
+import { isLoopback } from './baseUrl';
 
 /** Scenario key that cannot exist; used only to learn whether answer keys are readable. */
 export const ROLE_PROBE_KEY = '__mailsim_role_probe__';
-const ROLES: readonly Role[] = ['controller', 'evaluator', 'agent'];
+const ROLES: readonly Role[] = ['controller', 'evaluator', 'agent', 'operator'];
 const ABSENT = new Set([404, 405, 501]);
 
 /**
@@ -36,5 +37,20 @@ export async function detectRole(cfg: ApiConfig): Promise<Role> {
     if (isApiError(e) && e.status === 403) return 'controller';
     if (isApiError(e) && e.status === 404) return 'evaluator';
     throw e;
+  }
+}
+
+/**
+ * Local no-auth mode (`serve --local-no-auth`): `GET /v1/me` WITHOUT a key answers
+ * `{role: "operator", local_no_auth: true}`. Accepted only from a loopback API origin (the
+ * server refuses to run the mode on any other address). Any failure means "not local mode".
+ */
+export async function detectLocalNoAuth(baseUrl: string): Promise<boolean> {
+  if (!isLoopback(baseUrl)) return false;
+  try {
+    const me = await createApi({ baseUrl, apiKey: '' }).me();
+    return me?.role === 'operator' && me.local_no_auth === true;
+  } catch {
+    return false;
   }
 }

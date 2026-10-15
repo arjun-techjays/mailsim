@@ -17,7 +17,8 @@ export MAILSIM_DATABASE_URL=postgresql+psycopg://mailsim:mailsim@localhost:54329
 export MAILSIM_BLOB_DIR=var/blobs
 uv run python -m mailsim.serve bootstrap --migrate --output var/keys.json   # controller + evaluator keys (0600)
 uv run python -m mailsim.serve serve --port 8000                            # REST API on :8000
-# optional LLM: MAILSIM_LLM_PROVIDER=anthropic (+ANTHROPIC_API_KEY) or openai_compatible (+MAILSIM_LLM_BASE_URL)
+# optional LLM: MAILSIM_LLM_PROVIDER=anthropic (+ANTHROPIC_API_KEY), openai_compatible (+MAILSIM_LLM_BASE_URL)
+#               or claude_cli (your local Claude Code login, see below)
 cd web && npm ci && MAILSIM_API_URL=http://127.0.0.1:8000 npm run dev       # dashboard on :5173 (proxies /v1)
 ```
 
@@ -28,6 +29,67 @@ step), then evaluate after the run (`POST /v1/runs/{id}/evaluations`, evaluator 
 builds (`GET /v1/scenarios/{key}/accuracy`). The OpenAPI document is `openapi/openapi.json`.
 LLM provider outages surface as `UPSTREAM_UNAVAILABLE` (HTTP 503, `details.retryable`).
 Expired idempotency records are swept on each claim; `python -m mailsim.serve sweep` purges all.
+
+## Local development: Claude Code CLI provider and no-auth dashboard
+
+Both are **local-only conveniences, off by default**.
+
+**`claude_cli` LLM provider.** This provider generates persona replies and judge verdicts through
+your installed Claude Code CLI and its login (`claude` then `/login`). It does not use
+`ANTHROPIC_API_KEY`: the provider strips `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the
+child environment.
+
+```bash
+export MAILSIM_LLM_PROVIDER=claude_cli
+export MAILSIM_LLM_MODEL=sonnet          # optional; empty = the CLI's default model
+export MAILSIM_CLAUDE_CLI=claude         # optional; executable name or path
+export MAILSIM_LLM_TIMEOUT_SECONDS=120   # optional per-call timeout
+```
+
+How it runs the CLI:
+
+* **Command.** Each call runs
+  `claude -p --output-format json --tools "" --no-session-persistence --strict-mcp-config`.
+  * The prompt goes on stdin and the system prompt via `--system-prompt=`.
+  * There is no shell, and the model name is validated.
+  * It runs in an empty temporary directory.
+  * `--bare` is deliberately not used, because it disables the login.
+* **Usage and cost.** Usage and cost come from the CLI's JSON (`usage`, `total_cost_usd`) and are
+  recorded in `llm_calls`. When the CLI reports no usage, tokens are estimated and the row is
+  marked `usage_estimated`.
+* **Replay.** Replay reuses recorded outputs and never calls the CLI.
+* **Failures.** These map to `UPSTREAM_UNAVAILABLE` (HTTP 503):
+  * CLI missing;
+  * not logged in;
+  * non-zero exit;
+  * timeout (retryable);
+  * overload (retryable).
+* **Limitation.** User-level Claude Code memory and settings may still apply.
+* **Live test.** Opt in with `MAILSIM_LIVE_CLAUDE_CLI=1 uv run pytest -m live_llm tests/llm/test_claude_cli.py`.
+
+**Local no-auth dashboard.** In this mode the dashboard needs no API key. Key-less requests act
+as a combined **controller + evaluator** operator for the local project. It is resolved in this
+order:
+
+1. `MAILSIM_LOCAL_PROJECT_ID`;
+2. the only project in the database;
+3. a `local` project, bootstrapped when the database is empty (no keys are printed).
+
+```bash
+uv run python -m mailsim.serve serve --host 127.0.0.1 --port 8000 --local-no-auth   # or MAILSIM_LOCAL_NO_AUTH=1
+cd web && MAILSIM_API_URL=http://127.0.0.1:8000 npm run dev                      # opens straight to Scenarios
+```
+
+The mode's safeguards:
+
+* **Loopback only.** The server refuses to start in this mode unless it is bound to
+  `127.0.0.1`, `::1` or `localhost`. It prints a loud warning at startup.
+* **Detection.** The dashboard detects the mode with a key-less `GET /v1/me`, which returns
+  `role: "operator", local_no_auth: true`. It shows a banner and stores nothing.
+* **Agent interfaces still require agent keys.** This covers the REST mailbox routes and the
+  Gmail, Graph, IMAP/SMTP and MCP adapters.
+* **Answer keys stay evaluator-only.** They are never reachable by the agent.
+* **Keys still work.** Explicit API keys keep working, and invalid keys are still rejected.
 
 ## Quick start
 

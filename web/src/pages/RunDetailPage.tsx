@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { useApi, useRole } from '../auth/session';
+import { hasRole, useApi, useRole } from '../auth/session';
 import { rememberRun } from '../auth/storage';
 import { ShowFor } from '../components/Gates';
 import { ErrorDisplay } from '../components/ErrorDisplay';
@@ -34,7 +34,7 @@ export function RunDetailPage() {
   const tab = (TABS.find(([t]) => t === params.get('tab'))?.[0] ?? 'overview') as Tab;
 
   const run = useQuery({ queryKey: runKeys.all(runId), queryFn: () => api.getRun(runId) });
-  const needsState = run.isSuccess && (tab === 'mailboxes' || (tab === 'overview' && role === 'controller'));
+  const needsState = run.isSuccess && (tab === 'mailboxes' || (tab === 'overview' && hasRole(role, ['controller'])));
   const state = useQuery({ queryKey: runKeys.state(runId), queryFn: () => api.state(runId), enabled: needsState });
   const snapshot = useMemo(() => (state.data ? parseSnapshot(state.data) : undefined), [state.data]);
 
@@ -123,7 +123,7 @@ export function RunDetailPage() {
           </nav>
           <div className="tab-panel">
             {tab === 'overview' &&
-              (role === 'controller' ? (
+              (hasRole(role, ['controller']) ? (
                 <>
                   <RunControls run={run.data} />
                   {snapshot ? (

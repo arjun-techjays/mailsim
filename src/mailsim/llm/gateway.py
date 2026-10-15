@@ -136,6 +136,11 @@ def build_provider(config: LLMConfig) -> LLMProvider:
         return OpenAICompatibleProvider(
             base_url=config.base_url, model=config.model, timeout_seconds=config.timeout_seconds
         )
+    if config.provider == "claude_cli":
+        from mailsim.llm.providers.claude_cli import ClaudeCliProvider
+
+        return ClaudeCliProvider(model=config.model or None, timeout_seconds=config.timeout_seconds,
+                                 executable=config.cli_executable)  # fmt: skip
     from mailsim.llm.providers.stub import StubProvider
 
     return StubProvider.from_path(config.stub_fixtures, model=config.model)
@@ -244,14 +249,16 @@ class LLMGateway:
         return request
 
     def _settle(self, call_id: str, run_id: str | None, *, status: str, tokens: tuple[int, int],
-                latency_ms: int, model: str | None = None) -> None:  # fmt: skip
+                latency_ms: int, model: str | None = None, usage_estimated: bool = False,
+                cost_usd: float | None = None) -> None:  # fmt: skip
         if self._sf is None:
             with self._mem_lock:
                 if run_id is not None:
                     self._mem[run_id].rows[call_id] = tokens
             return
         values: dict[str, Any] = {"status": status, "input_tokens": tokens[0],
-                                  "output_tokens": tokens[1], "latency_ms": latency_ms}  # fmt: skip
+                                  "output_tokens": tokens[1], "latency_ms": latency_ms,
+                                  "usage_estimated": usage_estimated, "cost_usd": cost_usd}  # fmt: skip
         if model:
             values["model"] = model
         with self._sf() as s, s.begin():
@@ -281,7 +288,8 @@ class LLMGateway:
             raise err from None
         ms = max(0, int((self._clock() - started) * 1000))
         self._settle(call_id, request.run_id, status="ok", latency_ms=ms, model=response.model,
-                     tokens=(response.input_tokens, response.output_tokens))  # fmt: skip
+                     tokens=(response.input_tokens, response.output_tokens),
+                     usage_estimated=response.usage_estimated, cost_usd=response.cost_usd)  # fmt: skip
         log.info(
             "llm call provider=%s model=%s purpose=%s run=%s prompt_hash=%s in=%d out=%d ms=%d",
             response.provider, response.model, request.purpose, request.run_id, phash[:16],

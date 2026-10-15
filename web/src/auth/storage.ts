@@ -9,7 +9,7 @@ export interface Session {
 }
 
 export const SESSION_STORAGE_KEY = 'mailsim.session';
-const ROLES: readonly Role[] = ['controller', 'evaluator', 'agent'];
+const ROLES: readonly Role[] = ['controller', 'evaluator', 'agent']; // keyed roles only
 
 function store(): Storage | null {
   try {
@@ -37,7 +37,8 @@ export function saveSession(session: Session | null): void {
   const s = store();
   if (!s) return;
   try {
-    if (session) s.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+    // Operator (local no-auth) sessions hold no key and are re-detected on load: never stored.
+    if (session && session.role !== 'operator') s.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
     else s.removeItem(SESSION_STORAGE_KEY);
   } catch {
     // storage full / disabled: keep the session in memory only
