@@ -7,7 +7,9 @@
 export const EMAIL_CSP =
   "default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; form-action 'none'; base-uri 'none'";
 
-const REMOVE = 'script, noscript, template, meta, base, link, object, embed, applet, iframe, frame, frameset, portal';
+// SVG animation elements are removed too: SMIL can re-add an href without any script.
+const REMOVE =
+  'script, noscript, template, meta, base, link, object, embed, applet, iframe, frame, frameset, portal, animate, set, animateMotion, animateTransform';
 const URL_ATTRS = ['href', 'src', 'srcset', 'action', 'formaction', 'background', 'poster', 'cite', 'longdesc', 'ping', 'xlink:href', 'lowsrc', 'dynsrc'];
 
 /** Returns sanitized body markup: no active/navigating elements, no handlers, no live URLs. */
@@ -20,10 +22,12 @@ export function sanitizeEmailHtml(html: string): string {
       const name = attr.name.toLowerCase();
       if (name.startsWith('on') || name === 'target' || name === 'formtarget') el.removeAttribute(attr.name);
     }
-    if (el.tagName === 'A' && el.getAttribute('href')) {
+    const link = el.tagName === 'A' || el.tagName === 'a'; // HTML <A> or SVG <a>
+    const href = el.getAttribute('href') ?? el.getAttribute('xlink:href');
+    if (link && href) {
       const shown = doc.createElement('span');
       shown.className = 'mailsim-url';
-      shown.textContent = ` [${el.getAttribute('href')}]`;
+      shown.textContent = ` [${href}]`;
       el.after(shown);
     }
     const keepImage = el.tagName === 'IMG' && /^data:image\//i.test(el.getAttribute('src') ?? '');

@@ -49,6 +49,17 @@ describe('sanitizeEmailHtml', () => {
     expect(doc.querySelector('video')?.hasAttribute('poster')).toBe(false);
   });
 
+  it('neutralises svg links, SMIL animation, javascript: and non-image data: URLs', () => {
+    const out = sanitizeEmailHtml(
+      '<svg><a xlink:href="https://evil.example/x"><set attributeName="href" to="https://evil.example/y"/>' +
+        '<animate attributeName="href" values="https://evil.example/z"/><text>t</text></a></svg>' +
+        '<a href="javascript:alert(1)">j</a><img src="data:text/html,<b>x</b>">',
+    );
+    expect(out).not.toMatch(/<set|<animate|xlink:href=|href=|javascript:alert\(1\)"|src=/i);
+    expect(out).toContain('[https://evil.example/x]');
+    expect(out).toContain('[javascript:alert(1)]');
+  });
+
   it('wrapHtml embeds sanitized markup under the email CSP, without <base>', () => {
     const out = wrapHtml('<meta http-equiv="refresh" content="0;url=https://evil.example/"><a href="x" target="_self">l</a>');
     expect(out).not.toContain('refresh');
