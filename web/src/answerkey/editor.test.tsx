@@ -183,7 +183,7 @@ describe('Answer-key editor', () => {
 
     await user.clear(yaml);
     await user.click(yaml);
-    await user.paste(text.replace('"asks-for-verification"', '"asks-to-verify"'));
+    await user.paste(text.replace(/"?asks-for-verification"?/, 'asks-to-verify')); // quoting depends on the YAML emitter
     await user.click(screen.getByRole('button', { name: 'Form' }));
     expect(await screen.findByRole('heading', { name: /1\. asks-to-verify/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Form' })).toHaveFocus();

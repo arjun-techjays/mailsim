@@ -62,9 +62,9 @@ test.describe('answer-key editor', () => {
     // YAML round trip: edit an id in YAML, back to the form
     await page.getByRole('button', { name: 'YAML' }).click();
     const yaml = page.getByLabel('Answer key as YAML');
-    await expect(yaml).toHaveValue(/id: "reply-in-sent"/);
+    await expect(yaml).toHaveValue(/id: "?reply-in-sent"?/);
     const text = await yaml.inputValue();
-    await yaml.fill(text.replace('"reply-in-sent"', '"vendor-reply-in-sent"'));
+    await yaml.fill(text.replace(/"?reply-in-sent"?/, 'vendor-reply-in-sent'));
     await page.getByRole('button', { name: 'Form' }).click();
     await expect(cards(page).nth(0).getByLabel(/^Id/)).toHaveValue('vendor-reply-in-sent');
     await expect(cards(page).nth(0).getByLabel('Folder')).toHaveValue('sent');
