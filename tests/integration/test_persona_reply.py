@@ -118,3 +118,17 @@ def test_actions_record_their_exact_event_window(env, tmp_path):
     assert failed_read["seq_start"] == reply["seq_end"] + 1 > failed_read["seq_end"]
     assert adv60["seq_start"] == reply["seq_end"] + 1
     assert events[adv60["seq_end"]]["type"] in ("clock.advanced", "ids.reserved")
+
+
+def test_persona_failure_is_recorded_and_listed(env, tmp_path):
+    ctl, ev, run = setup(env, tmp_path)
+    msg = next(m for m in ev.state(run)["messages"] if m["subject"] == "Invoice INV-001")
+    ctl.persona_failed(run, "vendor", in_reply_to_message_id=msg["id"],
+                       reason="model refused " * 40, generation={"mode": "llm"})  # fmt: skip
+    gens = ctl.persona_generations(run)
+    assert gens[-1]["type"] == "persona.generation_failed" and len(gens[-1]["reason"]) == 200
+    with pytest.raises(NotFound):
+        ctl.persona_failed(run, "ghost", in_reply_to_message_id=msg["id"], reason="x")
+    with pytest.raises(NotFound):
+        ctl.persona_failed(run, "vendor", in_reply_to_message_id="msg_nope", reason="x")
+    assert ctl.replay_run(run).matches

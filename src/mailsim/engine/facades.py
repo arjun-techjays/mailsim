@@ -171,6 +171,12 @@ class Controller:
                                      text=text, generation=generation,
                                      in_reply_to_message_id=in_reply_to_message_id)  # fmt: skip
 
+    def persona_failed(self, run_id: str, persona_id: str, *, in_reply_to_message_id: str,
+                       reason: str, generation: dict[str, Any] | None = None) -> None:  # fmt: skip
+        self._e.persona_failed(self.scope, run_id, persona_id,
+                               in_reply_to_message_id=in_reply_to_message_id, reason=reason,
+                               generation=generation)  # fmt: skip
+
     def agent_mailbox_owner(self, run_id: str) -> str:
         return self._e.agent_mailbox_owner(self.scope, run_id)
 
