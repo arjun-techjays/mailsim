@@ -139,6 +139,10 @@ class ActionOut(_M):
     input: dict[str, Any]
     result: dict[str, Any]
     outcome: str
+    id: int | None = None
+    virtual_time: str | None = None
+    seq_start: int | None = Field(default=None, description="first event sequence it caused")
+    seq_end: int | None = Field(default=None, description="last event sequence it caused")
 
 
 class ReplayOut(_M):
@@ -277,3 +281,18 @@ class ChangeFeed(_M):
     has_more: bool
     latest_sequence: int
     reset_since: bool
+
+
+class RunPage(PageOut):
+    items: list[RunOut]
+
+
+class MeOut(_M):
+    """The calling credential's identity (`GET /v1/me`)."""
+
+    role: Literal["controller", "evaluator", "agent"]
+    tenant_id: str
+    project_id: str
+    run_id: str | None
+    mailbox_id: str | None
+    key_id: str | None

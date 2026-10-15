@@ -152,6 +152,8 @@ def test_every_route_declares_exactly_one_role_dependency():
         assert len(roles) == 1, route.path
         if route.path.startswith("/v1/mailboxes/"):
             assert roles[0] == {Role.AGENT}, route.path
+        elif route.path == "/v1/me":  # identity introspection: any valid credential
+            assert roles[0] == set(Role), route.path
         else:
             assert Role.AGENT not in roles[0], f"{route.path} must not accept agent credentials"
         if any(x in route.path for x in evaluator_only):

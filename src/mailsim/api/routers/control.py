@@ -14,21 +14,22 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, Protocol
 
 from fastapi import APIRouter, Header, Query, Request, Response
-from sqlalchemy import Select, select
+from sqlalchemy import Select, select, tuple_
 from sqlalchemy.orm import Session
 
 from mailsim.api import schemas as s
 from mailsim.api.auth import issue_key, project_keys, revoke_agent_keys, revoke_scoped_key
-from mailsim.api.deps import Controller, Evaluator, Inspector, not_implemented
+from mailsim.api.deps import Authenticated, Controller, Evaluator, Inspector, not_implemented
 from mailsim.api.errors import ErrorEnvelope
 from mailsim.api.idempotency import idempotent
 from mailsim.api.pagination import decode_sequence_cursor, encode_sequence_cursor
 from mailsim.api.routers._common import blobs, controller, inspector, run_out, scope, sessions
 from mailsim.auth.principal import Principal, Role
-from mailsim.domain.clock import iso
+from mailsim.domain.clock import iso, parse_ts
 from mailsim.domain.errors import InvalidRequest, NotFound
 from mailsim.domain.states import TERMINAL
 from mailsim.engine.facades import EvaluatorView
+from mailsim.engine.pagination import decode_cursor, encode_cursor
 from mailsim.evaluation.contract import BuildComparison, EvaluationReport
 from mailsim.scenario import answer_keys as keys_service
 from mailsim.scenario import validator
@@ -388,6 +389,57 @@ def create_agent_credential(
     return _agent_credential(request, principal, run_id)
 
 
+@router.get("/me", response_model=s.MeOut, tags=["meta"])
+def me(principal: Authenticated) -> s.MeOut:
+    """Identity of the calling credential (any role)."""
+    return s.MeOut(role=principal.role.value, tenant_id=principal.tenant_id,
+                   project_id=principal.project_id, run_id=principal.run_id,
+                   mailbox_id=principal.mailbox_id, key_id=principal.key_id)  # fmt: skip
+
+
+@router.get("/runs", response_model=s.RunPage)
+def list_runs(
+    request: Request,
+    principal: Inspector,
+    scenario_key: str | None = None,
+    status: str | None = None,
+    cursor: str | None = None,
+    page_size: Annotated[int, Query(ge=1, le=500)] = 50,
+) -> s.RunPage:
+    """Runs in the caller's project, newest first (by creation time, then id); filter by
+    `scenario_key` and/or `status`; follow `next_cursor` until it is null."""
+    stmt = (
+        select(m.Run, m.ScenarioVersion.version, m.Scenario.key)
+        .join(m.ScenarioVersion, m.ScenarioVersion.id == m.Run.scenario_version_id)
+        .join(m.Scenario, m.Scenario.id == m.ScenarioVersion.scenario_id)
+        .where(m.Run.tenant_id == principal.tenant_id, m.Run.project_id == principal.project_id)
+    )
+    if scenario_key is not None:
+        stmt = stmt.where(m.Scenario.key == scenario_key)
+    if status is not None:
+        stmt = stmt.where(m.Run.status == status)
+    if cursor is not None:
+        stamp, last_id = decode_cursor(cursor)
+        stmt = stmt.where(tuple_(m.Run.created_at, m.Run.id) < (parse_ts(stamp), last_id))
+    with sessions(request)() as session:
+        rows = session.execute(
+            stmt.order_by(m.Run.created_at.desc(), m.Run.id.desc()).limit(page_size + 1)
+        ).all()
+    items = [
+        s.RunOut(id=r.id, status=r.status, epoch=r.epoch,
+                 virtual_time=iso(r.virtual_time) if r.virtual_time else None,
+                 agent_actions=r.agent_actions, replay_of=r.replay_of, scenario_key=key,
+                 scenario_version=version,
+                 agent_build=r.config.get("evaluation", {}).get("agent_build"))
+        for r, version, key in rows[:page_size]
+    ]  # fmt: skip
+    nxt = None
+    if len(rows) > page_size:
+        last = rows[page_size - 1][0]
+        nxt = encode_cursor(iso(last.created_at), last.id)
+    return s.RunPage(items=items, next_cursor=nxt)
+
+
 @router.get("/runs/{run_id}", response_model=s.RunOut)
 def get_run(request: Request, run_id: str, principal: Inspector) -> s.RunOut:
     return run_out(request, principal, run_id)
@@ -425,17 +477,30 @@ def reset_run(
 
 
 @router.get("/runs/{run_id}/events", response_model=s.EventPage)
-def run_events(request: Request, run_id: str, principal: Inspector, cursor: str | None = None,
-               page_size: Annotated[int, Query(ge=1, le=500)] = 100) -> s.EventPage:  # fmt: skip
-    """Event trace in sequence order; follow `next_cursor` until it is null."""
+def run_events(
+    request: Request,
+    run_id: str,
+    principal: Inspector,
+    cursor: str | None = None,
+    page_size: Annotated[int, Query(ge=1, le=500)] = 100,
+    event_type: Annotated[str | None, Query(alias="type")] = None,
+    actor: str | None = None,
+    epoch: Annotated[int | None, Query(ge=0)] = None,
+) -> s.EventPage:
+    """Event trace in sequence order, optionally filtered by event `type`, `actor` and
+    `epoch`; follow `next_cursor` (with the same filters) until it is null."""
     after = decode_sequence_cursor(cursor)
+    stmt = select(m.EventRow).where(m.EventRow.run_id == run_id, m.EventRow.sequence > after)
+    if event_type is not None:
+        stmt = stmt.where(m.EventRow.type == event_type)
+    if actor is not None:
+        stmt = stmt.where(m.EventRow.actor == actor)
+    if epoch is not None:
+        stmt = stmt.where(m.EventRow.epoch == epoch)
     with sessions(request)() as session:
         repos.get_run(session, scope(principal), run_id)
         rows = session.execute(
-            select(m.EventRow)
-            .where(m.EventRow.run_id == run_id, m.EventRow.sequence > after)
-            .order_by(m.EventRow.sequence)
-            .limit(page_size + 1)
+            stmt.order_by(m.EventRow.sequence).limit(page_size + 1)
         ).scalars().all()  # fmt: skip
     items = [
         s.EventOut(sequence=r.sequence, epoch=r.epoch, type=r.type, actor=r.actor,

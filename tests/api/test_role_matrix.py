@@ -54,6 +54,8 @@ ROUTES: list[tuple[str, str, set[str], object, int]] = [
     ("GET", "/v1/mailboxes/{mbx}/changes", {A}, None, 200),
     ("GET", "/v1/mailboxes/{mbx}/folders", {A}, None, 200),
     ("DELETE", "/v1/keys/{keyid}", {C}, None, 204),
+    ("GET", "/v1/me", {C, E, A}, None, 200),
+    ("GET", "/v1/runs?status=RUNNING&page_size=1", {C, E}, None, 200),
 ]  # fmt: skip
 
 

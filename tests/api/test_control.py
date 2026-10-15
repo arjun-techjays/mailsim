@@ -302,3 +302,64 @@ def test_artifacts_list_mime_attachments_and_reports_for_evaluators_only(api):
     reports = [x for x in ev if x["kind"] == "report"]
     assert [x["content_type"] for x in reports] == ["application/xml", "application/octet-stream"]
     assert kinds(ev)[: len(ctl)] == kinds(ctl)
+
+
+def test_me_lists_and_filters(api):
+    api.publish()
+    created = api.create_run()
+    key, mbx = api.agent(created)
+    me = api.call("GET", "/v1/me", key=key, expect=200).json()
+    assert (me["role"], me["run_id"], me["mailbox_id"]) == ("agent", created["run"]["id"], mbx)
+    assert me["key_id"].startswith("key_") and me["project_id"] == api.project_id
+    ctl = api.call("GET", "/v1/me", expect=200).json()
+    assert ctl["role"] == "controller" and ctl["run_id"] is None
+
+
+def test_list_runs_newest_first_with_filters_and_pages(api, other_api):
+    api.publish()
+    api.publish(lambda s: s.update(id="other.key"))
+    ids = [api.create_run(start=i % 2 == 0)["run"]["id"] for i in range(5)]
+    other = api.call("POST", "/v1/scenarios/other.key/runs", json={}, expect=201).json()["run"][
+        "id"
+    ]
+    newest_first = [other, *reversed(ids)]
+    seen, cursor = [], None
+    while True:
+        q = "?page_size=2" + (f"&cursor={cursor}" if cursor else "")
+        page = api.call("GET", f"/v1/runs{q}", "evaluator", expect=200).json()
+        seen += [r["id"] for r in page["items"]]
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+    assert seen == newest_first
+    by_key = api.call("GET", f"/v1/runs?scenario_key={KEY}&status=READY", expect=200).json()
+    assert [r["id"] for r in by_key["items"]] == [ids[3], ids[1]]
+    assert by_key["items"][0]["scenario_key"] == KEY and by_key["items"][0]["scenario_version"] == 1
+    assert other_api.call("GET", "/v1/runs", expect=200).json() == {
+        "items": [],
+        "next_cursor": None,
+    }
+    err(api.call("GET", "/v1/runs?cursor=@@"), 400, "INVALID_REQUEST")
+
+
+def test_event_filters_and_action_fields(api):
+    api.publish()
+    created = api.create_run()
+    rid, (key, mbx) = created["run"]["id"], api.agent(created)
+    api.call("GET", f"/v1/mailboxes/{mbx}/folders", key=key, expect=200)
+    api.call("POST", f"/v1/runs/{rid}/reset", expect=200)
+    url = f"/v1/runs/{rid}/events?page_size=500"
+    resets = api.call("GET", url + "&type=run.reset", expect=200).json()["items"]
+    assert [e["type"] for e in resets] == ["run.reset"]
+    seeded = api.call("GET", url + "&actor=simulator&epoch=1", expect=200).json()["items"]
+    assert seeded and all(e["actor"] == "simulator" and e["epoch"] == 1 for e in seeded)
+    first = api.call(
+        "GET", f"/v1/runs/{rid}/events?page_size=1&actor=controller", expect=200
+    ).json()
+    nxt = api.call("GET", f"/v1/runs/{rid}/events?page_size=1&actor=controller"
+                   f"&cursor={first['next_cursor']}", expect=200).json()  # fmt: skip
+    assert nxt["items"][0]["sequence"] > first["items"][0]["sequence"]
+    assert nxt["items"][0]["actor"] == "controller"
+    acts = api.call("GET", f"/v1/runs/{rid}/actions", expect=200).json()
+    assert all(isinstance(a["id"], int) for a in acts)
+    assert {"virtual_time", "seq_start", "seq_end"} <= set(acts[0])

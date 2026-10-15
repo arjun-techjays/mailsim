@@ -61,6 +61,17 @@
             "title": "Actor",
             "type": "string"
           },
+          "id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
           "input": {
             "additionalProperties": true,
             "title": "Input",
@@ -78,6 +89,41 @@
             "additionalProperties": true,
             "title": "Result",
             "type": "object"
+          },
+          "seq_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "last event sequence it caused",
+            "title": "Seq End"
+          },
+          "seq_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "first event sequence it caused",
+            "title": "Seq Start"
+          },
+          "virtual_time": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Virtual Time"
           }
         },
         "required": [
@@ -1405,6 +1451,72 @@
         "title": "IssuedCredential",
         "type": "object"
       },
+      "MeOut": {
+        "additionalProperties": false,
+        "description": "The calling credential's identity (`GET /v1/me`).",
+        "properties": {
+          "key_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key Id"
+          },
+          "mailbox_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mailbox Id"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "controller",
+              "evaluator",
+              "agent"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "tenant_id": {
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role",
+          "tenant_id",
+          "project_id",
+          "run_id",
+          "mailbox_id",
+          "key_id"
+        ],
+        "title": "MeOut",
+        "type": "object"
+      },
       "MessagePage": {
         "additionalProperties": false,
         "properties": {
@@ -1783,6 +1895,34 @@
           "replay_of"
         ],
         "title": "RunOut",
+        "type": "object"
+      },
+      "RunPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RunOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "RunPage",
         "type": "object"
       },
       "ScenarioCreate": {
@@ -2796,6 +2936,44 @@
         ]
       }
     },
+    "/v1/me": {
+      "get": {
+        "description": "Identity of the calling credential (any role).",
+        "operationId": "me_v1_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Me",
+        "tags": [
+          "control",
+          "meta"
+        ]
+      }
+    },
     "/v1/projects": {
       "post": {
         "description": "Create a project in the caller's TENANT (tenant-wide: any controller key of the tenant\nmay do this). The response carries the new project's first controller and evaluator keys\n(shown once); the caller's own key stays bound to its own project. The very first\ntenant/project/keys come from `python -m mailsim.serve bootstrap`.",
@@ -2886,6 +3064,105 @@
           }
         ],
         "summary": "Get Project",
+        "tags": [
+          "control"
+        ]
+      }
+    },
+    "/v1/runs": {
+      "get": {
+        "description": "Runs in the caller's project, newest first (by creation time, then id); filter by\n`scenario_key` and/or `status`; follow `next_cursor` until it is null.",
+        "operationId": "list_runs_v1_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "scenario_key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scenario Key"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Runs",
         "tags": [
           "control"
         ]
@@ -3422,7 +3699,7 @@
     },
     "/v1/runs/{run_id}/events": {
       "get": {
-        "description": "Event trace in sequence order; follow `next_cursor` until it is null.",
+        "description": "Event trace in sequence order, optionally filtered by event `type`, `actor` and\n`epoch`; follow `next_cursor` (with the same filters) until it is null.",
         "operationId": "run_events_v1_runs__run_id__events_get",
         "parameters": [
           {
@@ -3460,6 +3737,55 @@
               "minimum": 1,
               "title": "Page Size",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "actor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Actor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "epoch",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Epoch"
             }
           }
         ],

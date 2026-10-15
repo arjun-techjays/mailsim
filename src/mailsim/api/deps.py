@@ -74,6 +74,8 @@ agent_for_mailbox.mailsim_roles = frozenset({Role.AGENT})  # type: ignore[attr-d
 Controller = Annotated[Principal, Depends(require_role(Role.CONTROLLER))]
 Evaluator = Annotated[Principal, Depends(require_role(Role.EVALUATOR))]
 Inspector = Annotated[Principal, Depends(require_role(Role.CONTROLLER, Role.EVALUATOR))]
+# any valid credential (identity introspection only: GET /v1/me)
+Authenticated = Annotated[Principal, Depends(require_role(*Role))]
 Agent = Annotated[Principal, Depends(agent_for_mailbox)]
 
 
