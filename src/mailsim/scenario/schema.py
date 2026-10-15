@@ -12,7 +12,11 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-SCHEMA_VERSION = "1.0"
+from mailsim.scenario.answer_key import ASSERTION_TYPES as ASSERTION_TYPES
+from mailsim.scenario.answer_key import AnswerAssertion
+
+SCHEMA_VERSION = "1.1"
+SUPPORTED_SCHEMA_VERSIONS = ("1.0", "1.1")
 AGENT_OPERATIONS = (
     "read", "search", "reply", "send", "forward", "insert", "move", "copy", "label", "flag",
     "draft", "delete",
@@ -33,10 +37,6 @@ TRIGGER_ACTIONS = {
     "insert": "insert",
     "copy": "copy",
 }
-ASSERTION_TYPES = (
-    "state", "action", "content", "policy", "safety", "temporal", "protocol", "semantic",
-    "invariant",
-)  # fmt: skip
 
 
 class _Strict(BaseModel):
@@ -77,9 +77,31 @@ class OrganizationSpec(_Strict):
     policies: list[PolicySpec] = Field(default_factory=list)
 
 
+class ScriptMatch(_Strict):
+    from_: str | None = Field(default=None, alias="from")  # persona id
+    subject_contains: str | None = None
+    body_contains: str | None = None
+
+
+class ScriptReply(_Strict):
+    subject: str | None = None  # default "Re: <subject>"
+    body: str
+
+
+class ScriptRule(_Strict):
+    """Scripted persona policy (1.1): deterministic reply when an incoming mail matches."""
+
+    on: ScriptMatch = Field(default_factory=ScriptMatch)
+    reply: ScriptReply
+    delay_seconds: Annotated[int, Field(ge=0)] | None = None  # default: response_delay_seconds
+    once: bool = True
+
+
 class BehaviorSpec(_Strict):
     response_style: str | None = None
     response_delay_seconds: Annotated[int, Field(ge=0)] = 0
+    mode: Literal["silent", "scripted", "llm"] = "silent"  # 1.1; LLM output is recorded
+    script: list[ScriptRule] = Field(default_factory=list)
 
 
 class PersonaSpec(_Strict):
@@ -141,19 +163,16 @@ class AgentSpec(_Strict):
     prohibited_operations: list[str] = Field(default_factory=list)
 
 
-class AssertionSpec(_Strict):
-    id: str
-    type: str
-    requirement: str
-
-
 class LimitsSpec(_Strict):
     max_agent_actions: Annotated[int, Field(gt=0)] = 100
     max_virtual_duration_seconds: Annotated[int, Field(gt=0)] = 86400
 
 
 class EvaluationSpec(_Strict):
-    assertions: list[AssertionSpec] = Field(default_factory=list)
+    # Inline assertions are an authoring convenience only: on publish they are moved into a
+    # separately versioned answer key and stripped from the stored scenario (never visible
+    # to the agent). Prefer a standalone answer-key file.
+    assertions: list[AnswerAssertion] = Field(default_factory=list)
     limits: LimitsSpec = Field(default_factory=LimitsSpec)
 
 
@@ -174,8 +193,15 @@ class ScenarioBody(_Strict):
 
 
 class ScenarioDoc(_Strict):
-    schema_version: Literal["1.0"]
+    schema_version: Literal["1.0", "1.1"]
     scenario: ScenarioBody
+
+
+def strip_answer_key(spec: dict[str, Any]) -> dict[str, Any]:
+    """The stored/run-facing scenario: identical minus inline assertions."""
+    out: dict[str, Any] = json.loads(json.dumps(spec))
+    out["scenario"]["evaluation"]["assertions"] = []
+    return out
 
 
 def canonical_dict(doc: ScenarioDoc) -> dict[str, Any]:

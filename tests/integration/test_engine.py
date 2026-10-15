@@ -453,6 +453,10 @@ def test_reset_restores_baseline_in_new_epoch_and_keeps_history(env):
     # the id counter keeps counting across epochs (determinism is per event log)
     assert again["run"]["id_counter"] > baseline_state["run"]["id_counter"]
     again["run"]["id_counter"] = baseline_state["run"]["id_counter"]
+    # IMAP UIDVALIDITY changes per epoch by design (clients must resync after a reset)
+    assert {f["uid_validity"] for f in again["folders"]} == {2}
+    for f in again["folders"]:
+        f["uid_validity"] = 1
     from mailsim.engine.snapshot import state_hash
 
     assert state_hash(again) == baseline

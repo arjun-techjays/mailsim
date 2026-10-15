@@ -180,6 +180,12 @@ class EvaluatorView:
     def scenario_spec(self, run_id: str) -> dict[str, Any]:
         return self._e.scenario_spec(self.scope, run_id)
 
+    def answer_key(self, run_id: str, version: int | None = None) -> dict[str, Any]:
+        return self._e.answer_key_for_run(self.scope, run_id, version)
+
+    def state_at(self, run_id: str, up_to_sequence: int) -> dict[str, Any]:
+        return self._e.state_at(self.scope, run_id, up_to_sequence)
+
     def complete_run(self, run_id: str, verdict: str, summary: dict[str, Any]) -> None:
         self._e.complete_run(self.scope, run_id, verdict, summary, actor=EVALUATOR)
 

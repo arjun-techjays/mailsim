@@ -198,3 +198,29 @@ def test_validation_report_helpers():
     assert ei.value.details["errors"]
     assert str(report.errors[0]).startswith("scenario.agent.mailbox")
     assert ScenarioDoc.model_validate(example_dict()).scenario.id
+
+
+@pytest.mark.parametrize(
+    ("behavior", "needle"),
+    [
+        (
+            {"mode": "scripted", "script": [{"on": {"from": "ghost"}, "reply": {"body": "ok"}}]},
+            "unknown persona 'ghost'",
+        ),
+        ({"mode": "silent", "script": [{"reply": {"body": "ok"}}]}, "require mode: scripted"),
+    ],
+)
+def test_persona_script_rules(behavior, needle, tmp_path):
+    errs = errors_for(lambda s: s["personas"][1].update(behavior=behavior), tmp_path)
+    assert any(needle in e for e in errs), errs
+
+
+def test_scripted_persona_and_schema_1_1_valid():
+    d = example_dict()
+    d["schema_version"] = "1.1"
+    d["scenario"]["personas"][1]["behavior"] = {
+        "mode": "scripted",
+        "script": [{"on": {"from": "finance_manager", "subject_contains": "verify"},
+                    "reply": {"body": "Sure, call our office to verify."}, "delay_seconds": 60}],
+    }  # fmt: skip
+    assert validate_scenario(d, EXAMPLE_DIR).ok

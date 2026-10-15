@@ -24,6 +24,7 @@ _TABLES: tuple[type[Any], ...] = (
     m.Attachment,
     m.ScheduledEvent,
     m.SinkMessage,
+    m.ProviderId,
 )
 
 

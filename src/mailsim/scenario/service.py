@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session
 
 from mailsim.domain.errors import Conflict, NotFound
 from mailsim.domain.ids import new_control_id
+from mailsim.scenario.answer_keys import sync_inline_answer_key
 from mailsim.scenario.loader import LoadedScenario, fixture_manifest
+from mailsim.scenario.schema import spec_hash, strip_answer_key
 from mailsim.store import models as m
 from mailsim.store.blob import BlobStore
 from mailsim.store.repos import Scope, get_project
@@ -41,6 +43,9 @@ def create_scenario_version(
         .with_for_update()
     ).scalar_one()
 
+    stored_spec = strip_answer_key(loaded.spec)
+    stored_hash = spec_hash(stored_spec)
+    inline = loaded.doc.scenario.evaluation.assertions
     existing = session.execute(
         select(m.ScenarioVersion).where(
             m.ScenarioVersion.scenario_id == scenario.id,
@@ -48,7 +53,9 @@ def create_scenario_version(
         )
     ).scalar_one_or_none()
     if existing is not None:
-        if existing.spec_hash == loaded.spec_hash:
+        if existing.spec_hash == stored_hash:
+            if inline:  # an edited inline answer key does not change what the agent sees
+                sync_inline_answer_key(session, scenario, existing.version, inline)
             return existing
         raise Conflict(
             f"scenario {loaded.key} version {loaded.version} already exists with different "
@@ -73,14 +80,17 @@ def create_scenario_version(
         id=new_control_id("scv"),
         scenario_id=scenario.id,
         version=loaded.version,
-        spec=loaded.spec,
-        spec_hash=loaded.spec_hash,
+        spec=stored_spec,
+        spec_hash=stored_hash,
         fixtures=manifest,
         seed=loaded.doc.scenario.environment.seed,
-        source_blob=blobs.put(loaded.source),
+        # the raw source is only kept when it carries no answer key
+        source_blob=None if inline else blobs.put(loaded.source),
     )
     session.add(row)
     session.flush()
+    if inline:
+        sync_inline_answer_key(session, scenario, row.version, inline)
     return row
 
 

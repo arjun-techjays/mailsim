@@ -19,7 +19,9 @@ def test_versions_are_immutable_idempotent_and_forward_only(env, tmp_path):
         again = create_scenario_version(s, env.scope, loaded, env.blobs)
         assert again.id == v1.id
         assert v1.fixtures and all(env.blobs.exists(h) for h in v1.fixtures.values())
-        assert env.blobs.get(v1.source_blob) == loaded.source
+        # inline assertions are split into a hidden answer key; the raw source is not kept
+        assert v1.source_blob is None
+        assert v1.spec["scenario"]["evaluation"]["assertions"] == []
 
     changed = write_variant(tmp_path, lambda s: s.update(title="Edited"))
     with env.session_factory.begin() as s, pytest.raises(Conflict, match="different content"):

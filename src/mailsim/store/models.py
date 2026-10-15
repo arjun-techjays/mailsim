@@ -139,14 +139,117 @@ class ActionRow(Base):
     created_at: Mapped[datetime] = _created()
 
 
-class AssertionResult(Base):
-    """Table only in Phase 1; the evaluator arrives in Phase 2."""
+class AnswerKey(Base):
+    """Hidden grading key, versioned independently of the scenario (immutable; DB trigger).
 
+    Never referenced from runs, events or mailbox state: only the evaluator reads it.
+    """
+
+    __tablename__ = "answer_keys"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    scenario_id: Mapped[str] = mapped_column(ForeignKey("scenarios.id"), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    spec: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    spec_hash: Mapped[str] = mapped_column(String, nullable=False)
+    scenario_versions: Mapped[list[int] | None] = mapped_column(JSONB)
+    source: Mapped[str] = mapped_column(String, nullable=False)  # file | inline
+    created_at: Mapped[datetime] = _created()
+    __table_args__ = (UniqueConstraint("scenario_id", "version"),)
+
+
+class Evaluation(Base):
+    """One post-run evaluation of a run against one answer-key version. Repeatable."""
+
+    __tablename__ = "evaluations"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), nullable=False, index=True)
+    answer_key_id: Mapped[str | None] = mapped_column(ForeignKey("answer_keys.id"))
+    checks_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    verdict: Mapped[str] = mapped_column(String, nullable=False)  # PASSED|FAILED|INCONCLUSIVE
+    accuracy: Mapped[float | None] = mapped_column()
+    agent_build: Mapped[str | None] = mapped_column(String)
+    report: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = _created()
+
+
+class AssertionResult(Base):
     __tablename__ = "assertion_results"
-    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), primary_key=True)
+    evaluation_id: Mapped[str] = mapped_column(ForeignKey("evaluations.id"), primary_key=True)
     assertion_id: Mapped[str] = mapped_column(String, primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("runs.id"), nullable=False, index=True)
     status: Mapped[str] = mapped_column(String, nullable=False)
-    evidence: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    category: Mapped[str] = mapped_column(String, nullable=False)
+    severity: Mapped[str] = mapped_column(String, nullable=False)
+    evidence: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
+    diff: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = _created()
+
+
+class ReportRow(Base):
+    __tablename__ = "reports"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    evaluation_id: Mapped[str] = mapped_column(ForeignKey("evaluations.id"), nullable=False)
+    format: Mapped[str] = mapped_column(String, nullable=False)  # json | junit | markdown
+    blob_ref: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = _created()
+
+
+class ApiKey(Base):
+    """Sandbox-issued credential. Only a hash is stored. Agent keys bind run + mailbox."""
+
+    __tablename__ = "api_keys"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String, nullable=False)
+    project_id: Mapped[str] = mapped_column(String, nullable=False)
+    role: Mapped[str] = mapped_column(String, nullable=False)
+    run_id: Mapped[str | None] = mapped_column(String)
+    mailbox_id: Mapped[str | None] = mapped_column(String)
+    key_hash: Mapped[str] = mapped_column(String, nullable=False, unique=True)
+    prefix: Mapped[str] = mapped_column(String, nullable=False)
+    label: Mapped[str | None] = mapped_column(String)
+    expires_at: Mapped[datetime | None] = mapped_column(TS)
+    revoked_at: Mapped[datetime | None] = mapped_column(TS)
+    created_at: Mapped[datetime] = _created()
+    __table_args__ = (
+        ForeignKeyConstraint(["project_id", "tenant_id"], ["projects.id", "projects.tenant_id"]),
+    )
+
+
+class IdempotencyKey(Base):
+    __tablename__ = "idempotency_keys"
+    tenant_id: Mapped[str] = mapped_column(String, primary_key=True)
+    project_id: Mapped[str] = mapped_column(String, primary_key=True)
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    method_path: Mapped[str] = mapped_column(String, nullable=False)
+    request_hash: Mapped[str] = mapped_column(String, nullable=False)
+    status_code: Mapped[int] = mapped_column(Integer, nullable=False)
+    response: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(TS, nullable=False)
+    created_at: Mapped[datetime] = _created()
+
+
+class UsageCounter(Base):
+    __tablename__ = "usage_counters"
+    tenant_id: Mapped[str] = mapped_column(String, primary_key=True)
+    period: Mapped[str] = mapped_column(String, primary_key=True)  # e.g. 2026-10
+    metric: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+
+
+class LlmCall(Base):
+    """Model usage metadata (outputs themselves are recorded in run events for replay)."""
+
+    __tablename__ = "llm_calls"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    run_id: Mapped[str | None] = mapped_column(ForeignKey("runs.id"), index=True)
+    evaluation_id: Mapped[str | None] = mapped_column(String)
+    provider: Mapped[str] = mapped_column(String, nullable=False)
+    model: Mapped[str] = mapped_column(String, nullable=False)
+    purpose: Mapped[str] = mapped_column(String, nullable=False)  # persona | judge | generation
+    prompt_hash: Mapped[str] = mapped_column(String, nullable=False)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = _created()
 
 
@@ -210,6 +313,8 @@ class Folder(_RunScoped, Base):
     mailbox_id: Mapped[str] = mapped_column(String, nullable=False)
     name: Mapped[str] = mapped_column(String, nullable=False)
     system_type: Mapped[str | None] = mapped_column(String)
+    uid_next: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+    uid_validity: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
 
 
 class Thread(_RunScoped, Base):
@@ -227,6 +332,7 @@ class Message(_RunScoped, Base):
     thread_id: Mapped[str] = mapped_column(String, nullable=False)
     folder_id: Mapped[str] = mapped_column(String, nullable=False)
     previous_folder_id: Mapped[str | None] = mapped_column(String)
+    imap_uid: Mapped[int | None] = mapped_column(BigInteger)
     from_: Mapped[dict[str, Any]] = mapped_column("from", JSONB, nullable=False)
     to: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
     cc: Mapped[list[Any]] = mapped_column(JSONB, nullable=False, default=list)
@@ -281,3 +387,17 @@ class SinkMessage(_RunScoped, Base):
     recipient: Mapped[str] = mapped_column(String, nullable=False)
     raw_blob_ref: Mapped[str] = mapped_column(String, nullable=False)
     sent_at: Mapped[datetime] = mapped_column(TS, nullable=False)
+
+
+class ProviderId(_RunScoped, Base):
+    """Provider-facing identifiers (spec 4.1: never interchangeable with internal ids).
+
+    Filled by projectors, so replay reproduces them exactly.
+    """
+
+    __tablename__ = "provider_ids"
+    provider: Mapped[str] = mapped_column(String, primary_key=True)  # gmail | graph
+    entity_type: Mapped[str] = mapped_column(String, primary_key=True)  # message | thread
+    external_id: Mapped[str] = mapped_column(String, primary_key=True)
+    entity_id: Mapped[str] = mapped_column(String, nullable=False)
+    __table_args__ = (Index("ix_provider_ids_entity", "run_id", "entity_type", "entity_id"),)

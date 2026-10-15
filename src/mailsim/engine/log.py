@@ -23,6 +23,7 @@ from mailsim.store import models as m
 from mailsim.store.repos import Scope, get_run
 
 PROJECTION_MODELS: tuple[type[m.Base], ...] = (
+    m.ProviderId,
     m.SinkMessage,
     m.ScheduledEvent,
     m.Attachment,

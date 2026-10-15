@@ -9,6 +9,12 @@ dependencies = [
   "psycopg[binary]>=3.2",
   "pydantic>=2.7",
   "pyyaml>=6.0",
+  "fastapi>=0.143.1",
+  "uvicorn>=0.30",
+  "aiosmtpd>=1.4.6",
+  "mcp>=2.3.0",
+  "anthropic>=1.14.0",
+  "httpx>=0.28.1",
 ]
 
 [project.scripts]
@@ -23,6 +29,8 @@ dev = [
   "mypy>=1.11",
   "import-linter>=2.0",
   "types-PyYAML",
+  "google-api-python-client>=2.201.0",
+  "msgraph-sdk>=1.64.0",
 ]
 
 [build-system]
@@ -44,6 +52,10 @@ ignore = ["S101", "E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S", "DTZ", "TID251"]
+# Narrow, reviewed exemptions from the network/process ban (see docs/architecture: D4):
+"src/mailsim/protocols/tls.py" = ["TID251"]  # ssl for STARTTLS on inbound listeners
+"src/mailsim/runner/command.py" = ["TID251", "S603", "S607"]  # spawn the agent under test
+"src/mailsim/llm/providers/*.py" = ["TID251"]  # model egress via the allowlist proxy only
 "migrations/**" = ["S"]
 
 # External delivery must be impossible: no mail/network client libraries in src/.
@@ -90,6 +102,30 @@ exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedE
 root_package = "mailsim"
 
 [[tool.importlinter.contracts]]
-name = "Layering: domain is the bottom layer"
+name = "Layering"
 type = "layers"
-layers = ["(mailsim.cli)", "(mailsim.engine)", "(mailsim.scenario)", "mailsim.store", "mailsim.mime | mailsim.threads | mailsim.providers", "mailsim.domain"]
+layers = [
+  "(mailsim.cli)",
+  "(mailsim.api) | (mailsim.adapters) | (mailsim.protocols) | (mailsim.mcp) | (mailsim.runner) | (mailsim.bench)",
+  "(mailsim.evaluation) | (mailsim.personas)",
+  "(mailsim.llm)",
+  "(mailsim.engine)",
+  "(mailsim.scenario)",
+  "(mailsim.auth) | mailsim.store",
+  "mailsim.mime | mailsim.threads | mailsim.providers",
+  "mailsim.domain",
+]
+
+[[tool.importlinter.contracts]]
+name = "Interfaces reach the engine only through role facades"
+type = "forbidden"
+source_modules = ["mailsim.api", "mailsim.adapters", "mailsim.protocols", "mailsim.mcp", "mailsim.runner", "mailsim.bench", "mailsim.personas"]
+forbidden_modules = ["mailsim.engine.core"]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "Only the gateway may touch concrete LLM providers"
+type = "forbidden"
+source_modules = ["mailsim.engine", "mailsim.evaluation", "mailsim.adapters", "mailsim.protocols", "mailsim.api", "mailsim.mcp", "mailsim.scenario", "mailsim.store", "mailsim.personas"]
+forbidden_modules = ["mailsim.llm.providers"]
+allow_indirect_imports = true

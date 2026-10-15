@@ -48,6 +48,7 @@ from mailsim.engine.snapshot import snapshot, state_hash
 from mailsim.mime.build import build_mime
 from mailsim.mime.limits import MimeLimits
 from mailsim.mime.parse import ParsedAttachment, parse_mime
+from mailsim.scenario.answer_keys import answer_key_for
 from mailsim.scenario.schema import TRIGGER_ACTIONS, ScenarioBody, ScenarioDoc
 from mailsim.scenario.service import get_scenario_version
 from mailsim.scenario.validator import validate_semantics
@@ -1328,6 +1329,48 @@ class SimEngine:
         self._command(
             scope, run_id, actor, "complete", {"verdict": verdict}, fn, require_running=True
         )
+
+    def answer_key_for_run(
+        self, scope: Scope, run_id: str, version: int | None = None
+    ) -> dict[str, Any]:
+        """Evaluator-only: the hidden answer key (latest compatible, or `version`)."""
+        with self._sf() as s:
+            run = get_run(s, scope, run_id)
+            sv = s.get(m.ScenarioVersion, run.scenario_version_id)
+            assert sv is not None
+            key = sv.spec["scenario"]["id"]
+            row = answer_key_for(s, scope, key, sv.version, version)
+            return {"id": row.id, "version": row.version, "spec_hash": row.spec_hash,
+                    "spec": row.spec, "source": row.source}  # fmt: skip
+
+    def state_at(self, scope: Scope, run_id: str, up_to_sequence: int) -> dict[str, Any]:
+        """Evaluator-only: state as it was right after event `up_to_sequence`.
+
+        Rebuilt by replaying the recorded log into a throw-away run inside a transaction
+        that is always rolled back, so nothing is persisted.
+        """
+        s = self._sf()
+        try:
+            orig = get_run(s, scope, run_id)
+            if up_to_sequence < 1 or up_to_sequence >= orig.next_seq:
+                raise InvalidRequest("up_to_sequence is outside the run's event log")
+            events = s.execute(
+                select(m.EventRow).where(m.EventRow.run_id == orig.id, m.EventRow.sequence <= up_to_sequence)
+                .order_by(m.EventRow.sequence)
+            ).scalars().all()  # fmt: skip
+            tmp = m.Run(id=new_control_id("run"), tenant_id=orig.tenant_id, project_id=orig.project_id,
+                        scenario_version_id=orig.scenario_version_id, status=str(RunStatus.DRAFT),
+                        seed=orig.seed, config=orig.config, next_seq=1, replay_of=orig.id)  # fmt: skip
+            s.add(tmp)
+            s.flush()
+            for ev in events:
+                append(s, tmp, Event(ev.type, ev.payload, actor=ev.actor, operation=ev.operation,
+                                     outcome=ev.outcome, baseline=ev.baseline,
+                                     virtual_time=ev.virtual_time, id_counter_after=ev.id_counter_after))  # fmt: skip
+            return snapshot(s, tmp.id)
+        finally:
+            s.rollback()
+            s.close()
 
     def scenario_spec(self, scope: Scope, run_id: str) -> dict[str, Any]:
         """Evaluator-only: the scenario version this run was created from."""
