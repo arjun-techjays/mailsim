@@ -66,3 +66,50 @@ def test_protocols_refuses_insecure_remote_bind(db_engine, tmp_path, capsys):
 def test_protocols_subcommand_is_routed(monkeypatch):
     monkeypatch.setattr(server, "protocols_command", lambda args: 5)
     assert server.main(["protocols"]) == 5
+
+
+# ---- `serve` starts the listeners beside the API ----------------------------------------------
+def _app(env):
+    from mailsim.api.app import create_app
+
+    return create_app(engine=env.engine, session_factory=env.session_factory, blobs=env.blobs)
+
+
+def test_serve_without_protocols_leaves_them_off(env):
+    app = _app(env)
+    with server.protocol_listeners(app, None) as servers:
+        assert servers is None and app.state.protocols is None
+
+
+def test_serve_runs_the_listeners_for_the_lifetime_of_the_block(env, capsys):
+    app = _app(env)
+    opts = server.ProtocolOptions(imap_port=0, smtp_port=0, tls_self_signed=True)
+    with server.protocol_listeners(app, opts) as servers:
+        assert app.state.protocols is servers and servers.running and servers.tls
+        assert f"IMAP on 127.0.0.1:{servers.imap_port}" in capsys.readouterr().err
+    assert not servers.running
+
+
+def test_serve_keeps_the_api_when_a_port_is_taken(env, capsys):
+    from mailsim.protocols.server import ProtocolServers
+
+    with ProtocolServers(env.engine, imap_port=0, smtp_port=0) as busy:
+        for opts in (server.ProtocolOptions(imap_port=busy.imap_port, smtp_port=0),
+                     server.ProtocolOptions(imap_port=0, smtp_port=busy.smtp_port)):  # fmt: skip
+            app = _app(env)
+            with server.protocol_listeners(app, opts) as servers:
+                assert app.state.protocols is servers and not servers.running
+                assert servers._executor is None  # nothing left behind
+            err = capsys.readouterr().err
+            assert "IMAP/SMTP listeners not started" in err and "--no-protocols" in err
+
+
+def test_serve_refuses_insecure_remote_listeners_but_serves_the_api(env, tmp_path, capsys):
+    app = _app(env)
+    with server.protocol_listeners(app, server.ProtocolOptions(host="192.0.2.1")) as servers:
+        assert servers is None and app.state.protocols is None
+    assert "refusing to serve IMAP/SMTP on non-loopback" in capsys.readouterr().err
+    missing = server.ProtocolOptions(imap_port=0, smtp_port=0, tls_cert=tmp_path / "none.pem")
+    with server.protocol_listeners(app, missing) as servers:
+        assert servers is None
+    assert "IMAP/SMTP listeners not started" in capsys.readouterr().err

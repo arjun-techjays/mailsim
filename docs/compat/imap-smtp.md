@@ -37,14 +37,26 @@ and SMTP `421 4.7.0`, and the connection closes.
 
 ## Running
 
+`serve` starts both listeners **with the API** (same host; IMAP 1143, SMTP 1587 by default), so
+one command brings everything up. `serve protocols` still runs the listeners alone.
+
 ```bash
-python -m mailsim.serve protocols                      # IMAP 127.0.0.1:1143, SMTP 127.0.0.1:1587
-python -m mailsim.serve protocols --tls-self-signed    # STARTTLS with an ephemeral certificate
+python -m mailsim.serve serve                          # API :8000 + IMAP :1143 + SMTP :1587
+python -m mailsim.serve serve --imap-port 2143 --smtp-port 2587 --tls-self-signed
+python -m mailsim.serve serve --no-protocols           # API only
+python -m mailsim.serve protocols                      # listeners only (127.0.0.1:1143 / :1587)
 python -m mailsim.serve protocols --tls-cert c.pem --tls-key k.pem --host 0.0.0.0
 ```
 
 Uses `MAILSIM_DATABASE_URL` / `MAILSIM_BLOB_DIR` like `serve`. A non-loopback `--host` is refused
-without TLS unless `--allow-insecure-remote` is given. Local no-auth mode never applies.
+without TLS unless `--allow-insecure-remote` is given; under `serve` that refusal, a port that
+is already in use or an unreadable certificate is printed on stderr and the API keeps running
+with the listeners marked not running (`GET /v1/system/status`, `GET /v1/runs/{id}/connection`).
+Local no-auth mode (`serve --local-no-auth`) never applies to the listeners: they always require
+an agent key. Actions that come through the listeners are recorded with `interface` `imap` or
+`smtp` (`GET /v1/runs/{id}/activity`). The dashboard's connection test
+(`POST /v1/runs/{id}/connection-tests`) checks a key through the same LOGIN/AUTH code path
+without opening a connection.
 
 The listeners take an engine object (this package may not import `mailsim.engine.core`), so the
 composition root starts them:

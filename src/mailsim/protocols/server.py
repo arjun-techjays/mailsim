@@ -21,7 +21,8 @@ from typing import Any
 
 from aiosmtpd.smtp import SMTP
 
-from mailsim.protocols.auth import Authenticator
+from mailsim.engine.context import use_interface
+from mailsim.protocols.auth import Authenticator, AuthFailed
 from mailsim.protocols.imap import IDLE_TIMEOUT, LINE_LIMIT, ImapConnection, ImapSession
 from mailsim.protocols.smtp import smtp_factory
 from mailsim.protocols.tls import TLSContext, self_signed_context
@@ -77,6 +78,33 @@ class ProtocolServers:
     def smtp_port(self) -> int:
         return self._ports["smtp"]
 
+    @property
+    def running(self) -> bool:
+        """True while both listeners are bound."""
+        return bool(self._servers)
+
+    @property
+    def tls(self) -> bool:
+        """STARTTLS offered (a TLS context is configured)."""
+        return self.tls_context is not None
+
+    def check_login(self, username: str, password: str, *,
+                    interface: str = "imap") -> tuple[bool, str | None, str]:  # fmt: skip
+        """The LOGIN / AUTH credential check without a connection: (ok, engine error code or
+        None, message).
+
+        Same code path as the listeners (`Authenticator.login`, an audited mailbox read
+        attributed to `interface`). The message never contains the password."""
+        try:
+            with use_interface(interface):
+                self.authenticator.login(username, password)
+        except AuthFailed as exc:
+            if exc.code is not None:  # valid key, but the engine refused the session
+                return False, exc.code, exc.reason
+            return False, None, ("authentication failed: invalid, revoked or expired key, or "
+                                 "the username is not the key's mailbox address")  # fmt: skip
+        return True, None, "authenticated"
+
     async def _imap_client(self, reader: asyncio.StreamReader,
                            writer: asyncio.StreamWriter) -> None:  # fmt: skip
         if len(self._clients) >= self.max_connections:
@@ -109,12 +137,22 @@ class ProtocolServers:
         self._executor = ThreadPoolExecutor(max_workers=2 * self.max_connections + 4,
                                             thread_name_prefix="mailsim-protocols")  # fmt: skip
         loop.set_default_executor(self._executor)
-        imap = await asyncio.start_server(self._imap_client, self.host, self._ports["imap"],
-                                          limit=LINE_LIMIT)  # fmt: skip
+        try:
+            imap = await asyncio.start_server(self._imap_client, self.host, self._ports["imap"],
+                                              limit=LINE_LIMIT)  # fmt: skip
+        except OSError:
+            self._shutdown_executor()
+            raise
         factory = smtp_factory(self.authenticator, tls_context=self.tls_context,
                                hostname=self.hostname, on_connect=self._smtp_connect,
                                on_disconnect=self._smtp_sessions.discard)  # fmt: skip
-        smtp = await loop.create_server(factory, self.host, self._ports["smtp"])
+        try:
+            smtp = await loop.create_server(factory, self.host, self._ports["smtp"])
+        except OSError:  # e.g. the SMTP port is taken: release the IMAP port again
+            imap.close()
+            await imap.wait_closed()
+            self._shutdown_executor()
+            raise
         self._servers = [imap, smtp]
         self._ports = {"imap": imap.sockets[0].getsockname()[1],
                        "smtp": smtp.sockets[0].getsockname()[1]}  # fmt: skip
@@ -137,6 +175,9 @@ class ProtocolServers:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(server.wait_closed(), 2)
         self._servers = []
+        self._shutdown_executor()
+
+    def _shutdown_executor(self) -> None:
         if self._executor is not None:
             self._executor.shutdown(wait=False, cancel_futures=True)
             self._executor = None
