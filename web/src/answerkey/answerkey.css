@@ -1,0 +1,152 @@
+/* Answer-key editor (UX-F2). Colours come only from the shared CSS variables in styles.css,
+   so light and dark themes follow automatically. */
+.ak-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ak-editor .field {
+  max-width: 48rem;
+}
+.ak-field textarea,
+.ak-field input:not([type='checkbox']):not([type='radio']),
+.ak-field select {
+  width: 100%;
+  max-width: 100%;
+}
+.ak-narrow {
+  max-width: 9rem;
+  min-width: 6rem;
+}
+.ak-help {
+  margin: 0;
+  font-size: 0.92em;
+}
+.ak-required {
+  color: var(--muted);
+  font-weight: 400;
+}
+.ak-errors {
+  margin: 0;
+  padding-left: 1.1em;
+}
+.ak-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 8px 16px;
+}
+.ak-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+}
+.ak-assertions {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.ak-card {
+  background: var(--bg);
+}
+.ak-card-title {
+  margin: 0;
+  font-size: 1.1em;
+}
+.ak-index {
+  color: var(--muted);
+}
+.ak-check-section {
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+  padding-top: 8px;
+}
+.ak-check-section h4 {
+  margin: 0;
+}
+.ak-group {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.ak-group > legend {
+  font-weight: 600;
+  padding: 0 4px;
+}
+.ak-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ak-list {
+  list-style: none;
+  padding: 0;
+  margin: 4px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ak-more {
+  margin-top: 8px;
+}
+.ak-more > summary {
+  cursor: pointer;
+  min-height: 24px;
+}
+.ak-add {
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+.ak-add .hint {
+  flex-basis: 100%;
+  margin: 0;
+}
+.ak-modes {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg);
+  padding: 6px 0;
+}
+.ak-yaml {
+  width: 100%;
+  min-height: 24rem;
+}
+.ak-summary .ak-ok {
+  color: var(--ok-fg);
+  font-weight: 600;
+}
+.ak-issue-list {
+  padding-left: 1.1em;
+}
+.ak-leak {
+  background: var(--error-bg);
+  color: var(--error-fg);
+  border: 2px solid var(--error-fg);
+  border-radius: 6px;
+  padding: 8px 12px;
+  margin: 8px 0;
+}
+.ak-leak ul {
+  padding-left: 1.1em;
+}
+.ak-primary {
+  font-weight: 700;
+}
+.ak-danger {
+  color: var(--error-fg);
+}
+.ak-saved {
+  background: var(--ok-bg);
+  color: var(--ok-fg);
+}
+.ak-saved a {
+  color: inherit;
+}
+@media (max-width: 640px) {
+  .ak-grid {
+    grid-template-columns: 1fr;
+  }
+}

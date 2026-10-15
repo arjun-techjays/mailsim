@@ -5,6 +5,7 @@ import { ShowFor } from '../components/Gates';
 import { ErrorDisplay } from '../components/ErrorDisplay';
 import { Empty, Loading } from '../components/Status';
 import { usePageTitle } from '../hooks/usePageTitle';
+import { AnswerKeySavedNotice, EditAnswerKeyLink, NewAnswerKeyLink } from '../answerkey/AnswerKeyLinks'; // UX-F2
 
 function AnswerKeys({ scenarioKey }: { scenarioKey: string }) {
   const api = useApi();
@@ -13,6 +14,7 @@ function AnswerKeys({ scenarioKey }: { scenarioKey: string }) {
     <section aria-labelledby="ak-h">
       <h2 id="ak-h">Answer-key versions</h2>
       <p className="hint">Evaluator only. Metadata only: grading content is never shown here or to agents.</p>
+      <NewAnswerKeyLink scenarioKey={scenarioKey} />
       {q.isPending ? (
         <Loading />
       ) : q.isError ? (
@@ -28,6 +30,7 @@ function AnswerKeys({ scenarioKey }: { scenarioKey: string }) {
               <th scope="col">Compatible scenario versions</th>
               <th scope="col">Spec hash</th>
               <th scope="col">Created</th>
+              <th scope="col">Edit</th>
             </tr>
           </thead>
           <tbody>
@@ -40,6 +43,9 @@ function AnswerKeys({ scenarioKey }: { scenarioKey: string }) {
                   <code>{k.spec_hash}</code>
                 </td>
                 <td>{k.created_at}</td>
+                <td>
+                  <EditAnswerKeyLink scenarioKey={scenarioKey} version={k.version} />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -63,6 +69,7 @@ export function ScenarioDetailPage() {
       <h1>
         Scenario <code>{key}</code>
       </h1>
+      <AnswerKeySavedNotice scenarioKey={key} />
       {q.isPending ? (
         <Loading />
       ) : q.isError ? (

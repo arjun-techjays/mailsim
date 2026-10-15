@@ -32,6 +32,7 @@ import {
   type MockDb,
   type MockRun,
 } from './db';
+import { createAkeyHandlers } from './akey'; // UX-F2
 
 type Guard = 'controller' | 'evaluator' | 'inspector' | 'agent';
 const ALLOWED: Record<Guard, Role[]> = {
@@ -173,6 +174,7 @@ export function createHandlers(db: MockDb = createMockDb()) {
   }
 
   return [
+    ...createAkeyHandlers(db, { auth, fail, ok, findRun, snapshot }), // UX-F2: answer keys, mailbox browser, activity
     http.get('*/v1/health', () => ok({ status: 'ok', version: 'mock' })),
     // Additive endpoint planned by WS-A; shape beyond `role` is not relied upon.
     http.get('*/v1/me', ({ request }) => {

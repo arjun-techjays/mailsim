@@ -7,10 +7,20 @@ import type { Address, AttachmentRef, CanonicalMessage, FolderOut } from '../api
 export interface SnapshotMailbox {
   id: string;
   email: string;
+  /** Persona id owning the mailbox ('' on older payloads). */
+  owner_id: string;
+}
+
+/** A persona row of the run (engine `personas` table). */
+export interface SnapshotPersona {
+  id: string;
+  email: string;
+  role: string;
 }
 
 export interface ParsedSnapshot {
   mailboxes: SnapshotMailbox[];
+  personas: SnapshotPersona[];
   folders: (FolderOut & { mailbox_id: string })[];
   messages: CanonicalMessage[];
 }
@@ -32,7 +42,8 @@ function addr(v: unknown): Address {
 const addrList = (v: unknown): Address[] => (Array.isArray(v) ? v.map(addr) : []);
 
 export function parseSnapshot(raw: Record<string, unknown>): ParsedSnapshot {
-  const mailboxes = rows(raw.mailboxes).map((m) => ({ id: str(m.id), email: str(m.email) }));
+  const mailboxes = rows(raw.mailboxes).map((m) => ({ id: str(m.id), email: str(m.email), owner_id: str(m.owner_id) }));
+  const personas = rows(raw.personas).map((p) => ({ id: str(p.id), email: str(p.email), role: str(p.role) }));
   const folders = rows(raw.folders).map((f) => ({
     id: str(f.id),
     mailbox_id: str(f.mailbox_id),
@@ -82,5 +93,5 @@ export function parseSnapshot(raw: Record<string, unknown>): ParsedSnapshot {
       attachments: attachments.get(str(m.id)) ?? [],
     };
   });
-  return { mailboxes, folders, messages };
+  return { mailboxes, personas, folders, messages };
 }

@@ -44,3 +44,17 @@ export type Role = 'controller' | 'evaluator' | 'agent' | 'operator';
 /** Roles a key can carry (`operator` has no key). */
 export type KeyRole = Exclude<Role, 'operator'>;
 
+
+// ---- answer keys & mailbox browser (UX-F2) ----------------------------------------------
+export type ValidationIssue = S['ValidationIssue'];
+export type AuthoringMeta = S['AuthoringMeta'];
+export type AssertionTypeInfo = S['AssertionTypeInfo'];
+export type AnswerKeyValidation = S['AnswerKeyValidation'];
+export type AnswerKeyDocument = S['AnswerKeyDocument'];
+export type ScenarioVersionDocument = S['ScenarioVersionDocument'];
+export type ParsedDocument = S['ParsedDocument'];
+export type RenderedYaml = S['RenderedYaml'];
+export type ActivityItem = S['ActivityItem'];
+export type ActivityPage = S['ActivityPage'];
+export type MailboxOut = S['MailboxOut'];
+// ---- end answer keys & mailbox browser (UX-F2) ------------------------------------------
