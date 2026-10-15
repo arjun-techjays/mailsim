@@ -18,6 +18,7 @@ class ErrorCode(StrEnum):
     SIMULATION_LIMIT_EXCEEDED = "SIMULATION_LIMIT_EXCEEDED"
     RUN_NOT_ACTIVE = "RUN_NOT_ACTIVE"
     EXTERNAL_DELIVERY_BLOCKED = "EXTERNAL_DELIVERY_BLOCKED"
+    UPSTREAM_UNAVAILABLE = "UPSTREAM_UNAVAILABLE"  # e.g. LLM provider outage (not caller's fault)
 
 
 class SimError(Exception):
@@ -68,3 +69,10 @@ class RunNotActive(SimError):
 
 class ExternalDeliveryBlocked(SimError):
     code = ErrorCode.EXTERNAL_DELIVERY_BLOCKED
+
+
+class UpstreamUnavailable(SimError):
+    """A dependency the simulator calls (an LLM provider) failed. `details["retryable"]` tells
+    transient failures (timeouts, overload) from permanent ones (auth, refusal, bad output)."""
+
+    code = ErrorCode.UPSTREAM_UNAVAILABLE

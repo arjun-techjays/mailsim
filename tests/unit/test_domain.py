@@ -18,9 +18,10 @@ def test_every_error_has_distinct_code_and_serialises():
         errors.SimulationLimitExceeded,
         errors.RunNotActive,
         errors.ExternalDeliveryBlocked,
+        errors.UpstreamUnavailable,
     ]
     codes = {c.code for c in classes}
-    assert len(codes) == 9 == len(errors.ErrorCode)
+    assert len(codes) == 10 == len(errors.ErrorCode)
     err = errors.NotFound("x", details={"id": 1})
     assert err.to_dict() == {"code": "NOT_FOUND", "message": "x", "details": {"id": 1}}
     assert errors.Conflict("y").details == {}

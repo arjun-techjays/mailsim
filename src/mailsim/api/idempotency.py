@@ -98,6 +98,7 @@ def idempotent(
     with sf.begin() as s:
         moment = now()
         s.execute(delete(m.IdempotencyKey).where(where, m.IdempotencyKey.expires_at <= moment))
+        sweep_expired(s, moment, tenant_id=ident[0], project_id=ident[1])
         claimed = s.execute(
             pg_insert(m.IdempotencyKey)
             .values(
@@ -145,3 +146,21 @@ def idempotent(
             )  # fmt: skip
         )
     return JSONResponse(body, status_code=status_code)
+
+
+SWEEP_BATCH = 500
+
+
+def sweep_expired(session: Session, moment: datetime, *, tenant_id: str | None = None,
+                  project_id: str | None = None, limit: int = SWEEP_BATCH) -> int:  # fmt: skip
+    """Delete up to `limit` expired idempotency records (optionally within one project).
+    Called opportunistically on every claim, and by `python -m mailsim.serve sweep`."""
+    ik = m.IdempotencyKey
+    victims = select(ik.tenant_id, ik.project_id, ik.key, ik.key_id).where(ik.expires_at <= moment)
+    if tenant_id is not None:
+        victims = victims.where(ik.tenant_id == tenant_id, ik.project_id == project_id)
+    rows = session.execute(victims.limit(limit)).all()
+    for row in rows:
+        session.execute(delete(ik).where(ik.tenant_id == row[0], ik.project_id == row[1],
+                                         ik.key == row[2], ik.key_id == row[3]))  # fmt: skip
+    return len(rows)

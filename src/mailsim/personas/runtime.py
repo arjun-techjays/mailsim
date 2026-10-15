@@ -21,7 +21,8 @@ Per-message error isolation:
   recorded with ``Controller.persona_failed`` and never retried;
 - ``SimulationLimitExceeded`` (LLM budget) stops LLM personas for the rest of this step;
   scripted personas continue;
-- retryable failures (``RATE_LIMITED``: timeouts, 429/5xx) skip the message for this step;
+- retryable provider failures (``UPSTREAM_UNAVAILABLE`` with retryable=true: timeouts,
+  429/5xx) skip the message for this step;
 - ``RUN_NOT_ACTIVE`` ends the step.
 
 Loop guards: personas answer only senders with a simulated mailbox (never outsiders); an
@@ -40,10 +41,10 @@ from typing import Any
 from mailsim.domain.clock import parse_ts
 from mailsim.domain.errors import (
     Conflict,
-    RateLimited,
     RunNotActive,
     SimError,
     SimulationLimitExceeded,
+    UpstreamUnavailable,
 )
 from mailsim.domain.states import RunStatus
 from mailsim.engine.facades import Controller
@@ -200,22 +201,30 @@ class PersonaRuntime:
             st.llm_stopped = True
             log.warning("persona LLM budget exhausted for run %s", run_id)
             return None
-        except RateLimited as exc:
-            log.warning("persona %s retryable failure on %s: %s", persona["id"], msg["id"],
-                        exc.code)  # fmt: skip
+        except UpstreamUnavailable as exc:
+            if not exc.details.get("retryable"):
+                self._record_failure(run_id, persona, msg, mode, rule_index, exc)
+                return None
+            log.warning("persona %s retryable provider failure on %s: %s", persona["id"],
+                        msg["id"], exc.code)  # fmt: skip
             return None
         except SimError as exc:
-            generation: dict[str, Any] = {"mode": mode}
-            if rule_index is not None:
-                generation["rule_index"] = rule_index
-            if exc.details.get("llm_call_id"):
-                generation["llm_call_id"] = exc.details["llm_call_id"]
-            reason = f"{exc.code}: {exc.details.get('kind') or exc.message}"
-            self.controller.persona_failed(run_id, persona["id"],
-                                           in_reply_to_message_id=msg["id"], reason=reason,
-                                           generation=generation)  # fmt: skip
-            log.warning("persona %s failed on %s: %s", persona["id"], msg["id"], reason)
+            self._record_failure(run_id, persona, msg, mode, rule_index, exc)
             return None
+
+    def _record_failure(self, run_id: str, persona: dict[str, Any], msg: Msg, mode: str,
+                        rule_index: int | None, exc: SimError) -> None:  # fmt: skip
+        generation: dict[str, Any] = {"mode": mode}
+        if rule_index is not None:
+            generation["rule_index"] = rule_index
+        if exc.details.get("llm_call_id"):
+            generation["llm_call_id"] = exc.details["llm_call_id"]
+        reason = f"{exc.code}: {exc.details.get('kind') or exc.message}"
+        self.controller.persona_failed(run_id, persona["id"],
+                                       in_reply_to_message_id=msg["id"], reason=reason,
+                                       generation=generation)  # fmt: skip
+        log.warning("persona %s failed on %s: %s", persona["id"], msg["id"], reason)
+        return None
 
     def _deliver(self, run_id: str, persona: dict[str, Any], msg: Msg, subject: str, text: str,
                  generation: dict[str, Any]) -> dict[str, Any]:  # fmt: skip

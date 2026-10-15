@@ -6,6 +6,8 @@ const HINTS: Record<string, string> = {
   RUN_NOT_ACTIVE: 'This operation needs a RUNNING run.',
   TIMEOUT: 'The server may be overloaded or unreachable. Try again.',
   NETWORK_ERROR: 'Check the base URL on the Connect page.',
+  UPSTREAM_UNAVAILABLE:
+    'The LLM provider behind the simulator is unavailable (outage, refusal or configuration). This is not caused by your request; retry later or check the server’s LLM settings.',
 };
 
 interface FieldError {

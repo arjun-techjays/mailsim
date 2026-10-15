@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Protocol
 
 from mailsim.domain.errors import ErrorCode, SimError
-from mailsim.engine.facades import AgentMailbox
+from mailsim.engine.facades import AgentMailbox, harness_parts
 
 ALL_CAPABILITIES = frozenset(
     {"list", "page", "get", "thread", "send", "reply", "move", "flag", "label", "delete",
@@ -161,10 +161,9 @@ class RestDriver(NeutralDriver):
         from mailsim.api.app import create_app
         from mailsim.api.auth import issue_key, verify_key
 
-        # The facade exposes no public accessor for its engine/scope; the harness must share
-        # them with the app so both drivers act on the same canonical state.
-        engine, scope = mailbox._e, mailbox._scope
-        sf = engine._sf
+        # the harness shares the engine/scope with the app so both drivers act on one state
+        engine, scope = harness_parts(mailbox)
+        sf = engine.session_factory
         with sf.begin() as s:
             key = issue_key(s, tenant_id=scope.tenant_id, project_id=scope.project_id,
                             role="agent", run_id=mailbox.run_id,

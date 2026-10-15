@@ -235,7 +235,7 @@ def test_non_retryable_failure_is_recorded_once_and_others_continue(env, tmp_pat
     h.send("cfo@example.test", "Q2", "?")
     [done] = h.rt.step(h.run)
     [f] = h.failed()
-    assert f["persona_id"] == "cfo" and f["reason"] == "INVALID_REQUEST: empty_output"
+    assert f["persona_id"] == "cfo" and f["reason"] == "UPSTREAM_UNAVAILABLE: empty_output"
     assert f["generation"]["mode"] == "llm" and f["generation"]["llm_call_id"].startswith("llm_")
     failed_msg = next(x for x in h.inbox("cfo") if x["id"] == f["message_id"])
     assert done["subject"] == f"Re: {'Q2' if failed_msg['subject'] == 'Q1' else 'Q1'}", (
@@ -252,7 +252,7 @@ def test_truncated_persona_output_is_a_recorded_failure(env, tmp_path):
     h = Harness(env, tmp_path, provider=ScriptedProvider(cut), cfo={"mode": "llm"})
     h.send("cfo@example.test", "Q", "?")
     assert h.rt.step(h.run) == [] and h.generated() == []
-    assert h.failed()[0]["reason"] == "INVALID_REQUEST: truncated"
+    assert h.failed()[0]["reason"] == "UPSTREAM_UNAVAILABLE: truncated"
 
 
 def test_retryable_failure_is_retried_next_step(env, tmp_path):

@@ -196,6 +196,22 @@ class Controller:
         """Canonical mailbox state (spec 7.2). Contains no answer key."""
         return self._e.state(self.scope, run_id)
 
+    def list_mailboxes(self, run_id: str) -> list[dict[str, Any]]:
+        return self._e.list_mailboxes(self.scope, run_id)
+
+    def inspect_messages(self, run_id: str, mailbox_id: str, *, folder: str | None = None,
+                         page_size: int = 50, cursor: str | None = None,
+                         order: str = "asc") -> Page[CanonicalMessage]:  # fmt: skip
+        """Operator mailbox read (records nothing; never an agent action)."""
+        return self._e.inspect_messages(self.scope, run_id, mailbox_id, folder=folder,
+                                        page_size=page_size, cursor=cursor, order=order)  # fmt: skip
+
+    def events_page(self, run_id: str, *, after_sequence: int = 0, limit: int = 100,
+                    event_type: str | None = None, actor: str | None = None,
+                    epoch: int | None = None) -> tuple[list[dict[str, Any]], int | None]:  # fmt: skip
+        return self._e.events_page(self.scope, run_id, after_sequence=after_sequence,
+                                   limit=limit, event_type=event_type, actor=actor, epoch=epoch)  # fmt: skip
+
 
 class EvaluatorView:
     """Evaluator access (spec 8.3): full state, trace, actions; completes runs with a verdict."""
@@ -221,6 +237,22 @@ class EvaluatorView:
     def scenario_spec(self, run_id: str) -> dict[str, Any]:
         return self._e.scenario_spec(self.scope, run_id)
 
+    def list_mailboxes(self, run_id: str) -> list[dict[str, Any]]:
+        return self._e.list_mailboxes(self.scope, run_id)
+
+    def inspect_messages(self, run_id: str, mailbox_id: str, *, folder: str | None = None,
+                         page_size: int = 50, cursor: str | None = None,
+                         order: str = "asc") -> Page[CanonicalMessage]:  # fmt: skip
+        """Operator mailbox read (records nothing; never an agent action)."""
+        return self._e.inspect_messages(self.scope, run_id, mailbox_id, folder=folder,
+                                        page_size=page_size, cursor=cursor, order=order)  # fmt: skip
+
+    def events_page(self, run_id: str, *, after_sequence: int = 0, limit: int = 100,
+                    event_type: str | None = None, actor: str | None = None,
+                    epoch: int | None = None) -> tuple[list[dict[str, Any]], int | None]:  # fmt: skip
+        return self._e.events_page(self.scope, run_id, after_sequence=after_sequence,
+                                   limit=limit, event_type=event_type, actor=actor, epoch=epoch)  # fmt: skip
+
     def answer_key(self, run_id: str, version: int | None = None) -> dict[str, Any]:
         return self._e.answer_key_for_run(self.scope, run_id, version)
 
@@ -234,6 +266,13 @@ class EvaluatorView:
 
 
 Facade = AgentMailbox | Controller | EvaluatorView
+
+
+def harness_parts(facade: Facade) -> tuple[SimEngine, Scope]:
+    """TEST / HARNESS ONLY: the engine and scope behind a facade, so contract-test drivers can
+    host an interface (REST, Gmail, ...) on the same canonical state. Interface code must never
+    call this (enforced by tests/integration/test_safety.py)."""
+    return facade._e, facade.scope if not isinstance(facade, AgentMailbox) else facade._scope
 
 
 def facade_for(engine: SimEngine, principal: Principal) -> Facade:

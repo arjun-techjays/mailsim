@@ -4,7 +4,12 @@ import threading
 import pytest
 from sqlalchemy import select
 
-from mailsim.domain.errors import ErrorCode, InvalidRequest, SimulationLimitExceeded
+from mailsim.domain.errors import (
+    ErrorCode,
+    InvalidRequest,
+    SimulationLimitExceeded,
+    UpstreamUnavailable,
+)
 from mailsim.llm.config import LLMConfig
 from mailsim.llm.contract import Budget, LLMRequest, LLMResponse, Message
 from mailsim.llm.gateway import (
@@ -135,7 +140,7 @@ def test_errors_are_typed_and_redacted(monkeypatch, caplog):
     assert ei.value.__cause__ is None and ei.value.__suppress_context__
     with pytest.raises(LLMUnavailable) as ei2:
         gw.call(req("r"))
-    assert SECRET not in ei2.value.message and ei2.value.code == ErrorCode.RATE_LIMITED
+    assert SECRET not in ei2.value.message and ei2.value.code == ErrorCode.UPSTREAM_UNAVAILABLE
     assert all(SECRET not in str(a) for a in ei2.value.args) and SECRET not in str(ei2.value)
     gw.call(req("r", content=f"prompt mentioning {SECRET}"))
     assert SECRET not in caplog.text and "prompt mentioning" not in caplog.text
@@ -144,7 +149,8 @@ def test_errors_are_typed_and_redacted(monkeypatch, caplog):
 
 def test_provider_error_kinds():
     err = provider_error("anthropic", "auth", f"bad key {SECRET}", retryable=False)
-    assert isinstance(err, InvalidRequest) and SECRET not in err.message
+    assert isinstance(err, UpstreamUnavailable) and SECRET not in err.message
+    assert err.code == ErrorCode.UPSTREAM_UNAVAILABLE and err.details["retryable"] is False
     assert "input_tokens" not in err.details
     assert isinstance(provider_error("x", "timeout", "t", retryable=True), LLMUnavailable)
 

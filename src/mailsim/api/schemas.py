@@ -249,6 +249,12 @@ class SendResult(_M):
     external_mode: str
 
 
+class MailboxOut(_M):
+    id: str
+    owner_id: str
+    email: str
+
+
 class FolderOut(_M):
     id: str
     name: str

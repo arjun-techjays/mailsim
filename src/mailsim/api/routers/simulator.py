@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import base64
 import binascii
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Header, Request, Response
+from fastapi import APIRouter, Header, Query, Request, Response
 
 from mailsim.api import schemas as s
 from mailsim.api.deps import Controller, Inspector
@@ -102,3 +102,28 @@ def state(
 @router.get("/actions", response_model=list[s.ActionOut])
 def actions(request: Request, run_id: str, principal: Inspector) -> list[s.ActionOut]:
     return [s.ActionOut.model_validate(a) for a in inspector(request, principal).actions(run_id)]
+
+
+@router.get("/mailboxes", response_model=list[s.MailboxOut])
+def list_mailboxes(request: Request, run_id: str, principal: Inspector) -> list[s.MailboxOut]:
+    """Mailboxes of the run (operator view)."""
+    return [s.MailboxOut(**mb) for mb in inspector(request, principal).list_mailboxes(run_id)]
+
+
+@router.get("/mailboxes/{mailbox_id}/messages", response_model=s.MessagePage)
+def inspect_messages(
+    request: Request,
+    run_id: str,
+    mailbox_id: str,
+    principal: Inspector,
+    folder: str | None = None,
+    cursor: str | None = None,
+    page_size: Annotated[int, Query(ge=1, le=500)] = 50,
+    order: Literal["asc", "desc"] = "asc",
+) -> s.MessagePage:
+    """Operator read of any mailbox in the run. Unlike the agent mailbox API this is not an
+    agent action: nothing is recorded and no triggers are armed; finished runs are readable."""
+    page = inspector(request, principal).inspect_messages(
+        run_id, mailbox_id, folder=folder, page_size=page_size, cursor=cursor, order=order
+    )
+    return s.MessagePage(items=page.items, next_cursor=page.next_cursor)

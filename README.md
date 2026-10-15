@@ -26,6 +26,8 @@ Typical flow: publish a scenario (`POST /v1/scenarios`), publish its hidden answ
 give only that to the agent under test), drive time (`/clock/advance`, personas reply on each
 step), then evaluate after the run (`POST /v1/runs/{id}/evaluations`, evaluator key) and compare
 builds (`GET /v1/scenarios/{key}/accuracy`). The OpenAPI document is `openapi/openapi.json`.
+LLM provider outages surface as `UPSTREAM_UNAVAILABLE` (HTTP 503, `details.retryable`).
+Expired idempotency records are swept on each claim; `python -m mailsim.serve sweep` purges all.
 
 ## Quick start
 

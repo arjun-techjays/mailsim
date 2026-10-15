@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from mailsim.auth.principal import Principal, Role
 from mailsim.domain.errors import InvalidRequest
 from mailsim.domain.ids import new_control_id
+from mailsim.domain.states import TERMINAL
 from mailsim.store import models as m
 from mailsim.store import repos
 
@@ -105,6 +106,12 @@ def verify_key(session: Session, raw: str, *, now: datetime | None = None) -> Pr
         raise InvalidCredential("API key revoked")
     if found.expires_at is not None and found.expires_at <= moment:
         raise InvalidCredential("API key expired")
+    if found.role == Role.AGENT and found.run_id is not None:
+        # an agent key lives only as long as its run: CANCELLED / PASSED / FAILED / ERROR
+        # (however the run got there) ends it, even if no explicit revocation happened
+        run = session.get(m.Run, found.run_id)
+        if run is None or run.status in {str(st) for st in TERMINAL}:
+            raise InvalidCredential("API key revoked")
     return Principal(found.tenant_id, found.project_id, Role(found.role), found.run_id,
                      found.mailbox_id, found.id)  # fmt: skip
 
