@@ -8,13 +8,15 @@ import base64
 import anyio
 import pytest
 from mcp.shared.exceptions import MCPError
+from mcp_types import INTERNAL_ERROR
 
 from mailsim.api.auth import revoke_key
 from mailsim.auth.principal import Principal, Role
 from mailsim.domain.errors import UpstreamUnavailable
 from mailsim.mcp import tools as t
-from mailsim.mcp.server import McpService, tool_result
+from mailsim.mcp.server import McpService, build_server, tool_result
 from mailsim.store import models as m
+from mcp import Client
 from tests.mcp.conftest import err, ok, tool_names
 
 pytestmark = pytest.mark.db
@@ -53,7 +55,7 @@ def test_every_tool_has_an_explicit_closed_object_schema(world):
 def test_agent_reads(world):
     a = world.inproc("agent")
     inbox = ok(a, "list_messages", {"folder": "inbox"})
-    assert len(inbox["items"]) == 2 and inbox["next_cursor"] is None
+    assert len(inbox["items"]) == 2 and inbox["next_cursor"] is None  # before any injection
     assert {msg["mailbox_id"] for msg in inbox["items"]} == {world.agent_mb}
     first, second = inbox["items"]
     assert "from" in first and "from_" not in first
@@ -65,13 +67,15 @@ def test_agent_reads(world):
     assert ok(a, "get_message", {"message_id": first["id"]})["id"] == first["id"]
     thread = ok(a, "get_thread", {"thread_id": first["thread_id"]})["items"]
     assert first["id"] in {x["id"] for x in thread}
+    ok(world.inproc("controller"), "inject_incoming_email", {
+        "run_id": world.run, "mailbox_id": world.agent_mb, "from": "vendor@example.test",
+        "to": ["finance@example.test"], "subject": "Second invoice", "text": "invoice 2"})  # fmt: skip
     hits = ok(a, "search_messages", {"query": "invoice"})["items"]
-    assert hits
+    assert len(hits) > 1
     one = ok(a, "search_messages", {"query": "invoice", "page_size": 1})
-    if len(hits) > 1:
-        assert one["next_cursor"]
-        rest = ok(a, "search_messages", {"query": "invoice", "cursor": one["next_cursor"]})
-        assert [x["id"] for x in one["items"] + rest["items"]] == [x["id"] for x in hits]
+    assert len(one["items"]) == 1 and one["next_cursor"]
+    rest = ok(a, "search_messages", {"query": "invoice", "cursor": one["next_cursor"]})
+    assert [x["id"] for x in one["items"] + rest["items"]] == [x["id"] for x in hits]
     assert ok(a, "search_messages", {"query": "invoice", "folder": "sent"})["items"] == []
     assert err(a, "search_messages", {"query": "x", "folder": "nope"})["code"] == "NOT_FOUND"
     assert err(a, "search_messages", {"query": "x", "page_size": 0})["code"] == "INVALID_REQUEST"
@@ -226,6 +230,8 @@ def test_inject_advance_tick_and_personas(world):
 @pytest.mark.parametrize(("args", "message"), [
     ({"raw_base64": "@@@"}, "raw_base64 is not valid base64"),
     ({"raw_base64": "eA==", "from": "a@b.test"}, "provide either"),
+    ({"raw_base64": "eA==", "subject": "s"}, "provide either"),
+    ({"raw_base64": "eA==", "text": "t", "references": []}, "provide either"),
     ({"to": ["a@b.test"]}, "`from` and at least one `to`"),
     ({"from": "a@b.test"}, "`from` and at least one `to`"),
 ])  # fmt: skip
@@ -246,7 +252,7 @@ def test_reset_start_cancel_and_replay(world):
     assert replay["matches"] is True and replay["event_count"] > 0
     assert ok(c, "cancel_run", {"run_id": world.run})["status"] == "CANCELLED"
     assert err(a, "list_folders")["code"] == "UNAUTHENTICATED"  # agent key revoked with the run
-    assert err(c, "start_run", {"run_id": world.run})["code"] in {"CONFLICT", "RUN_NOT_ACTIVE"}
+    assert err(c, "start_run", {"run_id": world.run})["code"] == "CONFLICT"  # CANCELLED -> RUNNING
     assert err(c, "get_run_status", {"run_id": "run_nope"})["code"] == "NOT_FOUND"
 
 
@@ -338,3 +344,50 @@ def test_upstream_unavailable_keeps_its_code_and_details(world, monkeypatch):
     error = err(world.inproc("controller"), spec.name, {"run_id": world.run, "seconds": 1})
     assert error == {"code": "UPSTREAM_UNAVAILABLE", "message": "LLM provider timed out",
                      "details": {"retryable": True}}  # fmt: skip
+
+
+def test_a_failing_credential_check_never_leaks_its_cause(world, caplog):
+    def broken(_request):
+        raise RuntimeError("secret detail: postgresql://db-host key_hash=abc")
+
+    service = McpService(world.engine, broken, t.Deps())
+    result = service.call_tool(None, "list_folders", {})
+    assert result.structured_content["error"] == {"code": "INTERNAL", "message": "internal error",
+                                                  "details": {}}  # fmt: skip
+    assert "secret" not in result.model_dump_json()
+    with pytest.raises(MCPError) as ei:
+        service.list_tools(None)
+    assert ei.value.code == INTERNAL_ERROR and ei.value.message == "internal error"
+    assert "secret detail" in caplog.text  # logged server-side only
+
+    async def over_the_client():
+        server = build_server(world.engine, broken)
+        async with Client(server) as client:
+            with pytest.raises(MCPError) as listing:
+                await client.list_tools()
+            return listing.value, await client.call_tool("list_folders", {})
+
+    listing, called = anyio.run(over_the_client)
+    assert (
+        "secret" not in str(listing.error.model_dump()) and "secret" not in called.model_dump_json()
+    )
+
+
+@pytest.mark.parametrize(("tool", "args"), [
+    ("get_message", {"message_id": "m" * 257}),
+    ("send_message", {"to": ["a@example.test"] * 501}),
+    ("search_messages", {"query": "q" * 1025}),
+    ("manage_labels", {"message_id": "m", "add_labels": ["x" * 257]}),
+    ("reply_to_message", {"message_id": "m", "text": "x" * (t.MAX_BODY_CHARS + 1)}),
+])  # fmt: skip
+def test_argument_bounds(world, tool, args):
+    error = err(world.inproc("agent"), tool, args)
+    assert error["code"] == "INVALID_REQUEST" and error["details"]["errors"]
+
+
+def test_input_schemas_are_generated_once_and_handed_out_as_copies():
+    spec = t.TOOLS_BY_NAME["send_message"]
+    first = spec.tool().input_schema
+    first["properties"].clear()
+    assert spec.tool().input_schema["properties"]["to"]["maxItems"] == t.MAX_LIST_ITEMS
+    assert t._schema.cache_info().hits >= 1

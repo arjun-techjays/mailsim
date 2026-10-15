@@ -79,7 +79,7 @@ earlier ones remain, the same as `PATCH /v1/mailboxes/{id}/messages/{mid}`.
 
 | Tool | Arguments | Result |
 | --- | --- | --- |
-| `inject_incoming_email` | `run_id`*, `mailbox_id`*, then either `from` + `to` (+ `cc`, `subject`, `text`, `html`, `in_reply_to`, `references`) or `raw_base64` (RFC 5322); `event_id` | `{event_id, message_id, delivery_status: delivered_to_simulated_mailbox}` |
+| `inject_incoming_email` | `run_id`*, `mailbox_id`*, then either `from` + `to` (+ `cc`, `subject`, `text`, `html`, `in_reply_to`, `references`) or `raw_base64` (RFC 5322) alone (combining it with any message field is `INVALID_REQUEST`); `event_id` | `{event_id, message_id, delivery_status: delivered_to_simulated_mailbox}` |
 | `advance_simulation` | `run_id`*, `seconds`* ≥ 0 | `{fired, virtual_time, persona_replies}` |
 | `trigger_scheduled_event` | `run_id`* | `{fired, virtual_time, persona_replies}`: fires what is already due, and the clock does not move |
 | `reset_run` | `run_id`* | run status (READY, next epoch) |
@@ -145,6 +145,9 @@ it runs on the same host and port as `/v1` (`python -m mailsim.serve serve`, def
   client (`mode="legacy"` and `mode="auto"`).
 
 ### stdio
+
+The `mcp-stdio` subcommand of `python -m mailsim.serve` is added by the integrator PR that
+wires this package into the composition root. It calls `mailsim.mcp.stdio.run_stdio`.
 
 ```
 MAILSIM_API_KEY=msk_... python -m mailsim.serve mcp-stdio
@@ -244,6 +247,16 @@ async with Client(params) as c:
   give MCP agents parity with the REST mailbox API and the shared contract suite.
 - **No run creation over MCP.** Creating runs and minting agent keys stays on REST, because
   those are control-plane records and keys are shown once.
-- **HTTP Host/Origin checks**: the `/mcp` route inherits the REST app's settings. The SDK's
-  DNS-rebinding guard is not enabled, and a browser page cannot present the bearer key.
-  Bind to `127.0.0.1` (the default) for local use.
+- **No idempotency keys on MCP writes.** REST accepts `Idempotency-Key`, but MCP tool calls
+  have no equivalent. A retried call runs again: a retried `advance_simulation` advances the
+  clock twice, and a retried `send_message` sends twice. Read the state back with
+  `get_run_status` / `get_run_trace` before you retry a write.
+- **No DNS-rebinding guard is needed on `/mcp`.** The SDK's Host/Origin guard is not
+  enabled, because every request must carry a sandbox Bearer key and a browser page cannot
+  supply one. The route otherwise inherits the REST app's settings. Bind to `127.0.0.1`
+  (the default) for local use.
+- **Argument bounds.** Ids, folder names, labels and flags are at most 256 characters. Lists
+  (`to`, `cc`, `bcc`, labels, flags, references) are at most 500 items. `query` is at most
+  1024 characters, subjects at most 16 KiB, and `text`/`html` at most 5 MiB. `raw_base64`
+  has the REST size cap. Larger input is rejected with `INVALID_REQUEST`, and the engine's
+  MIME limits still apply.

@@ -124,3 +124,20 @@ def test_stdio_subprocess_with_the_official_client(world, mode):
     ctl = lambda: Client(_params(world, world.keys["controller"]), mode=mode)  # noqa: E731
     status = call(ctl, "get_run_status", {"run_id": world.run})
     assert status.structured_content["agent_actions"] >= 1  # the send
+
+
+def test_stdio_hides_credential_check_failures(world, monkeypatch):
+    def broken(_sf, _key):
+        def resolve(_request):
+            raise RuntimeError("secret detail")
+
+        return resolve
+
+    monkeypatch.setattr("mailsim.mcp.stdio.key_resolver", broken)
+    out = FakeStdout()
+    stdin = FakeStdin(_messages(("list_folders", {})), out)
+    run_stdio(world.engine, world.keys["agent"], stdin=stdin, stdout=out)
+    res = out.responses()
+    assert res[1]["error"]["message"] == "internal error"
+    assert res[2]["result"]["structuredContent"]["error"]["code"] == "INTERNAL"
+    assert "secret" not in "".join(out.lines)

@@ -11,15 +11,18 @@ from __future__ import annotations
 
 import base64
 import binascii
+import copy
+import functools
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import mcp_types as types
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from mailsim.api.auth import revoke_agent_keys
 from mailsim.api.pagination import decode_sequence_cursor, encode_sequence_cursor, page_messages
+from mailsim.api.schemas import MAX_RAW_B64_CHARS
 from mailsim.auth.principal import Role
 from mailsim.domain.errors import InvalidRequest, NotFound, UnsupportedOperation
 from mailsim.domain.models import CanonicalMessage
@@ -49,57 +52,78 @@ class Args(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
+# Argument bounds: generous for real use, small enough that no tool call can make the server
+# allocate or log unbounded input (bodies stay within the REST/MIME body limits as well).
+MAX_ID_CHARS = 256
+MAX_LIST_ITEMS = 500
+MAX_QUERY_CHARS = 1024
+MAX_SUBJECT_CHARS = 16 * 1024
+MAX_BODY_CHARS = 5 * 1024 * 1024
+MAX_CURSOR_CHARS = 1024
+
+Id = Annotated[str, StringConstraints(min_length=1, max_length=MAX_ID_CHARS)]
+Name = Annotated[str, StringConstraints(max_length=MAX_ID_CHARS)]  # folder, label, flag, ...
+Address = Annotated[str, StringConstraints(max_length=MAX_ID_CHARS)]
+Body = Annotated[str, StringConstraints(max_length=MAX_BODY_CHARS)]
+Subject = Annotated[str, StringConstraints(max_length=MAX_SUBJECT_CHARS)]
+CursorStr = Annotated[str, StringConstraints(max_length=MAX_CURSOR_CHARS)]
+
+
+def _list(description: str | None = None) -> Any:
+    return Field(default_factory=list, max_length=MAX_LIST_ITEMS, description=description)
+
+
 PageSize = Field(default=50, ge=1, le=MAX_PAGE_SIZE, description="items per page")
 Cursor = Field(default=None, description="`next_cursor` of the previous page")
 
 
 # ---- argument models (their JSON Schemas are the tools' inputSchema) ----------------------
 class ListMessagesArgs(Args):
-    folder: str | None = Field(default=None, description="folder id, name or system type "
-                               "(inbox, sent, drafts, trash, archive); default: all folders")  # fmt: skip
+    folder: Name | None = Field(default=None, description="folder id, name or system type "
+                                "(inbox, sent, drafts, trash, archive); default: all folders")  # fmt: skip
     page_size: int = PageSize
-    cursor: str | None = Cursor
+    cursor: CursorStr | None = Cursor
     order: Literal["asc", "desc"] = Field(default="asc", description="by (created_at, id)")
 
 
 class MessageIdArgs(Args):
-    message_id: str = Field(min_length=1, description="simulator message id (msg_...)")
+    message_id: Id = Field(description="simulator message id (msg_...)")
 
 
 class ThreadIdArgs(Args):
-    thread_id: str = Field(min_length=1, description="simulator thread id")
+    thread_id: Id = Field(description="simulator thread id")
 
 
 class SearchArgs(Args):
-    query: str = Field(min_length=1, description="matched against subject, body and sender")
-    folder: str | None = Field(default=None, description="restrict hits to this folder")
+    query: str = Field(min_length=1, max_length=MAX_QUERY_CHARS,
+                       description="matched against subject, body and sender")  # fmt: skip
+    folder: Name | None = Field(default=None, description="restrict hits to this folder")
     page_size: int = PageSize
-    cursor: str | None = Cursor
+    cursor: CursorStr | None = Cursor
 
 
 class SendArgs(Args):
-    to: list[str] = Field(default_factory=list, description="recipient addresses")
-    cc: list[str] = Field(default_factory=list)
-    bcc: list[str] = Field(default_factory=list)
-    subject: str = ""
-    text: str = ""
-    html: str | None = None
+    to: list[Address] = _list("recipient addresses")
+    cc: list[Address] = _list()
+    bcc: list[Address] = _list()
+    subject: Subject = ""
+    text: Body = ""
+    html: Body | None = None
 
 
 class ReplyArgs(Args):
-    message_id: str = Field(min_length=1)
-    text: str
+    message_id: Id
+    text: Body
     reply_all: bool = False
 
 
 class ManageLabelsArgs(Args):
-    message_id: str = Field(min_length=1)
-    folder: str | None = Field(default=None, description="move the message to this folder")
-    add_labels: list[str] = Field(default_factory=list)
-    remove_labels: list[str] = Field(default_factory=list)
-    add_flags: list[str] = Field(default_factory=list,
-                                 description="IMAP-style flags, e.g. SEEN, FLAGGED, ANSWERED")  # fmt: skip
-    remove_flags: list[str] = Field(default_factory=list)
+    message_id: Id
+    folder: Name | None = Field(default=None, description="move the message to this folder")
+    add_labels: list[Name] = _list()
+    remove_labels: list[Name] = _list()
+    add_flags: list[Name] = _list("IMAP-style flags, e.g. SEEN, FLAGGED, ANSWERED")
+    remove_flags: list[Name] = _list()
 
 
 class ChangesArgs(Args):
@@ -112,41 +136,45 @@ class NoArgs(Args):
 
 
 class RunArgs(Args):
-    run_id: str = Field(min_length=1)
+    run_id: Id
+
+
+# every message field of inject (raw_base64 replaces all of them)
+INJECT_FIELDS = ("from_", "to", "cc", "subject", "text", "html", "in_reply_to", "references")
 
 
 class InjectArgs(Args):
-    run_id: str = Field(min_length=1)
-    mailbox_id: str = Field(min_length=1, description="target simulated mailbox")
-    from_: str | None = Field(default=None, alias="from", description="sender address")
-    to: list[str] = Field(default_factory=list)
-    cc: list[str] = Field(default_factory=list)
-    subject: str = ""
-    text: str | None = None
-    html: str | None = None
-    in_reply_to: str | None = None
-    references: list[str] | None = None
-    raw_base64: str | None = Field(default=None, max_length=35_000_000,
+    run_id: Id
+    mailbox_id: Id = Field(description="target simulated mailbox")
+    from_: Address | None = Field(default=None, alias="from", description="sender address")
+    to: list[Address] = _list()
+    cc: list[Address] = _list()
+    subject: Subject | None = None
+    text: Body | None = None
+    html: Body | None = None
+    in_reply_to: Name | None = None
+    references: list[Name] | None = Field(default=None, max_length=MAX_LIST_ITEMS)
+    raw_base64: str | None = Field(default=None, max_length=MAX_RAW_B64_CHARS,
                                    description="a complete RFC 5322 message instead of fields")  # fmt: skip
-    event_id: str | None = None
+    event_id: Id | None = None
 
 
 class AdvanceArgs(Args):
-    run_id: str = Field(min_length=1)
+    run_id: Id
     seconds: float = Field(ge=0, description="virtual seconds to advance the run clock")
 
 
 class TraceArgs(Args):
-    run_id: str = Field(min_length=1)
-    cursor: str | None = Cursor
+    run_id: Id
+    cursor: CursorStr | None = Cursor
     page_size: int = Field(default=100, ge=1, le=MAX_PAGE_SIZE)
-    type: str | None = Field(default=None, description="only events of this type")
-    actor: str | None = Field(default=None, description="only events by this actor")
+    type: Name | None = Field(default=None, description="only events of this type")
+    actor: Name | None = Field(default=None, description="only events by this actor")
     epoch: int | None = Field(default=None, ge=0)
 
 
 class ResultsArgs(Args):
-    run_id: str = Field(min_length=1)
+    run_id: Id
     evaluate: bool = Field(default=False, description="grade the run now instead of returning "
                            "the latest stored evaluation")  # fmt: skip
     answer_key_version: int | None = Field(default=None, description="evaluate only")
@@ -245,8 +273,10 @@ def get_changes(mb: AgentMailbox, a: ChangesArgs, _: Deps) -> JSON:
 # ---- simulation control (spec 8.2) --------------------------------------------------------
 def _inject_message(a: InjectArgs) -> JSON | bytes:
     if a.raw_base64 is not None:
-        if a.from_ is not None or a.to:
-            raise InvalidRequest("provide either `raw_base64` or message fields, not both")
+        mixed = [f for f in INJECT_FIELDS if f in a.model_fields_set]
+        if mixed:
+            raise InvalidRequest("provide either `raw_base64` or message fields, not both",
+                                 details={"fields": [f.rstrip("_") for f in mixed]})  # fmt: skip
         try:
             return base64.b64decode(a.raw_base64, validate=True)
         except (binascii.Error, ValueError):
@@ -254,8 +284,7 @@ def _inject_message(a: InjectArgs) -> JSON | bytes:
     if a.from_ is None or not a.to:
         raise InvalidRequest("`from` and at least one `to` are required (or `raw_base64`)")
     fields = a.model_dump(by_alias=True, exclude_none=True,
-                          include={"from_", "to", "cc", "subject", "text", "html", "in_reply_to",
-                                   "references"})  # fmt: skip
+                          include=set(INJECT_FIELDS))  # fmt: skip
     return fields
 
 
@@ -346,18 +375,28 @@ class ToolSpec:
         return frozenset(r for r, f in ROLE_FACADE.items() if f in self.facades)
 
     def tool(self) -> types.Tool:
-        schema = self.args.model_json_schema(by_alias=True)
-        schema.setdefault("properties", {})
         return types.Tool(
             name=self.name,
             description=self.description,
-            input_schema=schema,
+            input_schema=input_schema(self.args),
             annotations=types.ToolAnnotations(
                 read_only_hint=self.read_only,
                 destructive_hint=self.destructive if not self.read_only else None,
                 open_world_hint=False,  # a closed sandbox: nothing ever leaves it
             ),
         )
+
+
+@functools.cache
+def _schema(args: type[Args]) -> JSON:
+    schema = args.model_json_schema(by_alias=True)
+    schema.setdefault("properties", {})
+    return schema
+
+
+def input_schema(args: type[Args]) -> JSON:
+    """The tool's inputSchema (generated once per model; callers get their own copy)."""
+    return copy.deepcopy(_schema(args))
 
 
 AGENT = (AgentMailbox,)

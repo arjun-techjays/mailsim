@@ -104,6 +104,9 @@ class McpService:
             principal = self._resolve(request)
         except InvalidCredential:
             raise MCPError(types.INVALID_REQUEST, UNAUTHENTICATED_MESSAGE) from None
+        except Exception:  # e.g. the database is down: never put the cause on the wire
+            log.exception("MCP credential check failed")
+            raise MCPError(types.INTERNAL_ERROR, "internal error") from None
         return [spec.tool() for spec in tools_for(principal.role)]
 
     def call_tool(
@@ -113,6 +116,9 @@ class McpService:
             principal = self._resolve(request)
         except InvalidCredential:
             return tool_error(UNAUTHENTICATED, UNAUTHENTICATED_MESSAGE)
+        except Exception:  # e.g. the database is down: never put the cause on the wire
+            log.exception("MCP credential check failed")
+            return tool_error(INTERNAL, "internal error")
         spec = TOOLS_BY_NAME.get(name)
         if spec is None:
             return tool_error(str(ErrorCode.UNSUPPORTED_OPERATION), f"unknown tool {name!r}",

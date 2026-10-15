@@ -18,6 +18,7 @@ The engine and collaborators come from ``app.state`` (``engine``, ``session_fact
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import anyio.to_thread
@@ -28,11 +29,12 @@ from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
 
 from mailsim.api.auth import InvalidCredential
-from mailsim.api.errors import UNAUTHENTICATED, envelope
+from mailsim.api.errors import INTERNAL, UNAUTHENTICATED, envelope
 from mailsim.domain.errors import ErrorCode
 from mailsim.mcp.server import UNAUTHENTICATED_MESSAGE, bearer_resolver, build_server
 
 PATH = "/mcp"
+log = logging.getLogger("mailsim.mcp")
 
 
 class McpEndpoint:
@@ -55,6 +57,10 @@ class McpEndpoint:
             response = envelope(request, 401, UNAUTHENTICATED, UNAUTHENTICATED_MESSAGE)
             response.headers["WWW-Authenticate"] = "Bearer"
             await response(scope, receive, send)
+            return
+        except Exception:  # never leak the cause (SQL, hosts, hashes) to the caller
+            log.exception("MCP credential check failed")
+            await envelope(request, 500, INTERNAL, "internal error")(scope, receive, send)
             return
         server = build_server(
             engine,

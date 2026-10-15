@@ -85,3 +85,20 @@ def test_bearer_resolver_without_a_request_fails_closed(world):
     resolve = bearer_resolver(world.sf)
     with pytest.raises(InvalidCredential):
         resolve(None)
+
+
+def test_a_failing_credential_check_is_a_500_without_detail(world, monkeypatch, caplog):
+    def broken(_sf):
+        def resolve(_request):
+            raise RuntimeError("secret detail: postgresql://db-host")
+
+        return resolve
+
+    monkeypatch.setattr("mailsim.mcp.http.bearer_resolver", broken)
+    r = TestClient(world.app).post("/mcp", json=INIT, headers={
+        **ACCEPT, "Authorization": f"Bearer {world.keys['agent']}"})  # fmt: skip
+    assert r.status_code == 500
+    assert (
+        r.json()["error"]["code"] == "INTERNAL" and r.json()["error"]["message"] == "internal error"
+    )
+    assert "secret" not in r.text and "secret detail" in caplog.text
