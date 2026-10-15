@@ -55,6 +55,18 @@ def add_report_blob(session: Session, evaluation_id: str, fmt: str, blob_ref: st
                             blob_ref=blob_ref))  # fmt: skip
 
 
+def update_report(session: Session, report: EvaluationReport, blobs: dict[str, str]) -> None:
+    """Replace a stored evaluation's report document and export blobs (completion info)."""
+    row = session.get(m.Evaluation, report.evaluation_id)
+    if row is None:
+        raise NotFound(f"evaluation {report.evaluation_id} not found")
+    row.report = report.model_dump(mode="json")
+    for r in session.execute(
+        select(m.ReportRow).where(m.ReportRow.evaluation_id == report.evaluation_id)
+    ).scalars():
+        r.blob_ref = blobs.get(r.format, r.blob_ref)
+
+
 def _scoped(scope: Scope) -> Select[m.Evaluation]:
     return (
         select(m.Evaluation)
@@ -121,4 +133,5 @@ __all__ = [
     "report_blob_ref",
     "save_evaluation",
     "trials_for_scenario",
+    "update_report",
 ]

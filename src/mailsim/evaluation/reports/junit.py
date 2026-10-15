@@ -14,12 +14,12 @@ import xml.etree.ElementTree as ET  # noqa: S405 - building XML, never parsing u
 
 from mailsim.evaluation.contract import EvaluationReport, Status
 
-_INVALID_XML = re.compile("[^\u0009\u000a\u000d -퟿-�\U00010000-\U0010ffff]")
+_INVALID_XML = re.compile("[^\u0009\u000a\u000d\u0020-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
 MAX_ATTR = 1000
 
 
 def clean(value: object, limit: int | None = None) -> str:
-    text = _INVALID_XML.sub("�", str(value))
+    text = _INVALID_XML.sub("\ufffd", str(value))
     return text[:limit] if limit is not None else text
 
 
@@ -58,7 +58,7 @@ def render_junit(report: EvaluationReport) -> bytes:
         })  # fmt: skip
         if o.status is Status.FAIL:
             node = ET.SubElement(case, "failure", {
-                "message": clean(o.reason, MAX_ATTR), "type": f"{o.type}.{o.severity}",
+                "message": clean(o.reason, MAX_ATTR), "type": clean(f"{o.type}.{o.severity}", MAX_ATTR),
             })  # fmt: skip
             node.text = clean(json.dumps(o.diff.model_dump(), indent=2, sort_keys=True,
                                          default=str))  # fmt: skip

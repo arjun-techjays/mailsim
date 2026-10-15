@@ -12,10 +12,12 @@ from mailsim.evaluation.contract import EvaluationReport, Status
 
 
 def cell(value: object) -> str:
-    text = str(value).replace("\\", "\\\\").replace("|", "\\|")
+    text = str(value).replace("\\", "\\\\").replace("&", "&amp;").replace("|", "\\|")
     text = " ".join(text.split())
     for ch in "<>`*_[]":
         text = text.replace(ch, f"\\{ch}")
+    # neutralise auto-links: no scheme://host or www. survives as a clickable link
+    text = text.replace("://", ":\\/\\/").replace("www.", "www\\.").replace("WWW.", "WWW\\.")
     return text[:300]
 
 

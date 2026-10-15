@@ -1,7 +1,7 @@
 """`safety` and `invariant`: infrastructure invariants from the delivery audit and action log.
 
 These always apply, even with deterministic checks switched off (they are guarantees of the
-sandbox, not grading keys), whatever category the key gives them.
+sandbox, not grading keys): rules.pre_status exempts these TYPES from the checks switch.
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ class SafetyPlugin:
         self.type = type_
 
     def evaluate(self, ctx: EvaluationContext, assertion: AnswerAssertion) -> AssertionOutcome:
-        point = begin(ctx, assertion, always_apply=True)
+        point = begin(ctx, assertion)
         if isinstance(point, AssertionOutcome):
             return point
         check = SafetyCheck.model_validate(assertion.check)

@@ -3,14 +3,12 @@
 Everything here is derived from `EvaluationContext` (event log, action log, snapshots); no
 plugin ever calls the live engine.
 
-Action <-> event correlation. The audit action log (`actions`) carries operation inputs and
-outcomes but no sequence numbers; the event log carries sequences and virtual time. Agent
-writes are anchored to their `agent.action_counted` event (exactly one per budget-counted
-command, emitted after the command's own events). An agent command is counted iff it is a
-write that passed the guard: guard rejections (permission, run state, budget, unknown
-mailbox) emit no event. Other actors are anchored to the first following event with the same
-actor and operation. Reads emit no events; they are placed after the last anchored event.
-Action references in evidence are 1-based positions in the run's action log (`#n`).
+Placement of actions. Every recorded action carries the exact event-log window its command
+wrote (`seq_start..seq_end`, empty when `seq_end < seq_start`; an empty-window action sits
+right after event `seq_start - 1`). The state "before" an action is therefore
+`state_at(seq_start - 1)`, and an action belongs to a log prefix ending at `cutoff` iff its
+position (`seq_end`, or `seq_start - 1` when empty) is `<= cutoff`. Evidence references
+actions by their action-log id.
 """
 
 from __future__ import annotations
@@ -27,122 +25,96 @@ from mailsim.evaluation.rules import pre_status
 from mailsim.scenario.answer_key import ActionMatch, AnswerAssertion, Count, MessageWhere
 
 AGENT = "agent"
-READ_OPERATIONS = frozenset({"read", "search"})
-# Agent rejections raised by the engine's guard, before anything is counted or emitted.
-GUARD_CODES = frozenset({"PERMISSION_DENIED", "RUN_NOT_ACTIVE", "SIMULATION_LIMIT_EXCEEDED"})
 AGENT_CREATED_EVENTS = frozenset({"message.inserted", "message.copied", "draft.created"})
 MAX_LISTED = 25
 
 
+def action_window(action: dict[str, Any]) -> tuple[int, int]:
+    """(seq_start, seq_end) of an action; actions recorded without a window sit at 0."""
+    start = int(action.get("seq_start") or 0)
+    end = action.get("seq_end")
+    return start, int(end) if end is not None else start - 1
+
+
+def action_position(action: dict[str, Any]) -> int:
+    """Last event sequence the action is placed after (its own last event if it wrote any)."""
+    start, end = action_window(action)
+    return end if end >= start else start - 1
+
+
 @dataclass(frozen=True)
 class Occurrence:
-    """One recorded action, placed in the event log."""
+    """One recorded action, placed in the event log by its recorded window."""
 
-    index: int  # 1-based position in the action log
+    id: str
     actor: str
     operation: str
     outcome: str
     input: dict[str, Any]
     result: dict[str, Any]
-    first_seq: int | None  # first event emitted by the command (None: emitted nothing)
-    last_seq: int | None  # anchor event
-    before_seq: int  # last event sequence before the command started
+    seq_start: int
+    seq_end: int
+    virtual_time: str | None
+
+    @property
+    def wrote_events(self) -> bool:
+        return self.seq_end >= self.seq_start
+
+    @property
+    def before_seq(self) -> int:
+        """Last event before the command started: its prior state is state_at(before_seq)."""
+        return self.seq_start - 1
 
     @property
     def seq(self) -> int:
-        return self.last_seq if self.last_seq is not None else self.before_seq
+        return self.seq_end if self.wrote_events else self.before_seq
 
     @property
     def ref(self) -> str:
-        return f"#{self.index}"
+        return self.id
+
+    @property
+    def time(self) -> datetime | None:
+        return parse_ts(self.virtual_time) if self.virtual_time else None
 
     def evidence(self) -> list[EvidenceRef]:
         out = [EvidenceRef(kind="action", ref=self.ref,
                            note=f"{self.actor} {self.operation} -> {self.outcome}")]  # fmt: skip
-        if self.last_seq is not None:
-            out.append(EvidenceRef(kind="event", ref=str(self.last_seq)))
+        if self.wrote_events:
+            out.append(EvidenceRef(kind="event", ref=str(self.seq_end),
+                                   note=f"events {self.seq_start}..{self.seq_end}"))  # fmt: skip
         return out
 
 
-def _message_of(result: dict[str, Any]) -> str:
-    msg = result.get("message")
-    return msg if isinstance(msg, str) else ""
-
-
-def counted(actor: str, operation: str, outcome: str, result: dict[str, Any]) -> bool:
-    """Whether an agent action emitted an `agent.action_counted` event."""
-    if actor != AGENT or operation in READ_OPERATIONS:
-        return False
-    if outcome in GUARD_CODES:
-        return False
-    return not (outcome == "NOT_FOUND" and _message_of(result).startswith("mailbox "))
-
-
 class RunIndex:
-    """Lazily built correlation of actions, events and created messages."""
+    """Placement of actions, events and agent-created messages within one recorded run."""
 
-    def __init__(self, events: list[dict[str, Any]], actions: list[dict[str, Any]]) -> None:
+    def __init__(self, events: list[dict[str, Any]], actions: list[dict[str, Any]],
+                 agent_mailbox_id: str = "") -> None:  # fmt: skip
         self.events = events
         self.by_seq = {e["sequence"]: e for e in events}
         self.last_seq = events[-1]["sequence"] if events else 0
         resets = [e["sequence"] for e in events if e["type"] == "run.reset"]
         self.epoch_start = resets[-1] if resets else 0
-        self.occurrences = self._anchor(actions)
-        self.agent_created = {
-            e["payload"]["message"]["id"]
-            for e in events
-            if e["type"] in AGENT_CREATED_EVENTS and e["actor"] == AGENT
-        }
-
-    # ------------------------------------------------------------------ correlation
-    def _anchor(self, actions: list[dict[str, Any]]) -> list[Occurrence]:
-        evs = self.events
-        pos = 0  # next unconsumed event position
-        out: list[Occurrence] = []
-        for i, a in enumerate(actions, 1):
-            actor, op, outcome = a["actor"], a["operation"], a["outcome"]
-            result = a.get("result") or {}
-            last_known = evs[pos - 1]["sequence"] if pos else 0
-            hit: int | None = None
-            if actor == AGENT:
-                if counted(actor, op, outcome, result):
-                    hit = self._find(pos, type="agent.action_counted", actor=AGENT, operation=op,
-                                     outcome=outcome)  # fmt: skip
-            elif outcome == "ok":
-                hit = self._find(pos, actor=actor, operation=op)
-            if hit is None:
-                out.append(Occurrence(i, actor, op, outcome, a.get("input") or {}, result,
-                                      None, None, last_known))  # fmt: skip
+        self.occurrences = [self._occurrence(i, a) for i, a in enumerate(actions, 1)]
+        self.agent_created: set[str] = set()
+        for e in events:
+            if e["actor"] != AGENT or "message" not in e["payload"]:
                 continue
-            first = last = hit
-            if actor == AGENT:  # walk back over the command's own events
-                while first > 0 and self._same_command(evs[first - 1], op):
-                    first -= 1
-            else:  # extend over the contiguous events of the same command
-                while (
-                    last + 1 < len(evs)
-                    and evs[last + 1]["actor"] == actor
-                    and (evs[last + 1]["operation"] == op)
-                ):
-                    last += 1
-            out.append(Occurrence(i, actor, op, outcome, a.get("input") or {}, result,
-                                  evs[first]["sequence"], evs[last]["sequence"],
-                                  evs[first]["sequence"] - 1))  # fmt: skip
-            pos = last + 1
-        return out
-
-    def _find(self, start: int, **fields: str) -> int | None:
-        for j in range(start, len(self.events)):
-            ev = self.events[j]
-            if all(ev[k] == v for k, v in fields.items()):
-                return j
-        return None
+            msg = e["payload"]["message"]
+            # forged evidence: inserted / copied / drafted messages, and anything the agent
+            # delivered into its own mailbox (send-to-self)
+            if e["type"] in AGENT_CREATED_EVENTS or (
+                e["type"] == "message.delivered" and msg.get("mailbox_id") == agent_mailbox_id
+            ):
+                self.agent_created.add(msg["id"])
 
     @staticmethod
-    def _same_command(ev: dict[str, Any], op: str) -> bool:
-        return bool(
-            ev["actor"] == AGENT and ev["operation"] == op and ev["type"] != "agent.action_counted"
-        )
+    def _occurrence(i: int, a: dict[str, Any]) -> Occurrence:
+        start, end = action_window(a)
+        return Occurrence(str(a.get("id", i)), a["actor"], a["operation"], a["outcome"],
+                          a.get("input") or {}, a.get("result") or {}, start, end,
+                          a.get("virtual_time"))  # fmt: skip
 
     # ------------------------------------------------------------------ windows
     def events_in(self, cutoff: int) -> list[dict[str, Any]]:
@@ -170,7 +142,7 @@ class RunIndex:
 def index(ctx: EvaluationContext) -> RunIndex:
     idx = ctx.extras.get("_index")
     if not isinstance(idx, RunIndex):
-        idx = RunIndex(ctx.events, ctx.actions)
+        idx = RunIndex(ctx.events, ctx.actions, ctx.agent_mailbox_id)
         ctx.extras["_index"] = idx
     return idx
 
@@ -232,34 +204,32 @@ def outcome(
     )
 
 
-def precheck(
-    ctx: EvaluationContext, assertion: AnswerAssertion, *, always_apply: bool = False
-) -> AssertionOutcome | None:
-    """rules.pre_status first. `always_apply` keeps safety invariants on with checks off."""
-    checks_enabled = bool(ctx.extras.get("checks_enabled", True))
-    pre = pre_status(assertion, checks_enabled=checks_enabled or always_apply,
+def precheck(ctx: EvaluationContext, assertion: AnswerAssertion) -> AssertionOutcome | None:
+    """rules.pre_status (checks switch by TYPE: safety/invariant always apply; judge)."""
+    pre = pre_status(assertion, checks_enabled=bool(ctx.extras.get("checks_enabled", True)),
                      judge_available=ctx.judge is not None)  # fmt: skip
-    if pre is not None:
-        return outcome(assertion, pre[0], pre[1])
-    if not checks_enabled and not always_apply and assertion.type != "semantic":
-        # rules.pre_status keeps every safety-CATEGORY assertion on; the product rule is that
-        # only safety/invariant TYPES (sandbox guarantees) survive checks-off. A policy check
-        # is a grading key: with checks off it is NOT_APPLICABLE, never FAIL.
-        return outcome(assertion, Status.NOT_APPLICABLE, "deterministic checks are switched off")
-    return None
+    return None if pre is None else outcome(assertion, pre[0], pre[1])
 
 
-def begin(
-    ctx: EvaluationContext, assertion: AnswerAssertion, *, always_apply: bool = False
-) -> AssertionOutcome | Point:
+def begin(ctx: EvaluationContext, assertion: AnswerAssertion) -> AssertionOutcome | Point:
     """Pre-status, then the evaluation point. An outcome means: stop, this is the result."""
-    pre = precheck(ctx, assertion, always_apply=always_apply)
+    pre = precheck(ctx, assertion)
     if pre is not None:
         return pre
     point = resolve_point(ctx, assertion)
     if isinstance(point, str):
         return outcome(assertion, Status.INCONCLUSIVE, point)
     return point
+
+
+def mailbox_unknown(
+    ctx: EvaluationContext, assertion: AnswerAssertion, *wheres: MessageWhere
+) -> AssertionOutcome | None:
+    """INCONCLUSIVE when a selection defaults to the agent's mailbox but none is known."""
+    if not ctx.agent_mailbox_id and any(w.mailbox is None for w in wheres):
+        return outcome(assertion, Status.INCONCLUSIVE,
+                       "the agent's mailbox is unknown for this run")  # fmt: skip
+    return None
 
 
 def state_ref(point: Point) -> EvidenceRef:

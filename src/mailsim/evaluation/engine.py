@@ -14,7 +14,7 @@ from typing import Any, Protocol
 import mailsim.evaluation.checks  # noqa: F401  (registers the assertion plugins)
 from mailsim.engine.snapshot import state_hash
 from mailsim.evaluation import registry
-from mailsim.evaluation.checks._common import AGENT, index, outcome
+from mailsim.evaluation.checks._common import AGENT, action_position, index, outcome
 from mailsim.evaluation.contract import AssertionOutcome, Efficiency, EvaluationReport, Status
 from mailsim.evaluation.registry import EvaluationContext
 from mailsim.evaluation.rules import accuracy, category_metrics, decide_verdict, resolve_checks
@@ -39,13 +39,19 @@ def _last_seq(events: list[dict[str, Any]]) -> int:
     return int(events[-1]["sequence"]) if events else 0
 
 
+def _pin(actions: list[dict[str, Any]], through: int) -> list[dict[str, Any]]:
+    """Actions placed within the evaluated log prefix (later ones were never graded)."""
+    return [a for a in actions if action_position(a) <= through]
+
+
 def read_consistent(
     view: RecordedRun, run_id: str
 ) -> tuple[list[dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
     """Events, state and actions describing the same log prefix.
 
     The state is only accepted when no event was appended while it was read; if the run
-    keeps moving, the state is rebuilt from the log at the pinned sequence instead.
+    keeps moving, the state is rebuilt from the log at the pinned sequence instead. Actions
+    are always cut at the pinned sequence by their recorded event-log window.
     """
     events: list[dict[str, Any]] = []
     for _ in range(MAX_READ_ATTEMPTS):
@@ -53,8 +59,9 @@ def read_consistent(
         state = view.state(run_id)
         actions = view.actions(run_id)
         if _last_seq(view.events(run_id)) == _last_seq(events):
-            return events, state, actions
-    return events, view.state_at(run_id, _last_seq(events)), view.actions(run_id)
+            return events, state, _pin(actions, _last_seq(events))
+    through = _last_seq(events)
+    return events, view.state_at(run_id, through), _pin(view.actions(run_id), through)
 
 
 def _run_config(events: list[dict[str, Any]]) -> tuple[dict[str, Any], int | None]:

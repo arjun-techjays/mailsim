@@ -17,17 +17,49 @@ from mailsim.evaluation.checks._common import (
     count_ok,
     decided,
     index,
+    mailbox_unknown,
     message_text,
     outcome,
     select_messages,
     state_ref,
     where_dict,
 )
-from mailsim.evaluation.contract import AssertionDiff, AssertionOutcome, EvidenceRef
+from mailsim.evaluation.contract import AssertionDiff, AssertionOutcome, EvidenceRef, Status
 from mailsim.evaluation.registry import EvaluationContext, register
 from mailsim.scenario.answer_key import AnswerAssertion, ContentCheck
 
-MAX_TEXT = 1_000_000  # bound regex work on agent-controlled text
+MAX_TEXT = 64 * 1024  # per message: bounds regex work on agent-controlled text
+
+
+def nested_quantifier(pattern: str) -> bool:
+    """True when a quantified group itself contains an unbounded quantifier, e.g. `(a+)+`,
+    `(\\w+\\s?)*` or `(x{2,})+`: the classic catastrophic-backtracking shape. Answer keys are
+    trusted but agent text is not, so such patterns are refused rather than run."""
+    stack: list[bool] = []  # per open group: does it contain a quantifier?
+    inner = False  # quantifier seen in the current innermost group (or top level)
+    i, in_class = 0, False
+    while i < len(pattern):
+        ch = pattern[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if in_class:
+            in_class = ch != "]"
+        elif ch == "[":
+            in_class = True
+        elif ch == "(":
+            stack.append(inner)
+            inner = False
+        elif ch == ")" and stack:
+            group_has = inner
+            inner = stack.pop() or group_has
+            nxt = pattern[i + 1 : i + 2]
+            if group_has and nxt in ("*", "+", "{"):
+                return True
+        elif ch in "*+" or (ch == "{" and re.match(r"\{\d*,", pattern[i:])):
+            inner = True
+        i += 1
+    return False
 
 
 def _inspect(check: ContentCheck, msg: dict[str, Any]) -> dict[str, Any]:
@@ -56,6 +88,12 @@ class ContentPlugin:
         if isinstance(point, AssertionOutcome):
             return point
         check = ContentCheck.model_validate(assertion.check)
+        if check.regex is not None and nested_quantifier(check.regex):
+            return outcome(assertion, Status.INCONCLUSIVE,
+                           "regex refused: nested quantifiers risk catastrophic backtracking")  # fmt: skip
+        missing = mailbox_unknown(ctx, assertion, check.where)
+        if missing is not None:
+            return missing
         sel = select_messages(point.state(ctx), check.where, agent_mailbox_id=ctx.agent_mailbox_id,
                               agent_created=index(ctx).agent_created)  # fmt: skip
         details = [_inspect(check, m) for m in sel.messages]

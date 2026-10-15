@@ -186,15 +186,29 @@ class MovingEngine:
         self._real.complete_run(*args, **kw)
 
 
+class CountingJudge(FakeJudge):
+    pass
+
+
 def test_completion_is_pinned_and_retried_after_a_late_agent_write(world):
     publish_example_key(world)
     good_agent(world)
     proxy = MovingEngine(world.env.engine, world, times=1)
-    svc = EvaluationService(proxy, world.env.session_factory, world.env.blobs)
+    judge = CountingJudge()
+    svc = EvaluationService(proxy, world.env.session_factory, world.env.blobs, judge=judge)
     r = svc.evaluate(world.env.scope, world.run, answer_key_version=2, checks=None,
                      complete_run=True)  # fmt: skip
-    assert proxy.calls == 2 and r.reproducibility["completion"]["attempts"] == 2
+    assert proxy.calls == 2 and r.reproducibility["completion"]["attempt"] == 2
     assert r.reproducibility["completion"]["completed"] and status(world) == "PASSED"
+    assert len(judge.calls) == 1  # the retry reused the unchanged judgement
+    # the first attempt stays stored as a non-completing evaluation
+    first, second = svc.list(world.env.scope, world.run)
+    assert second == r and first.reproducibility["completion"]["completed"] is False
+    assert "superseded" in first.reproducibility["completion"]["reason"]
+    stored = json.loads(svc.report_blob(world.env.scope, first.evaluation_id, "json"))
+    assert "superseded" in stored["reproducibility"]["completion"]["reason"]
+    done = [e for e in world.view.events(world.run) if e["type"] == "run.completed"]
+    assert done[0]["payload"]["evaluation_id"] == r.evaluation_id
     # the stored evaluation is the one that saw the late write and completed the run
     flagged = [e for e in world.view.events(world.run) if e["type"] == "message.flags_changed"
                and e["operation"] == "flag"]  # fmt: skip
@@ -223,6 +237,28 @@ def test_completion_gives_up_when_the_run_keeps_moving(world):
     comp = r.reproducibility["completion"]
     assert comp["completed"] is False and "kept changing" in comp["reason"]
     assert status(world) == "RUNNING" and svc.latest(world.env.scope, world.run) == r
+    assert len(svc.list(world.env.scope, world.run)) == 2
+
+
+def test_evaluation_is_persisted_before_completion(world, monkeypatch):
+    publish_example_key(world)
+    good_agent(world)
+    svc = world.service()
+
+    def broken(*args: Any, **kw: Any) -> None:
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(store, "save_evaluation", broken)
+    with pytest.raises(RuntimeError):
+        svc.evaluate(world.env.scope, world.run, answer_key_version=2, checks=None,
+                     complete_run=True)  # fmt: skip
+    assert status(world) == "RUNNING"  # never completed by an unstored evaluation
+    assert not [e for e in world.view.events(world.run) if e["type"] == "run.completed"]
+    monkeypatch.undo()
+    with pytest.raises(NotFound):
+        svc.latest(world.env.scope, world.run)
+    with world.env.session_factory.begin() as s, pytest.raises(NotFound):
+        store.update_report(s, world.evaluate(2), {})
 
 
 def test_run_stops_before_completion(world):
@@ -364,14 +400,16 @@ def _outcome(aid: str, st: Status) -> AssertionOutcome:
 
 
 def _synthetic(w: World, run: str, build: str | None, statuses: list[Status], key_id: str,
-               version: int, at: int) -> None:  # fmt: skip
+               version: int, at: int, *, completed: bool = False,
+               checks: bool = True) -> None:  # fmt: skip
     outs = [_outcome(f"a{i}", s) for i, s in enumerate(statuses)]
     verdict, reasons = decide_verdict(outs)
     report = EvaluationReport(
         evaluation_id=f"evl_syn_{run[-8:]}_{at}", run_id=run, scenario_key=KEY, scenario_version=1,
-        answer_key_version=version, answer_key_hash="h", agent_build=build, checks_enabled=True,
+        answer_key_version=version, answer_key_hash="h", agent_build=build, checks_enabled=checks,
         checks_source="default", verdict=verdict, verdict_reasons=reasons, outcomes=outs,
         metrics=category_metrics(outs), accuracy=accuracy(outs), efficiency={},
+        reproducibility={"completion": {"completed": completed}},
         created_at=datetime(2026, 10, 15, 12, 0, at, tzinfo=UTC),
     )  # fmt: skip
     with w.env.session_factory.begin() as s:
@@ -393,7 +431,10 @@ def test_accuracy_and_variance_across_builds(world):
     _synthetic(world, runs["r3"], "b2", [P, F], key_id, v, 4)
     _synthetic(world, runs["r4"], "b2", [F, F], key_id, v, 5)
     # an unlabelled run and an older key version are kept apart
-    _synthetic(world, world.run, None, [P], key_id, v, 6)
+    _synthetic(world, world.run, None, [P], key_id, v, 6, completed=True)
+    # later non-comparable or non-completing evaluations of that run do not replace it
+    _synthetic(world, world.run, None, [F], key_id, v, 7)
+    _synthetic(world, world.run, None, [F, F], key_id, v, 8, checks=False)
     svc = world.service()
     cmp = svc.accuracy(world.env.scope, KEY, answer_key_version=None, builds=None, baseline="b1")
     assert cmp.answer_key_version == v and set(cmp.builds) == {"b1", "b2", "unspecified"}
@@ -406,6 +447,7 @@ def test_accuracy_and_variance_across_builds(world):
     assert cmp.deltas["b2"]["mean_accuracy"] == pytest.approx(-0.5)
     assert cmp.deltas["b2"]["pass_rate"] == pytest.approx(-0.5)
     assert cmp.builds["unspecified"].runs == 1 and cmp.builds["unspecified"].variance is None
+    assert cmp.builds["unspecified"].pass_rate == 1.0  # the completing evaluation counts
 
     only = svc.accuracy(world.env.scope, KEY, answer_key_version=v, builds=["b2", "nope"],
                         baseline=None)  # fmt: skip
@@ -431,6 +473,17 @@ def test_accuracy_from_real_trials(world):
                        baseline="good")  # fmt: skip
     assert cmp.builds["good"].pass_rate == 1.0 and cmp.builds["good"].variance == 0
     assert cmp.builds["bad"].pass_rate == 0.0 and cmp.deltas["bad"]["pass_rate"] == -1.0
+    # re-grading every run with checks off adds evaluations but never changes accuracy
+    for run in [world.run, *(t for t in _runs_of(world))]:
+        svc.evaluate(world.env.scope, run, answer_key_version=2, checks="off", complete_run=False)
+    again = svc.accuracy(world.env.scope, KEY, answer_key_version=None, builds=["good", "bad"],
+                         baseline="good")  # fmt: skip
+    assert again == cmp
+
+
+def _runs_of(world: World) -> list[str]:
+    with world.env.session_factory() as s:
+        return [r.id for r in repos.list_runs(s, world.env.scope) if r.id != world.run]
 
 
 def test_scope_isolation_of_accuracy(world):

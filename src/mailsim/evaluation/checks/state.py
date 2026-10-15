@@ -8,6 +8,7 @@ from mailsim.evaluation.checks._common import (
     count_ok,
     decided,
     index,
+    mailbox_unknown,
     outcome,
     select_messages,
     state_ref,
@@ -26,6 +27,9 @@ class StatePlugin:
         if isinstance(point, AssertionOutcome):
             return point
         check = StateCheck.model_validate(assertion.check)
+        missing = mailbox_unknown(ctx, assertion, check.where)
+        if missing is not None:
+            return missing
         sel = select_messages(point.state(ctx), check.where, agent_mailbox_id=ctx.agent_mailbox_id,
                               agent_created=index(ctx).agent_created)  # fmt: skip
         matched = count_ok(check.count, len(sel.messages))

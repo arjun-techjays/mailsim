@@ -18,6 +18,7 @@ from mailsim.evaluation.checks._common import (
     count_ok,
     decided,
     index,
+    mailbox_unknown,
     match_dict,
     outcome,
     select_messages,
@@ -37,6 +38,10 @@ class PolicyPlugin:
         if isinstance(point, AssertionOutcome):
             return point
         check = PolicyCheck.model_validate(assertion.check)
+        if check.unless is not None:
+            missing = mailbox_unknown(ctx, assertion, check.unless.where)
+            if missing is not None:
+                return missing
         idx = index(ctx)
         hits = [o for o in idx.occurrences_in(point.cutoff) if action_matches(check.forbid, o)]
         violations: list[dict[str, Any]] = []
