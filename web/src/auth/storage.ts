@@ -6,6 +6,8 @@ export interface Session {
   baseUrl: string;
   apiKey: string;
   role: Role;
+  /** Local no-auth mode only: the server's launch token (role `operator`, empty apiKey). */
+  localToken?: string;
 }
 
 export const SESSION_STORAGE_KEY = 'mailsim.session';
@@ -27,6 +29,9 @@ export function loadSession(): Session | null {
     if (typeof v.baseUrl === 'string' && typeof v.apiKey === 'string' && v.apiKey && ROLES.includes(v.role as Role)) {
       return { baseUrl: v.baseUrl, apiKey: v.apiKey, role: v.role as Role };
     }
+    if (typeof v.baseUrl === 'string' && v.role === 'operator' && typeof v.localToken === 'string' && v.localToken) {
+      return { baseUrl: v.baseUrl, apiKey: '', role: 'operator', localToken: v.localToken };
+    }
   } catch {
     // corrupted entry: ignore
   }
@@ -37,8 +42,8 @@ export function saveSession(session: Session | null): void {
   const s = store();
   if (!s) return;
   try {
-    // Operator (local no-auth) sessions hold no key and are re-detected on load: never stored.
-    if (session && session.role !== 'operator') s.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+    // Like keys, the local launch token lives in this tab only (sessionStorage).
+    if (session) s.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
     else s.removeItem(SESSION_STORAGE_KEY);
   } catch {
     // storage full / disabled: keep the session in memory only

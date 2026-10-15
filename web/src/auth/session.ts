@@ -12,6 +12,8 @@ export interface SessionValue {
   rejected: boolean;
   /** True while the dashboard checks whether the API runs in local no-auth mode. */
   probing: boolean;
+  /** The API runs in local no-auth mode but this tab has no (valid) launch link. */
+  localNoAuthLink: boolean;
 }
 
 export const SessionContext = createContext<SessionValue | null>(null);

@@ -81,8 +81,17 @@ export function Layout() {
       )}
       {rejected && (
         <div role="alert" className="error-box banner" data-testid="key-rejected">
-          <p className="error-title">The API rejected your key (401).</p>
-          <p>It may have been revoked or expired.</p>
+          {localNoAuth ? (
+            <>
+              <p className="error-title">The API rejected this tab’s local launch link (401).</p>
+              <p>The server was probably restarted: open the new dashboard link it printed.</p>
+            </>
+          ) : (
+            <>
+              <p className="error-title">The API rejected your key (401).</p>
+              <p>It may have been revoked or expired.</p>
+            </>
+          )}
           <button type="button" onClick={reconnect}>
             Reconnect
           </button>

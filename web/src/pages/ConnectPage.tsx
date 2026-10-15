@@ -17,7 +17,7 @@ const CAPABILITIES: Record<Role, string> = {
 
 export function ConnectPage() {
   usePageTitle('Connect');
-  const { session, connect } = useSession();
+  const { session, connect, localNoAuthLink } = useSession();
   const location = useLocation();
   const from = (location.state as { from?: string } | null)?.from;
   const [baseUrl, setBaseUrl] = useState(session?.baseUrl ?? defaultBaseUrl());
@@ -51,6 +51,12 @@ export function ConnectPage() {
   return (
     <>
       <h1>Connect to mailsim</h1>
+      {localNoAuthLink && !session && (
+        <div role="status" className="notice" data-testid="local-no-auth-link">
+          <strong>This API runs in local no-auth mode.</strong> Open the dashboard link the server printed at startup
+          (it carries a one-time local token, so no API key is needed), or connect with a key below.
+        </div>
+      )}
       <p>
         Enter the API base URL and a sandbox API key. The key is kept in this browser tab only (memory and
         sessionStorage) and is cleared when you disconnect or close the tab.

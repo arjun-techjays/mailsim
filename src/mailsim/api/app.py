@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from mailsim import __version__
 from mailsim.api.errors import install_error_handlers
 from mailsim.api.limits import BodySizeLimit
+from mailsim.api.local_mode import LoopbackOnly
 from mailsim.api.routers import control, mailbox, simulator
 
 API_TITLE = "mailsim"
@@ -26,6 +27,7 @@ def create_app(**state: Any) -> FastAPI:
         setattr(app.state, key, value)
     install_error_handlers(app)
     app.add_middleware(BodySizeLimit)  # WS-A: request body size cap (api/limits.py)
+    app.add_middleware(LoopbackOnly)  # no-op unless local no-auth mode (api/local_mode.py)
 
     @app.get("/v1/health", tags=["meta"])
     def health() -> dict[str, str]:

@@ -5,14 +5,14 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import type { KeyRole } from '../api/types';
 import { SessionProvider } from '../auth/SessionProvider';
 import type { Session } from '../auth/storage';
-import { MOCK_KEYS } from '../mocks/db';
+import { MOCK_KEYS, MOCK_LOCAL_TOKEN } from '../mocks/db';
 import { makeQueryClient } from '../queryClient';
 import { routes } from '../routes';
 
 export const API_BASE = 'http://127.0.0.1:7357';
 
 /** Local no-auth operator session (no key). */
-export const OPERATOR_SESSION: Session = { baseUrl: API_BASE, apiKey: '', role: 'operator' };
+export const OPERATOR_SESSION: Session = { baseUrl: API_BASE, apiKey: '', role: 'operator', localToken: MOCK_LOCAL_TOKEN };
 
 export function sessionFor(role: KeyRole | 'controllerEmpty'): Session {
   const key = MOCK_KEYS[role];

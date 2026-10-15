@@ -21,18 +21,23 @@ FAKE = r"""#!{python}
 import json, os, sys
 argv = sys.argv[1:]
 prompt = sys.stdin.read()
-record = os.environ.get("FAKE_CLAUDE_RECORD")
-if record:
+here = os.path.dirname(os.path.abspath(__file__))  # config next to the script: the env is allowlisted
+record = os.path.join(os.path.dirname(here), "record.json")
+mode_file = os.path.join(here, "mode")
+mode = open(mode_file).read().strip() if os.path.exists(mode_file) else "ok"
+if True:
     with open(record, "w") as fh:
-        json.dump({{"argv": argv, "stdin": prompt, "cwd": os.getcwd(),
-                    "api_key": os.environ.get("ANTHROPIC_API_KEY")}}, fh)
-mode = os.environ.get("FAKE_CLAUDE_MODE", "ok")
+        sysfile = [a.split("=", 1)[1] for a in argv if a.startswith("--system-prompt-file=")]
+        json.dump({{"argv": argv, "stdin": prompt, "cwd": os.getcwd(), "env": dict(os.environ),
+                    "system": open(sysfile[0]).read() if sysfile else None}}, fh)
 if mode == "ok":
     print(json.dumps({{"type": "result", "subtype": "success", "is_error": False,
                        "result": "Hello from fake Claude", "total_cost_usd": 0.0012,
                        "usage": {{"input_tokens": 11, "cache_read_input_tokens": 4,
                                   "output_tokens": 7}},
-                       "modelUsage": {{"claude-sonnet-5-5": {{}}}}}}))
+                       "modelUsage": {{"claude-haiku-5": {{"outputTokens": 2}},
+                                      "claude-sonnet-5-5": {{"outputTokens": 7}},
+                                      "odd": "x"}}}}))
 elif mode == "no_usage":
     print(json.dumps({{"type": "result", "subtype": "success", "is_error": False,
                        "result": "abcdefgh"}}))
@@ -47,8 +52,21 @@ elif mode == "error_json":
                        "result": "stopped"}}))
 elif mode == "garbage":
     print("not json at all")
+elif mode == "empty_text":
+    print(json.dumps({{"type": "result", "is_error": False, "result": "", "total_cost_usd": 0.25}}))
 elif mode == "no_text":
     print(json.dumps({{"type": "result", "is_error": False, "result": None}}))
+elif mode == "error_billed":
+    print(json.dumps({{"type": "result", "is_error": True, "subtype": "error_during_execution",
+                       "result": "secret email text: wire funds", "total_cost_usd": 0.5,
+                       "usage": {{"input_tokens": 9, "output_tokens": 4}}}})); sys.exit(1)
+elif mode == "error_unbilled":
+    print(json.dumps({{"type": "result", "is_error": True, "subtype": "error_max_turns",
+                       "result": "Not logged in"}})); sys.exit(1)
+elif mode == "spawn_sleep":
+    import subprocess, time
+    subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    time.sleep(30)
 elif mode == "crash":
     print("boom", file=sys.stderr); sys.exit(3)
 elif mode == "sleep":
@@ -65,9 +83,17 @@ def fake_claude(tmp_path, monkeypatch):
     exe.chmod(exe.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ.get('PATH', '')}")
     record = tmp_path / "record.json"
-    monkeypatch.setenv("FAKE_CLAUDE_RECORD", str(record))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "x" * 12 + "secret")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://proxy.invalid")
+    monkeypatch.setenv("MAILSIM_DATABASE_URL", "postgresql://u:pw@db/x")
+    monkeypatch.setenv("LC_ALL", "C")
     return record
+
+
+def set_mode(mode: str) -> None:
+    exe = shutil.which("claude")
+    assert exe is not None
+    (Path(exe).parent / "mode").write_text(mode)
 
 
 def req(*msgs: tuple[str, str], system: str = "", purpose: str = "persona") -> LLMRequest:
@@ -76,7 +102,7 @@ def req(*msgs: tuple[str, str], system: str = "", purpose: str = "persona") -> L
 
 
 def test_generates_with_safe_headless_flags_and_login(fake_claude, monkeypatch):
-    monkeypatch.setenv("FAKE_CLAUDE_MODE", "ok")
+    set_mode("ok")
     p = ClaudeCliProvider(model="sonnet", timeout_seconds=10)
     hostile = "--dangerously-skip-permissions; rm -rf / $(whoami)"
     out = p.generate(req(("user", hostile), system="-p --model=opus be terse"))
@@ -84,10 +110,13 @@ def test_generates_with_safe_headless_flags_and_login(fake_claude, monkeypatch):
     argv = seen["argv"]
     assert argv[:7] == ["-p", "--output-format", "json", "--tools", "", "--no-session-persistence",
                         "--strict-mcp-config"]  # fmt: skip
-    assert "--system-prompt=-p --model=opus be terse" in argv and "--model=sonnet" in argv
+    assert seen["system"] == "-p --model=opus be terse" and "--model=sonnet" in argv
     assert "--bare" not in argv, "--bare would disable the Claude Code login"
     assert seen["stdin"] == hostile and hostile not in " ".join(argv)
-    assert seen["api_key"] is None, "the login is used, never ANTHROPIC_API_KEY"
+    env = seen["env"]
+    assert not any(k.startswith("ANTHROPIC_") for k in env), "the login is used, never an API key"
+    assert "MAILSIM_DATABASE_URL" not in env and env["LC_ALL"] == "C" and "PATH" in env
+    assert env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "1024"
     assert Path(seen["cwd"]).name.startswith("mailsim-claude-") and not Path(seen["cwd"]).exists()
     assert (out.text, out.provider, out.model) == (
         "Hello from fake Claude",
@@ -99,14 +128,14 @@ def test_generates_with_safe_headless_flags_and_login(fake_claude, monkeypatch):
 
 
 def test_multi_turn_transcript_and_estimated_usage(fake_claude, monkeypatch):
-    monkeypatch.setenv("FAKE_CLAUDE_MODE", "no_usage")
+    set_mode("no_usage")
     p = ClaudeCliProvider()
     request = req(("user", "Q1"), ("assistant", "A1"), ("user", "Q2"))
     out = p.generate(request)
     seen = json.loads(fake_claude.read_text())
     assert "<assistant>" in seen["stdin"] and seen["stdin"] == render_prompt(request)
     assert not any(a.startswith("--model") for a in seen["argv"])
-    assert not any(a.startswith("--system-prompt") for a in seen["argv"])
+    assert not any(a.startswith("--system-prompt") for a in seen["argv"]) and seen["system"] is None
     assert (
         out.usage_estimated is True
         and out.output_tokens == 2
@@ -121,7 +150,7 @@ def test_multi_turn_transcript_and_estimated_usage(fake_claude, monkeypatch):
      ("no_text", "bad_response", False), ("crash", "cli_error", False)],
 )  # fmt: skip
 def test_failures_map_to_upstream_unavailable(fake_claude, monkeypatch, mode, kind, retryable):
-    monkeypatch.setenv("FAKE_CLAUDE_MODE", mode)
+    set_mode(mode)
     with pytest.raises(UpstreamUnavailable) as ei:
         ClaudeCliProvider().generate(req(("user", "hi")))
     assert ei.value.code == ErrorCode.UPSTREAM_UNAVAILABLE
@@ -132,11 +161,31 @@ def test_failures_map_to_upstream_unavailable(fake_claude, monkeypatch, mode, ki
         assert ei.value.details["input_tokens"] == 3
 
 
-def test_timeout_is_retryable(fake_claude, monkeypatch):
-    monkeypatch.setenv("FAKE_CLAUDE_MODE", "sleep")
+@pytest.mark.parametrize("mode", ["sleep", "spawn_sleep"])
+def test_timeout_is_retryable_and_kills_the_process_group(fake_claude, monkeypatch, mode):
+    import time
+
+    set_mode(mode)
+    started = time.monotonic()
     with pytest.raises(UpstreamUnavailable) as ei:
         ClaudeCliProvider(timeout_seconds=0.5).generate(req(("user", "hi")))
     assert ei.value.details["kind"] == "timeout" and ei.value.details["retryable"] is True
+    assert time.monotonic() - started < 10, "a grandchild holding the pipes must not block"
+
+
+def test_failures_keep_billed_usage_and_cost_but_not_the_result_text(fake_claude, monkeypatch):
+    set_mode("error_billed")
+    with pytest.raises(UpstreamUnavailable) as ei:
+        ClaudeCliProvider().generate(req(("user", "hi")))
+    d = ei.value.details
+    assert (d["kind"], d["input_tokens"], d["output_tokens"]) == ("cli_error", 9, 4)
+    assert d["usage_estimated"] is False and d["cost_usd"] == 0.5
+    assert "wire funds" not in ei.value.message
+    set_mode("error_unbilled")
+    with pytest.raises(UpstreamUnavailable) as ei:
+        ClaudeCliProvider().generate(req(("user", "hello world!")))
+    d = ei.value.details
+    assert d["kind"] == "not_logged_in" and d["usage_estimated"] is True and "cost_usd" not in d
 
 
 def test_missing_cli_and_os_errors(tmp_path, monkeypatch):
@@ -159,7 +208,7 @@ def test_model_names_are_validated():
 
 
 def test_config_gateway_and_recorded_usage(fake_claude, monkeypatch, session_factory, env):
-    monkeypatch.setenv("FAKE_CLAUDE_MODE", "ok")
+    set_mode("ok")
     cfg = LLMConfig.from_env({"MAILSIM_LLM_PROVIDER": "claude_cli", "MAILSIM_CLAUDE_CLI": "claude",
                               "PATH": os.environ["PATH"]})  # fmt: skip
     assert cfg.model == "" and cfg.cli_executable == "claude"
@@ -175,6 +224,21 @@ def test_config_gateway_and_recorded_usage(fake_claude, monkeypatch, session_fac
         row = s.get(m.LlmCall, result.llm_call_id)
         assert (row.provider, row.model, row.status) == ("claude_cli", "claude-sonnet-5-5", "ok")
         assert row.usage_estimated is False and row.cost_usd == pytest.approx(0.0012)
+
+    set_mode("error_billed")
+    with pytest.raises(UpstreamUnavailable) as ei:
+        gw.call(req(("user", "hi"), purpose="judge").model_copy(update={"run_id": run}))
+    with session_factory() as s:
+        row = s.get(m.LlmCall, ei.value.details["llm_call_id"])
+        assert (row.status, row.input_tokens, row.output_tokens) == ("failed", 9, 4)
+        assert row.usage_estimated is False and row.cost_usd == pytest.approx(0.5)
+    set_mode("empty_text")  # billed but unusable (gateway check)
+    with pytest.raises(UpstreamUnavailable) as ei:
+        gw.call(req(("user", "hi"), purpose="judge").model_copy(update={"run_id": run}))
+    assert ei.value.details["kind"] == "empty_output"
+    with session_factory() as s:
+        row = s.get(m.LlmCall, ei.value.details["llm_call_id"])
+        assert row.usage_estimated is True and row.cost_usd == pytest.approx(0.25)
 
 
 @pytest.mark.live_llm

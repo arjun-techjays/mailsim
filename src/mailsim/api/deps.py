@@ -14,6 +14,7 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from mailsim.api.auth import InvalidCredential, verify_key
+from mailsim.api.local_mode import MODE_HEADER, TOKEN_HEADER, LocalAccess
 from mailsim.auth.principal import Principal, Role
 from mailsim.domain.errors import PermissionDenied, UnsupportedOperation
 
@@ -35,12 +36,16 @@ def get_principal(
     Missing, malformed, unknown, expired and revoked keys all answer 401 with the same
     message, so the response never reveals whether a key exists.
     """
-    operator: Principal | None = getattr(request.app.state, "local_operator", None)
-    if credentials is None and operator is not None:
-        # local no-auth mode (loopback only, opt-in): key-less requests are the operator
-        request.state.principal = operator
-        return operator
-    if credentials is None or credentials.scheme.lower() != "bearer":
+    local: LocalAccess | None = getattr(request.app.state, "local_access", None)
+    if local is not None and "authorization" not in request.headers:
+        # local no-auth mode (opt-in, loopback only): no key, but the launch token is required
+        if local.admits(request.headers.get(TOKEN_HEADER)):
+            request.state.principal = local.operator
+            return local.operator
+        exc = _unauthenticated("missing or invalid API key")
+        exc.headers = {**(exc.headers or {}), MODE_HEADER: "1"}
+        raise exc
+    if credentials is None:  # absent, empty, or not the Bearer scheme
         raise _unauthenticated("missing or invalid API key")
     session_factory = getattr(request.app.state, "session_factory", None)
     if session_factory is None:

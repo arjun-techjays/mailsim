@@ -36,27 +36,33 @@ Both are **local-only conveniences, off by default**.
 
 **`claude_cli` LLM provider.** This provider generates persona replies and judge verdicts through
 your installed Claude Code CLI and its login (`claude` then `/login`). It does not use
-`ANTHROPIC_API_KEY`: the provider strips `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` from the
-child environment.
+`ANTHROPIC_API_KEY`.
 
 ```bash
 export MAILSIM_LLM_PROVIDER=claude_cli
 export MAILSIM_LLM_MODEL=sonnet          # optional; empty = the CLI's default model
 export MAILSIM_CLAUDE_CLI=claude         # optional; executable name or path
-export MAILSIM_LLM_TIMEOUT_SECONDS=120   # optional per-call timeout
+export MAILSIM_LLM_TIMEOUT_SECONDS=120   # optional per-call timeout (default 60)
 ```
 
 How it runs the CLI:
 
 * **Command.** Each call runs
   `claude -p --output-format json --tools "" --no-session-persistence --strict-mcp-config`.
-  * The prompt goes on stdin and the system prompt via `--system-prompt=`.
+  * The prompt goes on stdin. The system prompt goes in a file passed with
+    `--system-prompt-file`.
   * There is no shell, and the model name is validated.
-  * It runs in an empty temporary directory.
+  * It runs in an empty temporary directory and its own process group. On timeout, the whole
+    group is killed.
   * `--bare` is deliberately not used, because it disables the login.
+* **Environment.** The child gets an allowlisted environment: `PATH`, `HOME`, locale, temp and
+  Claude config directories.
+  * No `ANTHROPIC_*` variables, database URL or other secrets are passed.
+  * `CLAUDE_CODE_MAX_OUTPUT_TOKENS` is set from the request's (budget-capped) `max_tokens`.
+  * `MAILSIM_LLM_EFFORT` does not apply.
 * **Usage and cost.** Usage and cost come from the CLI's JSON (`usage`, `total_cost_usd`) and are
-  recorded in `llm_calls`. When the CLI reports no usage, tokens are estimated and the row is
-  marked `usage_estimated`.
+  recorded in `llm_calls`, for failed calls too. When the CLI reports no usage, tokens are
+  estimated and the row is marked `usage_estimated`.
 * **Replay.** Replay reuses recorded outputs and never calls the CLI.
 * **Failures.** These map to `UPSTREAM_UNAVAILABLE` (HTTP 503):
   * CLI missing;
@@ -64,12 +70,11 @@ How it runs the CLI:
   * non-zero exit;
   * timeout (retryable);
   * overload (retryable).
-* **Limitation.** User-level Claude Code memory and settings may still apply.
+* **Limitation.** User-level Claude Code settings and memory may still apply.
 * **Live test.** Opt in with `MAILSIM_LIVE_CLAUDE_CLI=1 uv run pytest -m live_llm tests/llm/test_claude_cli.py`.
 
-**Local no-auth dashboard.** In this mode the dashboard needs no API key. Key-less requests act
-as a combined **controller + evaluator** operator for the local project. It is resolved in this
-order:
+**Local no-auth dashboard.** In this mode the dashboard needs no API key. It acts as a combined
+**controller + evaluator** operator for the local project. The project is resolved in this order:
 
 1. `MAILSIM_LOCAL_PROJECT_ID`;
 2. the only project in the database;
@@ -77,19 +82,30 @@ order:
 
 ```bash
 uv run python -m mailsim.serve serve --host 127.0.0.1 --port 8000 --local-no-auth   # or MAILSIM_LOCAL_NO_AUTH=1
-cd web && MAILSIM_API_URL=http://127.0.0.1:8000 npm run dev                      # opens straight to Scenarios
+#   -> prints: Open the dashboard: http://127.0.0.1:5173/#local_token=<random token>
+cd web && MAILSIM_API_URL=http://127.0.0.1:8000 npm run dev                      # then open that link
 ```
 
-The mode's safeguards:
+The server mints a random launch token at every start and prints it only to the terminal. It
+goes in the URL fragment, which is never sent to a server. The dashboard reads it once, removes
+it from the address bar and keeps it in the tab's session. Without the link, the Connect page
+explains where to find it. Set `MAILSIM_DASHBOARD_URL` if the dashboard runs elsewhere.
 
-* **Loopback only.** The server refuses to start in this mode unless it is bound to
-  `127.0.0.1`, `::1` or `localhost`. It prints a loud warning at startup.
-* **Detection.** The dashboard detects the mode with a key-less `GET /v1/me`, which returns
-  `role: "operator", local_no_auth: true`. It shows a banner and stores nothing.
+The token is what separates your browser from other local processes, such as the agent under
+test. An agent that drops its key gets 401, not operator access, so hidden answer keys stay out
+of its reach. Web pages you visit can't use the token either: cross-site requests can't send it,
+and DNS rebinding doesn't give a page the token.
+
+The mode's other safeguards:
+
+* **Loopback only.** The server refuses to start the mode unless bound to `127.0.0.1`, `::1` or
+  `localhost`. While the mode is on, every request from a non-loopback peer or with a
+  non-loopback `Host` header gets 403, whatever launched the app.
+* **Loud warning.** The server prints a warning at startup.
 * **Agent interfaces still require agent keys.** This covers the REST mailbox routes and the
   Gmail, Graph, IMAP/SMTP and MCP adapters.
-* **Answer keys stay evaluator-only.** They are never reachable by the agent.
-* **Keys still work.** Explicit API keys keep working, and invalid keys are still rejected.
+* **Keys are always verified.** Any request that carries an `Authorization` header is checked as
+  a key, so invalid or wrong-scheme keys get 401.
 
 ## Quick start
 

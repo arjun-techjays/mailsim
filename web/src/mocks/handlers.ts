@@ -24,6 +24,7 @@ import {
   BROKEN_RUN_ID,
   buildReport,
   MOCK_KEYS,
+  MOCK_LOCAL_TOKEN,
   createMockDb,
   isoAt,
   newMockRun,
@@ -61,9 +62,15 @@ export function createHandlers(db: MockDb = createMockDb()) {
     if (key === MOCK_KEYS.revocable && (db.counters.revocable += 1) > 1) {
       return fail(401, 'UNAUTHENTICATED', 'API key has been revoked');
     }
-    // Mirrors `serve --local-no-auth`: only key-less requests act as the operator (a bad key is
-    // still rejected). The mock serves no agent routes, so every guard here admits the operator.
-    if (!header && db.localNoAuth) return OPERATOR;
+    // Mirrors `serve --local-no-auth`: key-less requests with the launch token act as the
+    // operator; without it they get 401 + X-Mailsim-Local-No-Auth. A presented key is always
+    // verified. The mock serves no agent routes, so every guard here admits the operator.
+    if (!header && db.localNoAuth) {
+      if (request.headers.get('x-mailsim-local-token') === MOCK_LOCAL_TOKEN) return OPERATOR;
+      const res = fail(401, 'UNAUTHENTICATED', 'missing or invalid API key');
+      res.headers.set('X-Mailsim-Local-No-Auth', '1');
+      return res;
+    }
     if (!info) return fail(401, 'UNAUTHENTICATED', 'missing or invalid API key');
     if (!ALLOWED[guard].includes(info.role)) {
       return fail(403, 'PERMISSION_DENIED', "this credential's role may not call this operation");

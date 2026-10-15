@@ -57,6 +57,8 @@ export const MOCK_KEYS = {
   revocable: 'mk_controller_revocable',
 } as const;
 
+/** Launch token of the mock local no-auth server (`/#local_token=...`). */
+export const MOCK_LOCAL_TOKEN = 'mock-local-token-0123456789';
 export const DEMO_RUN_ID = 'run_demo';
 export const BROKEN_RUN_ID = 'run_boom';
 export const EMPTY_RUN_ID = 'run_empty';

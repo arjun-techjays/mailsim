@@ -69,13 +69,18 @@ class LLMProviderError(UpstreamUnavailable):
 
 
 def provider_error(provider: str, kind: str, message: str, *, retryable: bool,
-                   usage: tuple[int, int] | None = None) -> SimError:  # fmt: skip
+                   usage: tuple[int, int] | None = None, usage_estimated: bool = False,
+                   cost_usd: float | None = None) -> SimError:  # fmt: skip
     """Typed error for a provider failure (message always redacted). `usage` = the billed
-    (input, output) tokens when the provider did return a response."""
+    (input, output) tokens when the provider did return a response (`usage_estimated` when
+    they are an estimate); `cost_usd` = the provider-reported cost, if any."""
     cls = LLMUnavailable if retryable else LLMProviderError
     details: dict[str, object] = {"provider": provider, "kind": kind, "retryable": retryable}
     if usage is not None:
         details["input_tokens"], details["output_tokens"] = usage
+        details["usage_estimated"] = usage_estimated
+    if cost_usd is not None:
+        details["cost_usd"] = cost_usd
     return cls(redact(f"{provider} provider failed ({kind}): {message}")[:500], details=details)
 
 
@@ -280,7 +285,10 @@ class LLMGateway:
             err = self._typed(exc)
             usage = (int(str(err.details.get("input_tokens", 0))),
                      int(str(err.details.get("output_tokens", 0))))  # fmt: skip
-            self._settle(call_id, request.run_id, status="failed", tokens=usage, latency_ms=ms)
+            cost = err.details.get("cost_usd")
+            self._settle(call_id, request.run_id, status="failed", tokens=usage, latency_ms=ms,
+                         usage_estimated=err.details.get("usage_estimated") is True,
+                         cost_usd=float(cost) if isinstance(cost, int | float) else None)  # fmt: skip
             err.details["llm_call_id"] = call_id
             log.warning("llm call failed provider=%s purpose=%s run=%s code=%s kind=%s",
                         self._provider_name, request.purpose, request.run_id, err.code,
@@ -299,14 +307,16 @@ class LLMGateway:
 
     def _checked(self, response: LLMResponse) -> LLMResponse:
         """Billed-but-unusable responses are failures (and keep their usage)."""
-        usage = (response.input_tokens, response.output_tokens)
+        billed: dict[str, Any] = {"usage": (response.input_tokens, response.output_tokens),
+                                  "usage_estimated": response.usage_estimated,
+                                  "cost_usd": response.cost_usd}  # fmt: skip
         if response.stop_reason in TRUNCATED_STOP_REASONS:
             raise provider_error(response.provider, "truncated",
                                  f"output hit the token limit (stop_reason={response.stop_reason})",
-                                 retryable=False, usage=usage)  # fmt: skip
+                                 retryable=False, **billed)  # fmt: skip
         if not response.text.strip():
             raise provider_error(response.provider, "empty_output", "no text content",
-                                 retryable=False, usage=usage)  # fmt: skip
+                                 retryable=False, **billed)  # fmt: skip
         return response
 
     def _typed(self, exc: Exception) -> SimError:

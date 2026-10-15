@@ -40,6 +40,7 @@ from sqlalchemy import select
 from mailsim.api.app import create_app
 from mailsim.api.auth import bootstrap
 from mailsim.api.idempotency import SWEEP_BATCH, sweep_expired
+from mailsim.api.local_mode import LocalAccess, new_token
 from mailsim.auth.principal import Principal, Role
 from mailsim.domain.errors import SimError
 from mailsim.engine.core import SimEngine
@@ -81,6 +82,7 @@ def evaluation_service(**deps: Any) -> Any | None:
 
 
 LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost"})
+DEFAULT_DASHBOARD_URL = "http://127.0.0.1:5173"
 TRUE = frozenset({"1", "true", "yes", "on"})
 log = logging.getLogger("mailsim.serve")
 
@@ -135,15 +137,19 @@ def build_state(environ: Mapping[str, str] | None = None) -> dict[str, Any]:
         **state, judge_factory=lambda run_id: LLMJudge(gateway, run_id=run_id)
     )
     if local_no_auth_requested(env):
-        operator = local_operator(session_factory, env)
-        state["local_operator"] = operator
+        access = LocalAccess(local_operator(session_factory, env), new_token())
+        state["local_access"] = access
         warning = (
-            "LOCAL NO-AUTH MODE: key-less requests act as controller+evaluator for project "
-            f"{operator.project_id}. Loopback only, never expose this server. Agent interfaces "
-            "still require agent keys."
+            "LOCAL NO-AUTH MODE: the dashboard needs no API key and acts as controller+evaluator "
+            f"for project {access.operator.project_id}. Loopback clients only; never expose this "
+            "server. Agent interfaces still require agent keys."
         )
         log.warning("!" * 20 + " " + warning + " " + "!" * 20)
-        print(f"WARNING: {warning}", file=sys.stderr)
+        dashboard = env.get("MAILSIM_DASHBOARD_URL", DEFAULT_DASHBOARD_URL).rstrip("/")
+        # the launch token goes to the terminal only (never to the log): it is what separates
+        # the developer's browser from other local processes, such as the agent under test
+        print(f"WARNING: {warning}\nOpen the dashboard: {dashboard}/#local_token={access.token}",
+              file=sys.stderr)  # fmt: skip
     return state
 
 

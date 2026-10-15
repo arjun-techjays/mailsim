@@ -7,20 +7,32 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete
 
 from mailsim import serve as server
+from mailsim.api import local_mode
 from mailsim.api.app import create_app
+from mailsim.api.local_mode import LocalAccess
 from mailsim.auth.principal import Principal, Role
 from tests.api.conftest import KEY, FakeEvaluationService
 
 pytestmark = pytest.mark.db
 
 
-@pytest.fixture()
-def local(api):
+TOKEN = "t" * 43
+LOOPBACK = {"base_url": "http://127.0.0.1:8000", "client": ("127.0.0.1", 50000)}
+
+
+def local_app(api):
     operator = Principal(api.tenant_id, api.project_id, Role.CONTROLLER, key_id="local-operator",
                          local_operator=True)  # fmt: skip
-    app = create_app(engine=api.engine, session_factory=api.sf, blobs=api.blobs,
-                     evaluation_service=FakeEvaluationService(), local_operator=operator)  # fmt: skip
-    return api, TestClient(app, raise_server_exceptions=False)
+    return create_app(engine=api.engine, session_factory=api.sf, blobs=api.blobs,
+                      evaluation_service=FakeEvaluationService(),
+                      local_access=LocalAccess(operator, TOKEN))  # fmt: skip
+
+
+@pytest.fixture()
+def local(api):
+    client = TestClient(local_app(api), raise_server_exceptions=False, **LOOPBACK)
+    client.headers["X-Mailsim-Local-Token"] = TOKEN
+    return api, client
 
 
 def test_keyless_operator_is_controller_and_evaluator(local):
@@ -43,7 +55,7 @@ def test_keyless_operator_is_controller_and_evaluator(local):
     boxes = c.get(f"/v1/runs/{run}/mailboxes").json()
     assert c.get(f"/v1/runs/{run}/mailboxes/{boxes[0]['id']}/messages").status_code == 200
 
-    # agent interfaces always demand an agent key, even locally
+    # agent interfaces always demand an agent key, even locally (and even with the token)
     cred = created.json()["agent_credentials"][0]
     mbx = cred["mailbox_id"]
     r = c.get(f"/v1/mailboxes/{mbx}/messages")
@@ -55,6 +67,67 @@ def test_keyless_operator_is_controller_and_evaluator(local):
     assert c.get("/v1/me", headers=agent).json()["role"] == "agent"
     bad = c.get(f"/v1/runs/{run}", headers={"Authorization": "Bearer not-a-key"})
     assert bad.status_code == 401
+
+
+@pytest.mark.parametrize("header", ["Basic dXNlcjpwYXNz", "Bearer", "Bearer ", "", "Token msk_x"])
+def test_any_authorization_header_is_verified_as_a_key(local, header):
+    _, c = local
+    r = c.get("/v1/scenarios", headers={"Authorization": header})
+    assert r.status_code == 401 and r.json()["error"]["code"] == "UNAUTHENTICATED"
+
+
+@pytest.mark.parametrize("token", [None, "", "wrong", TOKEN + "x"])
+def test_keyless_requests_need_the_launch_token(api, token):
+    """A local agent that drops its key is not the operator (answer keys stay out of reach)."""
+    c = TestClient(local_app(api), raise_server_exceptions=False, **LOOPBACK)
+    headers = {} if token is None else {"X-Mailsim-Local-Token": token}
+    for path in ("/v1/me", f"/v1/scenarios/{KEY}/answer-keys", "/v1/runs"):
+        r = c.get(path, headers=headers)
+        assert r.status_code == 401 and r.json()["error"]["code"] == "UNAUTHENTICATED", path
+        assert r.headers["X-Mailsim-Local-No-Auth"] == "1"
+
+
+@pytest.mark.parametrize(("base_url", "client"), [
+    ("http://evil.example:8000", ("127.0.0.1", 1)),      # DNS rebinding: foreign Host header
+    ("http://127.0.0.1.evil.example", ("127.0.0.1", 1)),
+    ("http://127.0.0.1:8000", ("192.168.1.9", 1)),       # non-loopback peer (e.g. 0.0.0.0 bind)
+    ("http://127.0.0.1:8000", ("testclient", 1)),
+])  # fmt: skip
+def test_only_loopback_peers_and_hosts_are_served(api, base_url, client):
+    c = TestClient(local_app(api), raise_server_exceptions=False, base_url=base_url, client=client)
+    for headers in ({"X-Mailsim-Local-Token": TOKEN}, {"Authorization": "Bearer x"}, {}):
+        r = c.get("/v1/me", headers=headers)
+        assert r.status_code == 403 and r.json()["error"]["code"] == "PERMISSION_DENIED"
+
+
+@pytest.mark.parametrize(("base_url", "client"), [
+    ("http://localhost:8000", ("127.0.0.1", 1)), ("http://[::1]:8000", ("::1", 1)),
+    ("http://127.0.0.1", ("::ffff:127.0.0.1", 1)),
+])  # fmt: skip
+def test_loopback_variants_are_served(api, base_url, client):
+    c = TestClient(local_app(api), raise_server_exceptions=False, base_url=base_url, client=client)
+    assert c.get("/v1/me", headers={"X-Mailsim-Local-Token": TOKEN}).status_code == 200
+
+
+def test_loopback_helpers():
+    assert local_mode.host_name("[::1]:8000") == "::1" and local_mode.host_name("[::1") == "[::1"
+    assert local_mode.host_name("a:80") == "a" and local_mode.host_name("::1") == "::1"
+    assert not local_mode.is_loopback(None) and not local_mode.is_loopback("10.0.0.1")
+    assert len(local_mode.new_token()) >= 40
+    assert not LocalAccess(None, TOKEN).admits(None)  # type: ignore[arg-type]
+
+
+def test_operator_never_gets_an_agent_facade(local):
+    from fastapi import Request
+
+    from mailsim.api.routers import _common
+    from mailsim.domain.errors import PermissionDenied
+
+    api, _ = local
+    op = Principal(api.tenant_id, api.project_id, Role.CONTROLLER, local_operator=True)
+    request = Request({"type": "http", "app": local_app(api), "headers": []})
+    with pytest.raises(PermissionDenied):
+        _common.agent(request, op)
 
 
 def test_without_the_mode_keys_are_required(api):
@@ -88,8 +161,21 @@ def test_local_operator_project_resolution(api, session_factory, capsys, db_engi
                                 "MAILSIM_LOCAL_NO_AUTH": "1",
                                 "MAILSIM_LOCAL_PROJECT_ID": api.project_id})  # fmt: skip
     try:
-        assert state["local_operator"].project_id == api.project_id
-        assert "LOCAL NO-AUTH MODE" in capsys.readouterr().err
+        access = state["local_access"]
+        assert access.operator.project_id == api.project_id
+        err = capsys.readouterr().err
+        assert "LOCAL NO-AUTH MODE" in err
+        assert f"http://127.0.0.1:5173/#local_token={access.token}" in err
+    finally:
+        state["db_engine"].dispose()
+    state = server.build_state({"MAILSIM_DATABASE_URL": url, "MAILSIM_BLOB_DIR": str(tmp_path),
+                                "MAILSIM_LOCAL_NO_AUTH": "1", "MAILSIM_DASHBOARD_URL": "http://localhost:4000/",
+                                "MAILSIM_LOCAL_PROJECT_ID": api.project_id})  # fmt: skip
+    try:
+        assert (
+            f"http://localhost:4000/#local_token={state['local_access'].token}"
+            in capsys.readouterr().err
+        )
     finally:
         state["db_engine"].dispose()
 
