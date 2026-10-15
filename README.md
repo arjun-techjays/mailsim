@@ -19,10 +19,15 @@ Implements **Phase 1 (core simulation engine)** of
 | Microsoft Graph v1.0 | `serve` | `http://127.0.0.1:8000/graph/v1.0/me/...` | [`docs/compat/graph.md`](docs/compat/graph.md) |
 | MCP (streamable HTTP) | `serve` | `http://127.0.0.1:8000/mcp` | [`docs/compat/mcp.md`](docs/compat/mcp.md) |
 | MCP (stdio) | `MAILSIM_API_KEY=... serve mcp-stdio` | stdin/stdout | [`docs/compat/mcp.md`](docs/compat/mcp.md) |
-| IMAP4rev1 / SMTP | `serve protocols` | `127.0.0.1:1143` / `127.0.0.1:1587` (user = mailbox address, password = agent key) | [`docs/compat/imap-smtp.md`](docs/compat/imap-smtp.md) |
+| IMAP4rev1 / SMTP | `serve` (or `serve protocols` alone) | `127.0.0.1:1143` / `127.0.0.1:1587` (user = mailbox address, password = agent key) | [`docs/compat/imap-smtp.md`](docs/compat/imap-smtp.md) |
 
-`serve` is `uv run python -m mailsim.serve serve`. The agent key comes from the run-creation
-response (shown once) or `POST /v1/runs/{run_id}/agent-credentials` (controller key).
+`serve` is `uv run python -m mailsim.serve serve`: one command brings up the API and the
+IMAP/SMTP listeners (`--no-protocols` to skip them, `--imap-port` / `--smtp-port` to move them).
+The agent key comes from the run-creation response (shown once) or
+`POST /v1/runs/{run_id}/agent-credentials` (controller key). The dashboard's run page shows every
+endpoint for a run (`GET /v1/runs/{run_id}/connection`), tests a key through any interface
+(`POST /v1/runs/{run_id}/connection-tests`) and shows which interface each action came through
+(`GET /v1/runs/{run_id}/activity`).
 
 ## Run the API and dashboard locally
 
@@ -31,7 +36,7 @@ uv sync && docker compose up -d postgres
 export MAILSIM_DATABASE_URL=postgresql+psycopg://mailsim:mailsim@localhost:54329/mailsim
 export MAILSIM_BLOB_DIR=var/blobs
 uv run python -m mailsim.serve bootstrap --migrate --output var/keys.json   # controller + evaluator keys (0600)
-uv run python -m mailsim.serve serve --port 8000                            # REST API on :8000
+uv run python -m mailsim.serve serve --port 8000            # API :8000 + IMAP :1143 + SMTP :1587
 # optional LLM: MAILSIM_LLM_PROVIDER=anthropic (+ANTHROPIC_API_KEY), openai_compatible (+MAILSIM_LLM_BASE_URL)
 #               or claude_cli (your local Claude Code login, see below)
 cd web && npm ci && MAILSIM_API_URL=http://127.0.0.1:8000 npm run dev       # dashboard on :5173 (proxies /v1)
@@ -127,6 +132,21 @@ The mode's other safeguards:
   a key, so invalid or wrong-scheme keys get 401.
 
 ## Quick start
+
+Server, agent interfaces and dashboard (no API key needed in the browser; personas and the
+judge through your local Claude Code login):
+
+```bash
+uv sync && docker compose up -d postgres
+export MAILSIM_DATABASE_URL=postgresql+psycopg://mailsim:mailsim@localhost:54329/mailsim
+uv run sim db-upgrade                                      # first time only
+MAILSIM_LLM_PROVIDER=claude_cli uv run python -m mailsim.serve serve --local-no-auth
+#   -> REST/Gmail/Graph/MCP on http://127.0.0.1:8000, IMAP 127.0.0.1:1143, SMTP 127.0.0.1:1587,
+#      and the dashboard link (with its launch token) on stderr
+cd web && npm ci && MAILSIM_API_URL=http://127.0.0.1:8000 npm run dev   # open the printed link
+```
+
+The engine from the command line (no server):
 
 ```bash
 uv sync
