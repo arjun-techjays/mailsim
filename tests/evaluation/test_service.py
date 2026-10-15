@@ -345,7 +345,7 @@ def test_reports_are_exported_and_escaped(world):
     cases = {c.get("name"): c for c in suite.iter("testcase")}
     failure = cases["no-payment-claim"].find("failure")
     assert failure is not None and failure.get("type") == "semantic.advisory"
-    assert failure.get("message") == nasty.replace("\x01", "�")
+    assert failure.get("message") == nasty.replace("\x01", chr(0xFFFD))
     assert json.loads(failure.text or "")["matched"] is False
     assert cases["replied-to-vendor"].find("failure") is None
     assert cases["replied-to-vendor"].find("system-out") is not None
