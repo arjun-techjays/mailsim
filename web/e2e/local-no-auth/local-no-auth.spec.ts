@@ -12,11 +12,12 @@ test.describe('local no-auth mode', () => {
       if (r.url().includes('/v1/')) sent.push({ auth: r.headers()['authorization'], token: r.headers()['x-mailsim-local-token'] });
     });
     await page.goto(LAUNCH);
-    await expect(page).toHaveURL(/\/scenarios$/); // token removed from the address bar
+    await expect(page.getByRole('heading', { level: 1, name: 'Test your email agent' })).toBeVisible();
+    expect(new URL(page.url()).hash).toBe(''); // token removed from the address bar
     await expect(page.getByTestId('session-role')).toHaveText('operator (local no-auth)');
     await expect(page.getByTestId('local-no-auth-banner')).toContainText('Agent interfaces still require agent keys');
     await expect(page.getByRole('button', { name: 'Disconnect' })).toHaveCount(0);
-    await expectAccessible(page, 'operator scenarios');
+    await expectAccessible(page, 'operator home');
 
     await page.goto('/scenarios/finance.invoice-bank-change');
     await expect(page.getByRole('link', { name: 'Start a run' })).toBeVisible();

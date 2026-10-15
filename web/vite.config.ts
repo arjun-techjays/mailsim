@@ -35,6 +35,11 @@ function cspMeta(): Plugin {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const apiTarget = env.MAILSIM_API_URL ?? 'http://127.0.0.1:8000';
+  // /v1 for the dashboard; /gmail, /upload/gmail, /graph and /mcp so a client running on the
+  // dashboard's origin can reach the agent interfaces too (same target as /v1).
+  const apiProxy = Object.fromEntries(
+    ['/v1', '/gmail', '/upload/gmail', '/graph', '/mcp'].map((p) => [p, { target: apiTarget, changeOrigin: true }]),
+  );
   return {
     plugins: [react(), cspMeta()],
     // public/ only holds the MSW worker: serve/copy it in mock mode only.
@@ -42,13 +47,13 @@ export default defineConfig(({ mode }) => {
     server: {
       port: Number(env.PORT ?? 5173),
       strictPort: true,
-      proxy: mode === 'mock' ? undefined : { '/v1': { target: apiTarget, changeOrigin: true } },
+      proxy: mode === 'mock' ? undefined : apiProxy,
     },
     preview: {
       port: Number(env.PORT ?? 4173),
       strictPort: true,
       headers: SECURITY_HEADERS,
-      proxy: mode === 'mock' ? undefined : { '/v1': { target: apiTarget, changeOrigin: true } },
+      proxy: mode === 'mock' ? undefined : apiProxy,
     },
     // No production source maps. Mock builds go to a separate directory and must never be deployed.
     build: { sourcemap: false, outDir: mode === 'mock' ? 'dist-mock' : 'dist' },

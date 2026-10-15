@@ -5,6 +5,7 @@ import { defaultBaseUrl, validateBaseUrl } from '../auth/baseUrl';
 import { detectRole } from '../auth/detectRole';
 import { useSession } from '../auth/session';
 import { ErrorDisplay } from '../components/ErrorDisplay';
+import { PageIntro } from '../components/PageIntro';
 import { usePageTitle } from '../hooks/usePageTitle';
 
 const CAPABILITIES: Record<Role, string> = {
@@ -51,6 +52,14 @@ export function ConnectPage() {
   return (
     <>
       <h1>Connect to mailsim</h1>
+      <PageIntro next={[{ to: '/concepts', label: 'Concepts: what the dashboard does' }]}>
+        <p>
+          Sign the dashboard in to a mailsim API server. Use a controller key to run scenarios and connect agents, or an
+          evaluator key to grade runs. Bootstrap prints both (<code>python -m mailsim.serve bootstrap</code>); in local
+          no-auth mode, open the link the server printed instead. This is not where your agent connects: open a run and
+          use <strong>Connect your agent</strong> for that.
+        </p>
+      </PageIntro>
       {localNoAuthLink && !session && (
         <div role="status" className="notice" data-testid="local-no-auth-link">
           <strong>This API runs in local no-auth mode.</strong> Open the dashboard link the server printed at startup

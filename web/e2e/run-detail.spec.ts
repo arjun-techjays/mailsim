@@ -83,7 +83,7 @@ test.describe('run detail navigation', () => {
     const run = new RunPage(page);
     await run.goto('run_empty');
     await run.tab('Event trace');
-    await expect(page.getByTestId('empty-state')).toHaveText('This run has no events yet.');
+    await expect(page.getByTestId('empty-state')).toContainText('This run has no events yet.');
     await expectAccessible(page, 'empty trace');
   });
 

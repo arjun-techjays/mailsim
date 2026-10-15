@@ -81,7 +81,8 @@ describe('local no-auth mode in the dashboard', () => {
     openLaunchLink();
     const { router } = renderApp('/', null, { probe: true });
     expect(screen.getByText('Checking the API…')).toBeInTheDocument();
-    await waitFor(() => expect(router.state.location.pathname).toBe('/scenarios'));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Test your email agent' })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/');
     expect(screen.getByTestId('session-role')).toHaveTextContent('operator (local no-auth)');
     expect(screen.getByTestId('local-no-auth-banner')).toHaveTextContent('Agent interfaces still require agent keys');
     expect(screen.queryByRole('button', { name: 'Disconnect' })).not.toBeInTheDocument();

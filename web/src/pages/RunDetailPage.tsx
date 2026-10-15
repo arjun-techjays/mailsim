@@ -5,6 +5,7 @@ import { hasRole, useApi, useRole } from '../auth/session';
 import { rememberRun } from '../auth/storage';
 import { ShowFor } from '../components/Gates';
 import { ErrorDisplay } from '../components/ErrorDisplay';
+import { PageIntro } from '../components/PageIntro';
 import { Badge, Loading } from '../components/Status';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { parseSnapshot } from '../mailbox/snapshot';
@@ -62,6 +63,25 @@ export function RunDetailPage() {
       <h1>
         Run <code>{runId}</code>
       </h1>
+      {/* ---- run intro + connect (UX-F3) */}
+      <PageIntro
+        next={[
+          { to: `/runs/${encodeURIComponent(runId)}/evaluations`, label: 'Evaluate and read results' },
+          { to: '/concepts#virtual-clock', label: 'How the virtual clock works' },
+        ]}
+      >
+        <p>
+          One isolated execution of a scenario. Connect your agent to its mailbox, advance the virtual clock so scheduled
+          mail arrives and personas reply, and watch the trace; then evaluate it.
+        </p>
+      </PageIntro>
+      <ShowFor roles={['controller']}>
+        <p>
+          <Link className="button primary" to={`/runs/${encodeURIComponent(runId)}/connect`} data-testid="connect-agent-link">
+            Connect your agent
+          </Link>
+        </p>
+      </ShowFor>
       {run.isPending ? (
         <Loading label="Loading run…" />
       ) : run.isError ? (

@@ -92,7 +92,7 @@ describe('Scenario detail', () => {
   it('evaluator: empty and failing answer-key lists', async () => {
     server.use(http.get('*/v1/scenarios/:key/answer-keys', () => HttpResponse.json([])));
     renderApp('/scenarios/finance.invoice-bank-change', sessionFor('evaluator'));
-    expect(await screen.findByText('No answer keys yet.')).toBeInTheDocument();
+    expect(await screen.findByText(/No answer keys yet\./)).toBeInTheDocument();
   });
 
   it('answer-key errors are shown', async () => {
@@ -108,6 +108,6 @@ describe('Scenario detail', () => {
   it('scenario without a published version', async () => {
     server.use(http.get('*/v1/scenarios/:key', () => HttpResponse.json({ id: 's', key: 'x', latest_version: null, versions: [] })));
     renderApp('/scenarios/x', sessionFor('controller'));
-    expect(await screen.findByText('No published version.')).toBeInTheDocument();
+    expect(await screen.findByText(/No published version\./)).toBeInTheDocument();
   });
 });

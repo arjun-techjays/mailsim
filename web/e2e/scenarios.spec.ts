@@ -17,13 +17,13 @@ test.describe('scenarios', () => {
     await expect(page).toHaveURL(/tag=support/);
 
     await scenarios.filter({ tag: '', q: 'nothing-matches' });
-    await expect(page.getByTestId('empty-state')).toHaveText('No scenarios match these filters.');
+    await expect(page.getByTestId('empty-state')).toContainText('No scenarios match these filters.');
   });
 
   test('shows the empty state for a project without scenarios', async ({ page }) => {
     await new ConnectPage(page).connectAs(KEYS.controllerEmpty, 'controller');
     await new ScenariosPage(page).open();
-    await expect(page.getByTestId('empty-state')).toHaveText('No scenarios have been published in this project yet.');
+    await expect(page.getByTestId('empty-state')).toContainText('No scenarios have been published in this project yet.');
   });
 
   test('scenario detail shows versions; answer keys only for evaluators', async ({ page }) => {

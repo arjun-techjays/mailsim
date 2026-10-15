@@ -79,7 +79,7 @@ export function EventTimeline({ runId, highlightSeq }: { runId: string; highligh
         <p className="notice">Event #{highlightSeq} is not loaded yet. Use “Load more events”.</p>
       )}
       {list.isLoading || (list.error && list.items.length === 0) ? null : shown.length === 0 ? (
-        <Empty>{type || actor || epoch ? 'No events match these filters.' : 'This run has no events yet.'}</Empty>
+        <Empty>{type || actor || epoch ? 'No events match these filters.' : 'This run has no events yet. Start it, or advance the clock from the Overview tab.'}</Empty>
       ) : (
         <table data-testid="event-table">
           <thead>

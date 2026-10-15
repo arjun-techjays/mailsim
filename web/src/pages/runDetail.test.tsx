@@ -178,7 +178,7 @@ describe('Run detail', () => {
     const { user } = renderApp('/runs/run_demo?tab=actions', sessionFor('evaluator'));
     expect(await screen.findByText('No actions recorded.')).toBeInTheDocument();
     await user.click(screen.getByRole('link', { name: 'Artifacts' }));
-    expect(await screen.findByText('No artifacts.')).toBeInTheDocument();
+    expect(await screen.findByText(/No artifacts yet\./)).toBeInTheDocument();
   });
 
   it('actions/artifacts errors', async () => {

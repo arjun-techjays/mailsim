@@ -19,6 +19,13 @@ import type {
   RunOut,
   ScenarioOut,
 } from './types';
+import type {
+  AgentCredential,
+  ConnectionTestRequest,
+  ConnectionTestResult,
+  RunConnection,
+  SystemStatus,
+} from './types'; // connect & status (UX-F3)
 
 const seg = encodeURIComponent;
 
@@ -86,6 +93,18 @@ export function createApi(cfg: ApiConfig) {
     listEvaluations: (id: string) => get<EvaluationReport[]>(`${run(id)}/evaluations`),
     evaluate: (id: string, body: EvaluationRequest) =>
       post<EvaluationReport>(`${run(id)}/evaluations`, body, true),
+
+    // ---- connect & status (UX-F3)
+    /** Server mode, LLM provider, served interfaces and IMAP/SMTP listener status. */
+    systemStatus: () => get<SystemStatus>('/v1/system/status'),
+    /** How an agent connects to a run (endpoints, mailbox, key ids; never secrets). */
+    runConnection: (id: string) => get<RunConnection>(`${run(id)}/connection`),
+    /** Real call through one interface with the given agent key, made by the server. */
+    testConnection: (id: string, body: ConnectionTestRequest) =>
+      post<ConnectionTestResult>(`${run(id)}/connection-tests`, body),
+    /** Mints a new agent key (shown once); the server revokes the run's earlier agent keys. */
+    mintAgentKey: (id: string) => post<AgentCredential>(`${run(id)}/agent-credentials`),
+    revokeKey: (keyId: string) => apiRequest<void>(cfg, 'DELETE', `/v1/keys/${seg(keyId)}`),
   };
 }
 

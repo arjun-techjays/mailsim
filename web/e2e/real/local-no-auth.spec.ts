@@ -16,7 +16,8 @@ test('real server in local no-auth mode: launch link = operator; no token, agent
   await expect(page.getByTestId('local-no-auth-link')).toBeVisible();
 
   await page.goto(`/#local_token=${TOKEN}`);
-  await expect(page).toHaveURL(/\/scenarios$/);
+  await expect(page.getByRole('heading', { level: 1, name: 'Test your email agent' })).toBeVisible();
+  expect(new URL(page.url()).hash).toBe('');
   await expect(page.getByTestId('session-role')).toHaveText('operator (local no-auth)');
   await expect(page.getByTestId('local-no-auth-banner')).toBeVisible();
   await page.goto('/runs');
