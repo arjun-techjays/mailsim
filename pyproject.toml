@@ -17,6 +17,10 @@ dependencies = [
   "httpx>=0.28.1",
 ]
 
+[project.optional-dependencies]
+# `sim import enron` reads the Hugging Face parquet shards (docs/leadership-inboxes.md).
+import = ["pyarrow==25.0.1"]
+
 [project.scripts]
 sim = "mailsim.cli:main"
 
@@ -31,6 +35,7 @@ dev = [
   "types-PyYAML",
   "google-api-python-client>=2.201.0",
   "msgraph-sdk>=1.64.0",
+  "pyarrow==25.0.1",  # importer tests build a tiny synthetic parquet fixture
 ]
 
 [build-system]
@@ -91,7 +96,7 @@ files = ["src/mailsim"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["alembic.*"]
+module = ["alembic.*", "pyarrow.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
@@ -122,6 +127,7 @@ layers = [
   "(mailsim.evaluation) | (mailsim.personas)",
   "(mailsim.llm)",
   "(mailsim.engine)",
+  "(mailsim.importers)",
   "(mailsim.scenario)",
   "(mailsim.auth) | mailsim.store",
   "mailsim.mime | mailsim.threads | mailsim.providers",
