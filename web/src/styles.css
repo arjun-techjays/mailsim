@@ -534,7 +534,9 @@ fieldset {
 .badge-step-unknown {
   color: var(--muted);
 }
-.badge-replayed,
+.badge-replayed {
+  color: var(--link);
+}
 .badge-replay {
   color: var(--link);
   font-size: 0.5em;
