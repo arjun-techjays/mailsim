@@ -144,9 +144,9 @@ def test_evaluating_with_an_incompatible_key_is_a_conflict_with_details(world):
         s["version"] = 2
 
     world.publish(v2)
-    run = agent_run(world)  # scenario version 2; the shipped key v2 covers [1] only
-    body = err(evaluate(world, run, expect=409, answer_key_version=2), 409, "CONFLICT")
-    assert body["details"] == {"answer_key_version": 2, "scenario_versions": [1],
+    run = agent_run(world)  # scenario version 2; the shipped key v3 covers [1] only
+    body = err(evaluate(world, run, expect=409, answer_key_version=3), 409, "CONFLICT")
+    assert body["details"] == {"answer_key_version": 3, "scenario_versions": [1],
                                "run_scenario_version": 2}  # fmt: skip
     assert "not compatible" in body["message"]
     # the default (latest compatible) is the inline key of version 2
