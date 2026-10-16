@@ -6,6 +6,17 @@ import { JsonBlock } from '../components/JsonBlock';
 import { Empty, Loading } from '../components/Status';
 import { runKeys } from './keys';
 
+/**
+ * The event range an action produced: `#5`, `#5–#7`, or "none" when it produced no events (the
+ * server then reports the next free sequence as start and the last used one as end, e.g. 18–17).
+ */
+function eventRange(start: number | null | undefined, end: number | null | undefined): string {
+  if (start == null) return '—';
+  const last = end ?? start;
+  if (last < start) return 'none';
+  return last === start ? `#${start}` : `#${start}–#${last}`;
+}
+
 /** `highlight` is an evidence ref. Rows are matched by action id when the API provides one. */
 export function ActionsTable({ runId, highlight }: { runId: string; highlight: string | null }) {
   const api = useApi();
@@ -58,7 +69,7 @@ export function ActionsTable({ runId, highlight }: { runId: string; highlight: s
                   <td>{a.operation}</td>
                   <td>{a.outcome}</td>
                   <td>{a.virtual_time ?? '—'}</td>
-                  <td>{a.seq_start != null ? `#${a.seq_start}–#${a.seq_end ?? a.seq_start}` : '—'}</td>
+                  <td>{eventRange(a.seq_start, a.seq_end)}</td>
                   <td>
                     <JsonBlock value={a.input} label="Input" />
                   </td>

@@ -15,6 +15,7 @@ import { EventTimeline } from '../run/EventTimeline';
 import { InjectForm } from '../run/InjectForm';
 import { runKeys } from '../run/keys';
 import { RunControls } from '../run/RunControls';
+import { canDo, injectOffReason } from '../run/runState';
 // ---- mailbox browser, activity & toolbar (UX-F2)
 import { MailboxBrowser } from '../mailbox/MailboxBrowser';
 import { ActivityPanel } from '../run/ActivityPanel';
@@ -57,6 +58,8 @@ export function RunDetailPage() {
     setParams(p);
   };
   const tabHref = (t: Tab) => `?tab=${t}`;
+  /** The run this one replays (RunOut.replay_of), or null. */
+  const replay = run.data?.replay_of ?? null;
   const seq = params.get('seq');
 
   return (
@@ -66,11 +69,19 @@ export function RunDetailPage() {
       </p>
       <h1>
         Run <code>{runId}</code>
+        {replay && (
+          <>
+            {' '}
+            <span className="badge badge-replay" data-testid="replay-badge">
+              Replay of {replay}
+            </span>
+          </>
+        )}
       </h1>
       {/* ---- run intro + connect (UX-F3) */}
       <PageIntro
         next={[
-          { to: `/runs/${encodeURIComponent(runId)}/evaluations`, label: 'Evaluate and read results' },
+          ...(!replay ? [{ to: `/runs/${encodeURIComponent(runId)}/evaluations`, label: 'Evaluate and read results' }] : []),
           { to: '/concepts#virtual-clock', label: 'How the virtual clock works' },
         ]}
       >
@@ -128,12 +139,21 @@ export function RunDetailPage() {
             <button type="button" onClick={() => void run.refetch()}>
               Refresh
             </button>
-            <ShowFor roles={['evaluator']}>
-              <Link className="button" to={`/runs/${encodeURIComponent(runId)}/evaluations`}>
-                Evaluations
-              </Link>
-            </ShowFor>
+            {!replay && (
+              <ShowFor roles={['evaluator']}>
+                <Link className="button" to={`/runs/${encodeURIComponent(runId)}/evaluations`}>
+                  Evaluations
+                </Link>
+              </ShowFor>
+            )}
           </div>
+          {replay && (
+            <p className="notice" data-testid="replay-notice">
+              This run is a replay of <Link to={`/runs/${encodeURIComponent(replay)}`}>{replay}</Link>: it rebuilds the
+              recorded events to check determinism. Replays are not evaluated and are left out of run lists and accuracy
+              by default.
+            </p>
+          )}
           {tab !== 'overview' && hasRole(role, ['controller']) && <RunToolbar run={run.data} />}
           <nav aria-label="Run sections" className="tabs">
             <ul>
@@ -152,7 +172,13 @@ export function RunDetailPage() {
                 <>
                   <RunControls run={run.data} />
                   {snapshot ? (
-                    <InjectForm runId={runId} mailboxes={snapshot.mailboxes} />
+                    <InjectForm
+                      runId={runId}
+                      mailboxes={snapshot.mailboxes}
+                      inactiveReason={
+                        canDo(run.data, 'inject') ? null : injectOffReason(run.data)
+                      }
+                    />
                   ) : state.isError ? (
                     <ErrorDisplay error={state.error} title="Could not load mailboxes for injection" />
                   ) : (

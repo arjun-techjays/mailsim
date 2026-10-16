@@ -77,7 +77,7 @@ function Chooser({ onPick }: { onPick: (l: Loaded) => void }) {
   );
 }
 
-function Builder({ mode, scenarioKey, initial, storageKey, restored, restoredFixtures, metaQ, minVersion }: {
+function Builder({ mode, scenarioKey, initial, storageKey, restored, restoredFixtures, metaQ, minVersion, focusOnStart = false }: {
   mode: BuilderMode;
   scenarioKey: string;
   initial: Loaded;
@@ -87,6 +87,8 @@ function Builder({ mode, scenarioKey, initial, storageKey, restored, restoredFix
   metaQ: { data?: BuilderMeta; isError: boolean };
   /** Edit mode: the lowest version that can still be published (latest + 1), once known. */
   minVersion: number | null;
+  /** Move focus into the form on mount (the start choice the user clicked is gone). */
+  focusOnStart?: boolean;
 }) {
   const api = useApi();
   const navigate = useNavigate();
@@ -94,7 +96,8 @@ function Builder({ mode, scenarioKey, initial, storageKey, restored, restoredFix
   const [draft, setDraft] = useState<Draft>(initial.draft);
   const baseline = initial.baseline;
   const [section, setSection] = useState<SectionId>('basics');
-  const [focusPath, setFocusPath] = useState<string | null>(null);
+  // After choosing a start (blank/template) the chosen button unmounts: continue at the first section heading.
+  const [focusPath, setFocusPath] = useState<string | null>(focusOnStart ? 'sec:basics' : null);
   const [showYaml, setShowYaml] = useState(false);
   const [notice, setNotice] = useState<string | null>(restored ? 'Restored your unsaved draft from this browser tab.' : null);
   const [fixturesKept, setFixturesKept] = useState(restoredFixtures);
@@ -493,6 +496,7 @@ function BuilderLoader({ mode, scenarioKey }: { mode: BuilderMode; scenarioKey: 
           restoredFixtures={stored ? stored.fixturesKept : true}
           metaQ={metaQ}
           minVersion={minVersion}
+          focusOnStart={!stored && picked !== null}
         />
       ) : mode === 'new' ? (
         <>

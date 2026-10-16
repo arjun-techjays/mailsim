@@ -85,6 +85,40 @@ test.describe('mailbox browser, clock toolbar and activity', () => {
     await expectAccessible(page, 'activity');
   });
 
+  test('attachments download as files (never rendered); a same-time reply follows its parent (UI-5)', async ({ page }) => {
+    await new ConnectPage(page).connectAs(KEYS.controller, 'controller');
+    // a fresh run: its clock is at the invoice's timestamp, so an immediate reply has the same time
+    await page.goto('/scenarios/finance.invoice-bank-change/start');
+    await page.getByRole('button', { name: 'Create run' }).click();
+    await page.getByRole('link', { name: /Go to run/ }).click();
+    const run = new RunPage(page);
+    await run.tab('Mailboxes');
+    await page.getByRole('button', { name: 'Load more messages' }).click();
+    await run.openMessage('Invoice 4471');
+    const view = page.getByTestId('message-view');
+
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      view.getByRole('button', { name: 'Download invoice-4471.pdf' }).click(),
+    ]);
+    expect(download.suggestedFilename()).toBe('invoice-4471.pdf');
+    await expect(view.getByTestId('attachment-status-att_1')).toHaveText('Downloaded invoice-4471.pdf');
+    await expect(page.locator('iframe[src^="blob:"], object, embed')).toHaveCount(0);
+    expect(page.url()).toContain('/runs/');
+
+    await page.getByRole('button', { name: 'Inject email here' }).click();
+    const form = page.getByRole('form', { name: 'Inject email' });
+    await form.getByLabel('In reply to (threading)').selectOption('msg_invoice_1');
+    await form.getByLabel('Subject').fill('Same-second reply');
+    await form.getByLabel('Text body').fill('Received, thanks.');
+    await form.getByRole('button', { name: 'Deliver email' }).click();
+    await expect(page.getByTestId('compose-result')).toContainText('Delivered to');
+    await page.getByTestId('compose-result').getByRole('button').click(); // open the delivered reply
+    const thread = page.getByTestId('message-view').getByTestId('thread').getByRole('listitem');
+    await expect(thread.first()).toContainText('Open Invoice 4471'); // the parent first, though the times are equal
+    await expect(thread.nth(1)).toContainText('this message'); // right after it, before later replies
+  });
+
   test('evaluator sees the browser and activity but no inject or clock controls', async ({ page }) => {
     await new ConnectPage(page).connectAs(KEYS.evaluator, 'evaluator');
     const run = new RunPage(page);

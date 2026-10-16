@@ -17,7 +17,16 @@ const LABELS: Record<keyof Fields, string> = {
   eventId: 'Event id (optional)',
 };
 
-export function InjectForm({ runId, mailboxes }: { runId: string; mailboxes: SnapshotMailbox[] }) {
+export function InjectForm({
+  runId,
+  mailboxes,
+  inactiveReason = null,
+}: {
+  runId: string;
+  mailboxes: SnapshotMailbox[];
+  /** Why injection is unavailable (the run is not RUNNING), or null. */
+  inactiveReason?: string | null;
+}) {
   const [f, setF] = useState<Fields>({
     mailbox: mailboxes[0]?.id ?? '',
     from: '',
@@ -151,7 +160,16 @@ export function InjectForm({ runId, mailboxes }: { runId: string; mailboxes: Sna
           <textarea id="inj-html" rows={3} value={f.html} onChange={set('html')} />
         </div>
         {textField('eventId')}
-        <button type="submit" disabled={mutation.isPending}>
+        {inactiveReason && (
+          <p className="hint" id="inj-inactive" data-testid="inject-inactive">
+            {inactiveReason}
+          </p>
+        )}
+        <button
+          type="submit"
+          disabled={mutation.isPending || !!inactiveReason}
+          aria-describedby={inactiveReason ? 'inj-inactive' : undefined}
+        >
           {mutation.isPending ? 'Injecting…' : 'Inject message'}
         </button>
       </form>

@@ -2,7 +2,7 @@
 // time (presets or custom) or run one scheduler tick, then say what happened — scheduled
 // events that fired, persona replies and every message that was delivered — and refresh views.
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import type { ClockResult, RunOut } from '../api/types';
 import { useApi } from '../auth/session';
@@ -13,6 +13,7 @@ import { formatVirtual } from '../mailbox/mailFormat';
 import { clockCall } from './simActions';
 import { deliveredIndex, type Delivered } from './toolbarDiff';
 import { runKeys, runLinks } from './keys';
+import { canDo } from './runState';
 import '../mailbox/browser.css';
 
 const PRESETS: { seconds: number; label: string; long: string }[] = [
@@ -62,7 +63,7 @@ export function RunToolbar({ run }: { run: RunOut }) {
   const [custom, setCustom] = useState('');
   const [customError, setCustomError] = useState('');
   const [outcome, setOutcome] = useState<Outcome | null>(null);
-  const running = run.status === 'RUNNING';
+  const running = canDo(run, 'clock');
 
   /** Messages currently in the run (null when the state cannot be read: the diff is skipped). */
   // At most one /state request per side: the cached snapshot before, and after the step the
@@ -98,6 +99,12 @@ export function RunToolbar({ run }: { run: RunOut }) {
     onSuccess: (o) => setOutcome(o),
   });
 
+  // A new run state makes an earlier clock error stale (e.g. RUN_NOT_ACTIVE before a start).
+  const { reset: clearError } = mutation;
+  useEffect(() => {
+    clearError();
+  }, [run.status, run.epoch, clearError]);
+
   const onCustom = (e: FormEvent) => {
     e.preventDefault();
     const n = Number(custom);
@@ -116,7 +123,9 @@ export function RunToolbar({ run }: { run: RunOut }) {
       <h2 id="rt-h">Simulator clock</h2>
       {!running && (
         <p className="hint rt-result" data-testid="toolbar-inactive">
-          Clock controls need a RUNNING run; this run is {run.status}.
+          {run.replay_of
+            ? `Clock controls are not available on a replay run (${run.status}).`
+            : `Clock controls need a RUNNING run; this run is ${run.status}.`}
         </p>
       )}
       <div className="rt-group" role="group" aria-label="Advance virtual time">

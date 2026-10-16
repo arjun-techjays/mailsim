@@ -11,7 +11,7 @@ import type {
 } from '../api/types';
 import { AUTHORING_META } from './authoring';
 import { FINANCE_MAILBOX, newMockRun, SCENARIO_KEY, type KeyInfo, type MockDb, type MockRun } from './db';
-import { parseYaml, YamlError } from './yaml';
+import { parseYaml } from './yaml';
 
 type Guard = 'controller' | 'evaluator' | 'inspector' | 'agent';
 type Doc = Record<string, unknown>;
@@ -98,6 +98,8 @@ function countErrors(count: unknown, path: string, out: ValidationIssue[]) {
 }
 
 /** A light re-implementation of the pydantic answer-key model + leak guard (src/mailsim/scenario/answer_key.py). */
+const KNOWN_FOLDERS = ['inbox', 'sent', 'drafts', 'archive', 'trash', 'spam'];
+
 export function validateAnswerKeyDoc(doc: unknown, versions: number[]): { errors: ValidationIssue[]; warnings: ValidationIssue[] } {
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
@@ -171,6 +173,14 @@ export function validateAnswerKeyDoc(doc: unknown, versions: number[]): { errors
         });
       }
       countErrors(check.count, `${c}.count`, errors);
+      // Reference checks at deep paths (QA-A3): unknown folders and operations.
+      const where = isObj(check.where) ? check.where : null;
+      if (where && typeof where.folder === 'string' && !KNOWN_FOLDERS.includes(where.folder)) {
+        errors.push(issue(`${c}.where.folder`, `unknown folder ${JSON.stringify(where.folder)}; use one of ${KNOWN_FOLDERS.join(', ')}`));
+      }
+      if (isObj(check.forbid) && typeof check.forbid.operation === 'string' && check.forbid.operation && !AUTHORING_META.agent_operations.includes(check.forbid.operation)) {
+        errors.push(issue(`${c}.forbid.operation`, `unknown operation ${JSON.stringify(check.forbid.operation)}`));
+      }
     }
     secrets.push({ text: requirement, path: `${p}.requirement` });
     if (typeof a.rubric === 'string') secrets.push({ text: a.rubric, path: `${p}.rubric` });
@@ -195,8 +205,9 @@ export function createAkeyHandlers(db: MockDb, h: AkeyHelpers): HttpHandler[] {
       try {
         return { doc: parseYaml(body.source), error: null };
       } catch (e) {
-        const line = e instanceof YamlError ? e.line : 0;
-        return { doc: null, error: issue(`line ${line}`, (e as Error).message) };
+        // Like the server: validate/publish report unparseable text at `<source>` (only the
+        // YAML-to-JSON tool knows the line).
+        return { doc: null, error: issue('<source>', (e as Error).message) };
       }
     }
     return { doc: body.document ?? null, error: null };

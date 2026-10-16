@@ -1,15 +1,18 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import type { RunCreate, RunCreated } from '../api/types';
+import { isRedacted } from '../api/client';
+import type { RunCreate, RunCreated, RunOut } from '../api/types';
 import { useApi } from '../auth/session';
 import { rememberRun } from '../auth/storage';
 import { CopyButton } from '../components/CopyButton';
 import { PageIntro } from '../components/PageIntro';
-import { keyPrefix, useAgentKeys } from '../connect/agentKeys';
+import { credentialKeyId, keyPrefix, useAgentKeys } from '../connect/agentKeys';
 import { WhatIsThis } from '../guide/Concepts';
 import { ErrorDisplay } from '../components/ErrorDisplay';
 import { Loading } from '../components/Status';
+import { UnconfirmedNotice } from '../components/UnconfirmedNotice';
+import { isUnconfirmed, useActionKey } from '../hooks/useActionKey';
 import { usePageTitle } from '../hooks/usePageTitle';
 
 /**
@@ -64,6 +67,46 @@ function CredentialPanel({ created, onDismiss }: { created: RunCreated; onDismis
   );
 }
 
+/**
+ * A run recovered by retrying an unconfirmed create: the server replayed its response with the
+ * agent key redacted (secrets are never stored for replays), so offer a fresh key instead.
+ */
+function RecoveredRun({ run, onMinted }: { run: RunOut; onMinted: (created: RunCreated) => void }) {
+  const api = useApi();
+  const mint = useMutation({
+    mutationFn: () => api.mintAgentKey(run.id),
+    gcTime: 0,
+    onSuccess: (cred) => {
+      onMinted({ run, agent_credentials: [cred] });
+      mint.reset(); // the secret lives in the credential panel and key store only
+    },
+  });
+  const runHref = `/runs/${encodeURIComponent(run.id)}`;
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    heading.current?.focus(); // announced: the notice replaces the one that had focus
+  }, []);
+  return (
+    <section aria-labelledby="recovered-h" className="card warning" data-testid="run-recovered">
+      <h2 id="recovered-h" tabIndex={-1} ref={heading}>
+        Run {run.id} was created
+      </h2>
+      <p role="status">
+        Its agent key was in the response that never reached this tab, and the API shows a key only once. Mint a new
+        agent key for this run; keys issued earlier keep working until you revoke them on its Connect page.
+      </p>
+      <div className="row">
+        <button type="button" className="primary" disabled={mint.isPending} onClick={() => mint.mutate()}>
+          {mint.isPending ? 'Minting…' : 'Mint a new agent key'}
+        </button>
+        <Link to={`${runHref}/connect`}>Connect your agent</Link>
+        <Link to={runHref}>Go to run {run.id}</Link>
+      </div>
+      {mint.isError && <ErrorDisplay error={mint.error} title="Could not mint an agent key" />}
+    </section>
+  );
+}
+
 export function StartRunPage() {
   const { key = '' } = useParams();
   usePageTitle(`Start run · ${key}`);
@@ -75,37 +118,60 @@ export function StartRunPage() {
   const [start, setStart] = useState(true);
   const [created, setCreated] = useState<RunCreated | null>(null);
   const [dismissedRun, setDismissedRun] = useState<string | null>(null);
+  const [recovered, setRecovered] = useState<RunOut | null>(null);
   const agentKeys = useAgentKeys();
+  const action = useActionKey();
+  const lastBody = useRef<RunCreate | null>(null);
+
+  const show = (data: RunCreated) => {
+    setCreated(data);
+    const cred = data.agent_credentials[0];
+    if (cred) {
+      agentKeys.set(data.run.id, {
+        apiKey: cred.api_key,
+        prefix: keyPrefix(cred.api_key),
+        mailboxAddress: cred.mailbox_address,
+        mailboxId: cred.mailbox_id,
+        keyId: credentialKeyId(cred),
+      });
+    }
+  };
 
   const mutation = useMutation({
-    mutationFn: (body: RunCreate) => api.createRun(key, body),
+    mutationFn: (body: RunCreate) => api.createRun(key, body, { idempotencyKey: action.keyFor(body) }),
     gcTime: 0,
     onSuccess: (data) => {
-      setCreated(data);
+      action.done();
       rememberRun({ id: data.run.id, scenarioKey: key });
-      const cred = data.agent_credentials[0];
-      if (cred) {
-        agentKeys.set(data.run.id, {
-          apiKey: cred.api_key,
-          prefix: keyPrefix(cred.api_key),
-          mailboxAddress: cred.mailbox_address,
-          mailboxId: cred.mailbox_id,
-        });
-      }
+      if (data.agent_credentials.some((c) => isRedacted(c.api_key))) setRecovered(data.run);
+      else show(data);
     },
   });
 
+  const submit = (body: RunCreate) => {
+    lastBody.current = body;
+    setCreated(null);
+    setRecovered(null);
+    setDismissedRun(null);
+    mutation.mutate(body);
+  };
+  const [buildError, setBuildError] = useState('');
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
-    setCreated(null);
-    setDismissedRun(null);
-    mutation.mutate({
+    if (build.trim().toLowerCase() === '(no build)') {
+      setBuildError('“(no build)” is how runs without a build id are labelled; leave the field empty for that.');
+      return;
+    }
+    setBuildError('');
+    submit({
       scenario_version: version ? Number(version) : null,
       checks: checks || null,
       agent_build: build.trim() || null,
       start,
     });
   };
+  const unconfirmed = mutation.isError && isUnconfirmed(mutation.error);
+  const locked = mutation.isPending || unconfirmed;
 
   return (
     <>
@@ -131,57 +197,100 @@ export function StartRunPage() {
         <ErrorDisplay error={scenario.error} title="Could not load scenario" />
       ) : (
         <form className="form" onSubmit={onSubmit}>
-          <div className="field">
-            <label htmlFor="sv">Scenario version</label>
-            <select id="sv" value={version} onChange={(e) => setVersion(e.target.value)}>
-              <option value="">Latest (v{scenario.data.latest_version?.version ?? '?'})</option>
-              {scenario.data.versions.map((v) => (
-                <option key={v} value={v}>
-                  v{v}
-                </option>
+          {/* Locked while a create is in flight or unconfirmed: a changed request would get a new key. */}
+          <fieldset className="bare" disabled={locked}>
+            <div className="field">
+              <label htmlFor="sv">Scenario version</label>
+              <select id="sv" value={version} onChange={(e) => setVersion(e.target.value)}>
+                <option value="">Latest (v{scenario.data.latest_version?.version ?? '?'})</option>
+                {scenario.data.versions.map((v) => (
+                  <option key={v} value={v}>
+                    v{v}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <fieldset>
+              <legend>Post-run deterministic checks</legend>
+              <p className="hint" id="checks-help">
+                Evaluation preference only. It is stored with the run and never shown to the agent.
+              </p>
+              <WhatIsThis term="checks" />
+              {(
+                [
+                  ['', 'Answer-key default'],
+                  ['on', 'On'],
+                  ['off', 'Off'],
+                ] as const
+              ).map(([value, label]) => (
+                <label key={value || 'default'} className="radio">
+                  <input
+                    type="radio"
+                    name="checks"
+                    value={value}
+                    checked={checks === value}
+                    onChange={() => setChecks(value)}
+                    aria-describedby="checks-help"
+                  />
+                  {label}
+                </label>
               ))}
-            </select>
-          </div>
-          <fieldset>
-            <legend>Post-run deterministic checks</legend>
-            <p className="hint" id="checks-help">
-              Evaluation preference only. It is stored with the run and never shown to the agent.
-            </p>
-            <WhatIsThis term="checks" />
-            {(
-              [
-                ['', 'Answer-key default'],
-                ['on', 'On'],
-                ['off', 'Off'],
-              ] as const
-            ).map(([value, label]) => (
-              <label key={value || 'default'} className="radio">
-                <input
-                  type="radio"
-                  name="checks"
-                  value={value}
-                  checked={checks === value}
-                  onChange={() => setChecks(value)}
-                  aria-describedby="checks-help"
-                />
-                {label}
-              </label>
-            ))}
+            </fieldset>
+            <div className="field">
+              <label htmlFor="build">Agent build id</label>
+              <input
+                id="build"
+                value={build}
+                maxLength={200}
+                onChange={(e) => setBuild(e.target.value)}
+                placeholder="e.g. agent-v2"
+                aria-invalid={!!buildError || undefined}
+                aria-describedby={buildError ? 'build-err build-help' : 'build-help'}
+              />
+              <p id="build-help" className="hint">
+                Compare builds groups runs by this id; runs without one are grouped as “(no build)”.
+              </p>
+              {buildError && (
+                <p id="build-err" className="field-error" role="alert">
+                  {buildError}
+                </p>
+              )}
+            </div>
+            <label className="checkbox">
+              <input type="checkbox" checked={start} onChange={(e) => setStart(e.target.checked)} />
+              Start the run immediately
+            </label>
+            <button type="submit" disabled={locked}>
+              {mutation.isPending ? 'Creating…' : 'Create run'}
+            </button>
           </fieldset>
-          <div className="field">
-            <label htmlFor="build">Agent build id</label>
-            <input id="build" value={build} maxLength={200} onChange={(e) => setBuild(e.target.value)} placeholder="e.g. agent-v2" />
-          </div>
-          <label className="checkbox">
-            <input type="checkbox" checked={start} onChange={(e) => setStart(e.target.checked)} />
-            Start the run immediately
-          </label>
-          <button type="submit" disabled={mutation.isPending}>
-            {mutation.isPending ? 'Creating…' : 'Create run'}
-          </button>
+          <p className="hint" role="status">
+            {mutation.isPending ? 'Creating the run and seeding its mailboxes; large scenarios can take a minute.' : ''}
+          </p>
         </form>
       )}
-      {mutation.isError && <ErrorDisplay error={mutation.error} title="Could not create run" />}
+      {unconfirmed ? (
+        <UnconfirmedNotice
+          error={mutation.error}
+          what="run"
+          onRetry={() => submit(lastBody.current as RunCreate)}
+          onDiscard={() => {
+            action.done();
+            mutation.reset();
+          }}
+        />
+      ) : (
+        mutation.isError && <ErrorDisplay error={mutation.error} title="Could not create run" />
+      )}
+      {recovered && (
+        <RecoveredRun
+          run={recovered}
+          onMinted={(data) => {
+            setRecovered(null);
+            show(data);
+          }}
+        />
+      )}
       {created && (
         <CredentialPanel
           created={created}

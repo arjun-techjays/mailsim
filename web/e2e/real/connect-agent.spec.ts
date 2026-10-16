@@ -94,10 +94,18 @@ test('connect a real run through every served interface', async ({ page, request
   await expect(page.getByTestId('test-fail-rest')).toContainText('(UNAUTHENTICATED');
   await expect(page.getByTestId('test-fail-rest')).toContainText('invalid_key');
 
-  // mint (revokes the original key), then revoke the new one
+  // mint, revoke the original key explicitly (servers that still revoke on mint list it as
+  // revoked already: then there is nothing left to revoke), then revoke the new one
   await page.getByRole('button', { name: 'Mint a new agent key' }).click();
   await page.getByRole('button', { name: 'Mint key' }).click();
   await expect(page.getByText(/New agent key minted/)).toBeVisible();
+  await expect(page.getByTestId('held-marker')).toBeVisible();
+  const revokeOthers = page.getByTestId('minted-notice').getByRole('button', { name: /^Revoke the other/ });
+  if (await revokeOthers.isVisible()) {
+    await revokeOthers.click();
+    await page.getByRole('alertdialog').getByRole('button', { name: 'Revoke' }).click();
+    await expect(revokeOthers).toHaveCount(0);
+  }
   const old = await request.get('/gmail/v1/users/me/profile', { headers: { Authorization: `Bearer ${key}` } });
   expect(old.status()).toBe(401);
   await page.getByRole('button', { name: 'Test REST connection' }).click();

@@ -131,6 +131,13 @@ test.describe('connect your agent', () => {
     await expect(page.getByText(/New agent key minted/)).toBeVisible();
     await expect(page.getByTestId('agent-key-value')).toContainText('msk_000000000001_mock');
     const keys = page.getByTestId('agent-keys');
+    // Minting no longer revokes: the old key stays active until revoked explicitly.
+    await expect(keys.getByRole('row', { name: /key_minted_0001/ })).toContainText('active');
+    await expect(keys.getByRole('row', { name: /key_mk_agent/ })).toContainText('active');
+    const notice = page.getByTestId('minted-notice');
+    await expect(notice).toContainText('other agent key still works');
+    await notice.getByRole('button', { name: 'Revoke the other key' }).click();
+    await page.getByRole('alertdialog', { name: 'Revoke key_mk_agent?' }).getByRole('button', { name: 'Revoke' }).click();
     await expect(keys.getByRole('row', { name: /key_mk_agent/ })).toContainText('revoked');
     await expect(keys.getByRole('row', { name: /key_minted_0001/ })).toContainText('active');
 

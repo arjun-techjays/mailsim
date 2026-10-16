@@ -8,6 +8,7 @@ export function ConfirmDialog({
   title,
   children,
   confirmLabel,
+  cancelLabel = 'Cancel',
   busy = false,
   onConfirm,
   onCancel,
@@ -15,6 +16,8 @@ export function ConfirmDialog({
   title: string;
   children: ReactNode;
   confirmLabel: string;
+  /** Label of the dismiss button (e.g. "Keep running" when the action itself is a cancel). */
+  cancelLabel?: string;
   busy?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
@@ -51,7 +54,7 @@ export function ConfirmDialog({
           {busy ? 'Working…' : confirmLabel}
         </button>
         <button type="button" ref={cancel} onClick={onCancel}>
-          Cancel
+          {cancelLabel}
         </button>
       </div>
     </div>

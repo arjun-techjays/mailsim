@@ -3,7 +3,9 @@ import { fieldId } from './model';
 
 /** "assertions.1.check.where.folder" -> "Assertion 2 “id”: check › where › folder". */
 export function describePath(path: string, assertions: AssertionDraft[]): string {
-  if (!path) return 'Whole answer key';
+  if (!path || path === '<root>') return 'Whole answer key';
+  if (path === '<source>') return 'YAML text';
+  if (/^line \d+$/.test(path)) return `YAML ${path}`;
   const m = /^assertions\.(\d+)(?:\.(.*))?$/.exec(path);
   if (!m) return path.replace(/\./g, ' › ');
   const a = assertions[Number(m[1])];

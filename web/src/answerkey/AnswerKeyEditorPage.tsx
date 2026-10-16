@@ -29,7 +29,7 @@ import {
 import { useLiveValidation } from './useLiveValidation';
 import { useScenarioContext } from './useScenarioContext';
 import { describePath, focusPath } from './paths';
-import { byPath, clientIssues, fromServer, leakedFields, mergeIssues, type Issue } from './validation';
+import { byPath, clientIssues, fromServer, leakedFields, mergeIssues, yamlProblems, type Issue } from './validation';
 import './answerkey.css';
 
 function IssueList({ issues, assertions, label }: { issues: Issue[]; assertions: AssertionDraft[]; label: string }) {
@@ -135,7 +135,9 @@ function AnswerKeyEditor({ scenarioKey, meta, versions, taken, base, storageKey,
       message: `v${draft.version} already exists and published versions never change. Use v${Math.max(...taken) + 1}.`,
     });
   }
-  const problems = mergeIssues(client, server.filter((i) => i.leakVersion === undefined));
+  const serverProblems = server.filter((i) => i.leakVersion === undefined);
+  // YAML mode: one parse error is one problem (the conversion's line-numbered message), not two.
+  const problems = mode === 'yaml' ? yamlProblems(yamlIssue, serverProblems) : mergeIssues(client, serverProblems);
   const inline = byPath([...problems, ...leakedFields(draft.assertions, leaks)]);
   const err = (path: string) => inline.get(path) ?? [];
 
@@ -222,7 +224,7 @@ function AnswerKeyEditor({ scenarioKey, meta, versions, taken, base, storageKey,
     },
   });
 
-  const knownProblems = problems.length + leaks.length + (yamlIssue ? 1 : 0);
+  const knownProblems = problems.length + leaks.length;
   const settled = live.pending
     ? null
     : live.error
@@ -238,7 +240,7 @@ function AnswerKeyEditor({ scenarioKey, meta, versions, taken, base, storageKey,
     e.preventDefault();
     // While a re-check is in flight the server result may be stale: only block on fresh facts
     // (the publish endpoint validates again anyway).
-    const blocking = live.pending ? knownProblems - problems.length - leaks.length + client.length : knownProblems;
+    const blocking = live.pending ? client.length + (mode === 'yaml' && yamlIssue ? 1 : 0) : knownProblems;
     if (blocking > 0) {
       setBlocked(true);
       summary.current?.focus();
@@ -308,11 +310,14 @@ function AnswerKeyEditor({ scenarioKey, meta, versions, taken, base, storageKey,
             value={yaml}
             aria-describedby={yamlIssue ? 'ak-yaml-help ak-yaml-err' : 'ak-yaml-help'}
             aria-invalid={!!yamlIssue || undefined}
-            onChange={(e) => setYaml(e.target.value)}
+            onChange={(e) => {
+              setYaml(e.target.value);
+              setYamlIssue(null); // stale once edited: live validation reports what is left
+            }}
           />
           {yamlIssue && (
             <p id="ak-yaml-err" className="field-error" role="alert">
-              {yamlIssue.path ? `${yamlIssue.path}: ` : ''}
+              {/^line \d+$/.test(yamlIssue.path) ? `Line ${yamlIssue.path.slice(5)}: ` : ''}
               {yamlIssue.message}
             </p>
           )}

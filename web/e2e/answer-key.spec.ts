@@ -89,8 +89,16 @@ test.describe('answer-key editor', () => {
     await expect(cards(page)).toHaveCount(3);
     await page.getByRole('button', { name: 'YAML' }).click();
     await page.getByLabel('Answer key as YAML').fill('answer_key: [broken');
+    // UI-1: one parse error is one problem, with the server's message
+    const status = page.getByTestId('validation-status');
+    await expect(status).toHaveText('1 problem to fix.');
+    await expect(page.getByRole('list', { name: 'Problems' }).getByRole('listitem')).toHaveCount(1);
+    await expect(page.getByRole('list', { name: 'Problems' })).toContainText('YAML text:');
     await page.getByRole('button', { name: 'Form' }).click();
-    await expect(page.getByRole('alert').filter({ hasText: 'line 1' })).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: 'Line 1:' })).toBeVisible();
+    await expect(status).toHaveText('1 problem to fix.');
+    await expect(page.getByRole('list', { name: 'Problems' }).getByRole('listitem')).toHaveCount(1);
+    await expect(page.getByRole('list', { name: 'Problems' })).toContainText('YAML line 1:');
     await expectAccessible(page, 'answer-key yaml error');
   });
 

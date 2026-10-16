@@ -37,7 +37,14 @@ function RecentRuns() {
 /** GET /v1/runs is an additive endpoint; when absent (404/405/501) fall back to the tab's list. */
 function RunList() {
   const api = useApi();
-  const list = useCursorList<RunOut>(['runs'], (cursor) => api.listRuns(cursor));
+  const [replays, setReplays] = useState(false);
+  const list = useCursorList<RunOut>(['runs', replays], (cursor) => api.listRuns(cursor, replays ? { include_replays: true } : {}));
+  const toggle = (
+    <label className="checkbox">
+      <input type="checkbox" checked={replays} onChange={(e) => setReplays(e.target.checked)} />
+      Include replay runs (determinism checks, never evaluated)
+    </label>
+  );
   if (list.isLoading) return <Loading label="Loading runs…" />;
   if (list.error && list.items.length === 0) {
     const absent = isApiError(list.error) && [404, 405, 501].includes(list.error.status as number);
@@ -57,6 +64,7 @@ function RunList() {
   return (
     <>
       <h2>Runs in this project</h2>
+      {toggle}
       {list.items.length === 0 ? (
         <Empty>
           No runs yet. <Link to="/scenarios">Pick a scenario</Link> and start a run; then connect your agent to it.
@@ -77,6 +85,14 @@ function RunList() {
               <tr key={r.id}>
                 <th scope="row">
                   <Link to={runHref(r.id)}>{r.id}</Link>
+                  {r.replay_of && (
+                    <>
+                      {' '}
+                      <span className="badge" data-testid="replay-badge">
+                        Replay of {r.replay_of}
+                      </span>
+                    </>
+                  )}
                 </th>
                 <td>
                   <Badge value={r.status} />

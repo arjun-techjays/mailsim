@@ -3,6 +3,8 @@
 // - Parses the single error envelope {"error": {code, message, details, request_id}}.
 // - Per-request timeout via AbortController, surfaced as a distinct error kind.
 
+import { safeBaseName } from './filename';
+
 export type ApiErrorKind = 'http' | 'timeout' | 'network';
 
 export class ApiError extends Error {
@@ -51,14 +53,32 @@ export interface RequestOptions {
   body?: unknown;
   /** Send an Idempotency-Key header (create run, inject, clock, reset, ...). */
   idempotent?: boolean;
+  /**
+   * The Idempotency-Key to send (implies `idempotent`). Pass the same key when retrying one user
+   * action so the server replays its first answer instead of doing the work twice.
+   */
+  idempotencyKey?: string;
+  /** Per-request timeout, overriding the client default (slow operations: create run, evaluate). */
+  timeoutMs?: number;
   signal?: AbortSignal;
 }
 
 export const DEFAULT_TIMEOUT_MS = 15_000;
+/** Create-run and evaluate can legitimately take long (LLM judging, large scenarios). */
+export const LONG_TIMEOUT_MS = 120_000;
+
+function envMs(raw: unknown, fallback: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
 
 export function defaultTimeoutMs(): number {
-  const raw = Number(import.meta.env.VITE_REQUEST_TIMEOUT_MS);
-  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_TIMEOUT_MS;
+  return envMs(import.meta.env.VITE_REQUEST_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
+}
+
+/** Timeout for slow operations (VITE_LONG_REQUEST_TIMEOUT_MS, default 120 s). */
+export function longTimeoutMs(): number {
+  return envMs(import.meta.env.VITE_LONG_REQUEST_TIMEOUT_MS, LONG_TIMEOUT_MS);
 }
 
 export function buildUrl(baseUrl: string, path: string, query?: Record<string, QueryValue>): string {
@@ -76,8 +96,35 @@ export function buildUrl(baseUrl: string, path: string, query?: Record<string, Q
   return `${base}${path}${qs ? `?${qs}` : ''}`;
 }
 
-function newIdempotencyKey(): string {
+export function newIdempotencyKey(): string {
   return `dash-${crypto.randomUUID()}`;
+}
+
+/** Value the server substitutes for one-time secrets (agent keys) when it replays a response. */
+export function isRedacted(value: string | null | undefined): boolean {
+  return typeof value === 'string' && value.startsWith('<redacted');
+}
+
+/**
+ * The filename of a `Content-Disposition` header (RFC 6266: `filename*` wins over `filename`),
+ * reduced to a safe base name, or null.
+ */
+export function dispositionFilename(header: string | null): string | null {
+  if (!header) return null;
+  let name: string | null = null;
+  const star = /filename\*\s*=\s*([^']*)'[^']*'([^;]+)/i.exec(header);
+  if (star) {
+    try {
+      name = decodeURIComponent((star[2] as string).trim().replace(/^"|"$/g, ''));
+    } catch {
+      name = null;
+    }
+  }
+  if (name === null) {
+    const plain = /(?:^|;)\s*filename\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^;]+))/i.exec(header);
+    if (plain) name = plain[1] !== undefined ? plain[1].replace(/\\(.)/g, '$1') : (plain[2] as string).trim();
+  }
+  return safeBaseName(name);
 }
 
 interface EnvelopeShape {
@@ -115,14 +162,15 @@ function errorFromResponse(res: Response, text: string): ApiError {
   });
 }
 
-async function send(
+async function send<B extends 'text' | 'blob' = 'text'>(
   cfg: ApiConfig,
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
   path: string,
   opts: RequestOptions,
   accept: string,
-): Promise<{ res: Response; text: string }> {
-  const timeoutMs = cfg.timeoutMs ?? defaultTimeoutMs();
+  as?: B,
+): Promise<{ res: Response; text: string; blob: B extends 'blob' ? Blob : null }> {
+  const timeoutMs = opts.timeoutMs ?? cfg.timeoutMs ?? defaultTimeoutMs();
   const controller = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -136,10 +184,12 @@ async function send(
   if (cfg.apiKey) headers.Authorization = `Bearer ${cfg.apiKey}`;
   else if (cfg.localToken) headers[LOCAL_TOKEN_HEADER] = cfg.localToken;
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
-  if (opts.idempotent) headers['Idempotency-Key'] = newIdempotencyKey();
+  if (opts.idempotencyKey) headers['Idempotency-Key'] = opts.idempotencyKey;
+  else if (opts.idempotent) headers['Idempotency-Key'] = newIdempotencyKey();
 
   let res: Response;
-  let text: string;
+  let text = '';
+  let blob: Blob | null = null;
   try {
     // The timer stays armed until the whole body has been read.
     res = await fetch(buildUrl(cfg.baseUrl, path, opts.query), {
@@ -150,7 +200,8 @@ async function send(
       credentials: 'omit',
       referrerPolicy: 'no-referrer',
     });
-    text = await res.text();
+    if (as === 'blob' && res.ok) blob = await res.blob();
+    else text = await res.text();
   } catch (e) {
     if (timedOut) {
       throw new ApiError({
@@ -171,7 +222,7 @@ async function send(
   }
 
   if (!res.ok) throw errorFromResponse(res, text);
-  return { res, text };
+  return { res, text, blob: blob as B extends 'blob' ? Blob : null };
 }
 
 export async function apiRequest<T>(
@@ -200,7 +251,24 @@ export async function apiText(
   cfg: ApiConfig,
   path: string,
   query?: Record<string, QueryValue>,
-): Promise<{ text: string; contentType: string }> {
+): Promise<{ text: string; contentType: string; filename: string | null }> {
   const { res, text } = await send(cfg, 'GET', path, { query }, '*/*');
-  return { text, contentType: res.headers.get('content-type') ?? 'application/octet-stream' };
+  return {
+    text,
+    contentType: res.headers.get('content-type') ?? 'application/octet-stream',
+    filename: dispositionFilename(res.headers.get('content-disposition')),
+  };
+}
+
+/** GET a binary resource (attachments) as a Blob, with the same auth/timeout/errors. */
+export async function apiBlob(
+  cfg: ApiConfig,
+  path: string,
+): Promise<{ blob: Blob; contentType: string; filename: string | null }> {
+  const { res, blob } = await send(cfg, 'GET', path, {}, '*/*', 'blob');
+  return {
+    blob,
+    contentType: res.headers.get('content-type') ?? 'application/octet-stream',
+    filename: dispositionFilename(res.headers.get('content-disposition')),
+  };
 }
