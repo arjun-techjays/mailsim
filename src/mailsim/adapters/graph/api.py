@@ -236,15 +236,23 @@ def folder_record(ctx: Ctx, ref: FolderRef) -> dict[str, Any]:
     raise NotFound("The specified folder could not be found in the store.")
 
 
-def attachment_docs(request: Request, m: CanonicalMessage) -> list[dict[str, Any]]:
-    blobs = getattr(request.app.state, "blobs", None)
-    return [res.attachment(a, m, blobs.get(a.blob_ref) if blobs is not None else None)
-            for a in m.attachments]  # fmt: skip
+def attachment_docs(mb: AgentMailbox, m: CanonicalMessage) -> list[dict[str, Any]]:
+    """Attachment resources with contentBytes: each attachment's bytes are one audited facade
+    read (`get_attachment`), like a REST or MCP attachment download."""
+    docs = []
+    for a in m.attachments:
+        ref, data = mb.get_attachment(m.id, a.id)
+        docs.append(res.attachment(ref, m, data))
+    return docs
 
 
 def render(request: Request, m: CanonicalMessage, *, select: frozenset[str] | None = None,
-           prefer: Prefer | None = None, expand: odata.Expand | None = None) -> dict[str, Any]:  # fmt: skip
-    atts = attachment_docs(request, m) if expand is not None and expand.attachments else None
+           prefer: Prefer | None = None, expand: odata.Expand | None = None,
+           mb: AgentMailbox | None = None) -> dict[str, Any]:  # fmt: skip
+    atts = (
+        attachment_docs(mb, m) if mb is not None and expand is not None and expand.attachments
+        else None
+    )  # fmt: skip
     return res.message(m, select=select, prefer_body=prefer.body if prefer else None,
                        expand=expand, attachments=atts)  # fmt: skip
 
@@ -322,8 +330,8 @@ def check_writable(ctx: Ctx, payload: Mapping[str, Any]) -> None:
     if payload.get("importance") not in (None, "normal"):
         unsupported.append("importance")
     if unsupported:
-        raise UnsupportedOperation(f"setting {', '.join(unsupported)} is not supported by the "
-                                   "mailsim Graph profile", details={"properties": unsupported})  # fmt: skip
+        raise UnsupportedOperation(f"setting {', '.join(unsupported)} is not supported",
+                                   details={"properties": unsupported})  # fmt: skip
     for name in ("from", "sender"):
         address = odata.path_get(payload.get(name), "emailAddress/address")
         if isinstance(address, str) and address.casefold() != ctx.email().casefold():
@@ -517,7 +525,10 @@ def list_messages(ctx: Ctx, folder: FolderRef | None) -> JSONResponse:
     page = docs[skip : skip + top]
     body: dict[str, Any] = {
         "@odata.context": context_url(request, "users('me')/messages"),
-        "value": [render(request, m, select=select, prefer=prefer, expand=expand) for m, _ in page],
+        "value": [
+            render(request, m, select=select, prefer=prefer, expand=expand, mb=ctx.mb)
+            for m, _ in page
+        ],
     }
     if count == "true":
         body["@odata.count"] = len(docs)
@@ -631,7 +642,7 @@ def get_message(message_id: str, ctx: Context) -> JSONResponse:
     prefer = Prefer.parse(ctx.request)
     select, expand = read_options(ctx.request)
     m = ctx.mb.get_message(resolve_message(ctx, message_id))
-    doc = render(ctx.request, m, select=select, prefer=prefer, expand=expand)
+    doc = render(ctx.request, m, select=select, prefer=prefer, expand=expand, mb=ctx.mb)
     return ok({"@odata.context": context_url(ctx.request, "users('me')/messages/$entity"), **doc},
               headers=prefer.applied())  # fmt: skip
 
@@ -889,7 +900,7 @@ def _attachment(ctx: Ctx, message_id: str, attachment_id: str) -> tuple[Canonica
 def list_attachments(message_id: str, ctx: Context) -> JSONResponse:
     m = ctx.mb.get_message(resolve_message(ctx, message_id))
     return ok({"@odata.context": context_url(ctx.request, "users('me')/messages('id')/attachments"),
-               "value": attachment_docs(ctx.request, m)})  # fmt: skip
+               "value": attachment_docs(ctx.mb, m)})  # fmt: skip
 
 
 @route("GET", "/messages/{message_id}/attachments/{attachment_id}")
@@ -916,6 +927,6 @@ def get_attachment_content(message_id: str, attachment_id: str, ctx: Context) ->
 def unsupported(path: str, ctx: Context) -> NoReturn:
     """Anything not listed above fails explicitly (spec 5.5 capability discovery)."""
     raise UnsupportedOperation(
-        f"{ctx.request.method} /{path} is not supported by the mailsim Graph profile",
+        f"{ctx.request.method} /{path} is not supported by this server",
         details={"path": path},
     )

@@ -15,7 +15,7 @@ from mailsim.adapters.graph import errors as graph_errors
 from mailsim.adapters.graph import resources as res
 from mailsim.domain.errors import RateLimited, UpstreamUnavailable
 from mailsim.domain.models import CanonicalMessage
-from tests.adapters.graph.conftest import BASE, make_app, open_agent
+from tests.adapters.graph.conftest import BASE, open_agent
 from tests.scenarios import write_variant
 
 pytestmark = pytest.mark.db
@@ -224,9 +224,18 @@ def test_kql_search(world):
     assert subjects(**{"$search": '"received>=2100-01-01"'}) == []
     assert "kql-one" in subjects(**{"$search": '"received:2000-01-01..2100-01-01"'})
     assert world.messages("sentitems", **{"$search": '"subject:invoice"'}) == []
-    body = err(world.call("GET", "/me/messages", params={"$search": '"foo:bar"'}), 400,
+    # a phrase alone, two words (AND, any order), a phrase plus a word
+    assert subjects(**{"$search": '"\\"bank change\\""'}) == ["kql-one"]
+    assert subjects(**{"$search": '"\\"change bank\\""'}) == []
+    assert subjects(**{"$search": '"change urgent"'}) == ["kql-one"]
+    assert subjects(**{"$search": '"\\"bank change\\" urgent"'}) == ["kql-one"]
+    assert subjects(**{"$search": '"\\"bank change\\" nothing"'}) == []
+    assert subjects(**{"$search": '"re:meeting"'}) == []  # unknown prefix: plain text
+    body = err(world.call("GET", "/me/messages", params={"$search": '"isRead:maybe"'}), 400,
                "ErrorInvalidRequest")  # fmt: skip
-    assert "unsupported property" in body["message"]
+    assert "true or false" in body["message"]
+    err(world.call("GET", "/me/messages", params={"$search": '"received:9999-12-31"'}), 400,
+        "ErrorInvalidRequest")  # fmt: skip
     err(world.call("GET", "/me/messages", params={"$search": '"(subject:x"'}), 400,
         "ErrorInvalidRequest")  # fmt: skip
     count = world.call("GET", "/me/messages/$count", expect=200,
@@ -272,14 +281,27 @@ def test_attachments(world):
         "ErrorItemNotFound")  # fmt: skip
 
 
-def test_attachment_metadata_without_a_blob_store(env, world):
-    app = make_app(env)
-    app.state.blobs = None
-    client = TestClient(app, raise_server_exceptions=False)
-    client.headers["Authorization"] = f"Bearer {world.key}"
+def test_attachment_resource_without_bytes_has_no_content(world):
+    m = world.mb().list_messages(folder="inbox").items
+    msg = next(x for x in m if x.attachments)
+    doc = res.attachment(msg.attachments[0], msg, None)
+    assert "contentBytes" not in doc and doc["size"] > 0
+
+
+def test_attachment_bytes_are_audited_facade_reads(world):
     m = invoice(world)
-    (att,) = client.get(f"{BASE}/me/messages/{m['id']}/attachments").json()["value"]
-    assert "contentBytes" not in att and att["size"] > 0
+
+    def reads():
+        return [a for a in world.ev.actions(world.run)
+                if a["actor"] == "agent" and "attachment_id" in a["input"]]  # fmt: skip
+
+    (att,) = world.get(f"/me/messages/{m['id']}/attachments")["value"]
+    assert len(reads()) == 1  # the list's contentBytes
+    world.get(f"/me/messages/{m['id']}/attachments/{att['id']}")
+    world.call("GET", f"/me/messages/{m['id']}/attachments/{att['id']}/$value", 200)
+    world.get(f"/me/messages/{m['id']}", params={"$expand": "attachments"})
+    world.get("/me/messages", params={"$expand": "attachments", "$top": 100})
+    assert len(reads()) == 5 and {a["operation"] for a in reads()} == {"read"}
 
 
 # --------------------------------------------------------------------------- folders

@@ -8,15 +8,18 @@ Grammar (keywords upper-case, property names case-insensitive)::
     and_expr := unary (["AND"] unary)*            (juxtaposition = AND)
     unary    := "NOT" unary | "-" unary | atom
     atom     := "(" or_expr ")" | term
-    term     := prop ":" value | "received" ("<"|"<="|">"|">="|"=") date
-              | "received:" date ".." date | "phrase" | word
+    term     := prop ":" value | date_prop ("<"|"<="|">"|">="|"=") date
+              | date_prop ":" date ".." date | "phrase" | word
 
-Properties: subject, body, from, to, cc, bcc, participants (from/to/cc/bcc), attachment
-(file name), hasAttachments / hasAttachment (true|false), isRead (true|false), received
-(YYYY-MM-DD or an ISO 8601 date-time, UTC). Text values match as case-insensitive
-substrings; free text matches subject, plain-text body and sender address (the same fields as
-the neutral search). Any other `name:value` term is refused with ErrorInvalidRequest rather
-than silently matching nothing.
+Properties: subject, body (plain text, or the text of the HTML body), from, to, cc, bcc,
+recipients (to/cc/bcc), participants (from/to/cc/bcc), attachment (file name),
+hasAttachments / hasAttachment (true|false), isRead (true|false), and the dates received and
+sent (YYYY-MM-DD or an ISO 8601 date-time, UTC). Text values match as case-insensitive
+substrings; free text (each word or "phrase") matches subject, plain-text body and sender
+address (the same fields as the neutral search), and several free-text terms are ANDed.
+A `name:value` word whose name is not a property (`re:meeting`, `mailto:x`) is free text, as
+in Graph. Only malformed queries (a bad value for a known property, unbalanced parentheses
+or quotes) are refused with ErrorInvalidRequest.
 """
 
 from __future__ import annotations
@@ -27,12 +30,14 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
 from mailsim.adapters.graph.odata import QueryError
+from mailsim.adapters.graph.resources import html_to_text
 from mailsim.domain.models import CanonicalMessage
 
 MAX_SEARCH_CHARS = 1024
 MAX_DEPTH = 32
-TEXT_PROPS = frozenset({"subject", "body", "from", "to", "cc", "bcc", "participants",
-                        "attachment"})  # fmt: skip
+TEXT_PROPS = frozenset({"subject", "body", "from", "to", "cc", "bcc", "recipients",
+                        "participants", "attachment"})  # fmt: skip
+DATE_PROPS = frozenset({"received", "sent"})
 BOOL_PROPS = {"hasattachments": "hasattachments", "hasattachment": "hasattachments",
               "isread": "isread"}  # fmt: skip
 _TERM = re.compile(r"^(?P<prop>[A-Za-z]+)(?P<op>:|<=|>=|<|>|=)(?P<value>.*)$", re.DOTALL)
@@ -66,8 +71,8 @@ type Node = Term | Not | And | Or
 
 @dataclass(frozen=True)
 class Search:
-    """A parsed `$search`: `text` for a plain substring query (no KQL syntax at all), else
-    `node`. `anchor` is a positive top-level free-text term usable as an engine search."""
+    """A parsed `$search`: `text` for a single free-text word or phrase (one substring
+    search), else `node`. `anchor` is a positive top-level free-text term usable as an engine search."""
 
     text: str | None
     node: Node | None
@@ -124,10 +129,7 @@ def tokenize(q: str) -> list[object]:
             word = q[i:j]
             if word.endswith((":", "<", ">", "=")) and j < len(q) and q[j] == '"':
                 value, j = _quoted(q, j)
-                term = _property(word + value)
-                if term is None:
-                    raise _bad(f"unexpected {word!r}")
-                out.append(term)
+                out.append(_property(word + value) or Term(None, ":", word + value))
             else:
                 out.append(_classify(word))
             i = j
@@ -146,19 +148,15 @@ def _property(word: str) -> Term | None:
     if m is None:
         return None
     prop, op, value = m.group("prop").lower(), m.group("op"), m.group("value").strip()
-    if prop not in TEXT_PROPS and prop not in BOOL_PROPS and prop != "received":
-        if op != ":" or not value or value.startswith("//"):
-            return None  # "re:", "a=b", URLs and similar are ordinary words
-        raise _bad(f"unsupported property {m.group('prop')!r} (supported: subject, body, "
-                   "from, to, cc, bcc, participants, attachment, hasAttachments, isRead, "
-                   "received)")  # fmt: skip
+    if prop not in TEXT_PROPS and prop not in BOOL_PROPS and prop not in DATE_PROPS:
+        return None  # "re:meeting", "mailto:x", "a=b", URLs: ordinary words (as in Graph)
     if not value:
         raise _bad(f"missing value for {prop}")
-    if prop == "received":
-        _received_bounds(op, value)  # validate now
+    if prop in DATE_PROPS:
+        _date_bounds(op, value)  # validate now
         return Term(prop, op, value)
     if op != ":":
-        raise _bad(f"{prop} takes ':' (comparisons are only for received)")
+        raise _bad(f"{prop} takes ':' (comparisons are only for received and sent)")
     if prop in BOOL_PROPS:
         if value.lower() not in ("true", "false"):
             raise _bad(f"{prop} must be true or false")
@@ -218,10 +216,6 @@ class _Parser:
         raise _bad(f"unexpected {tok!r}")
 
 
-def _plain(tokens: list[object]) -> bool:
-    return all(isinstance(t, Term) and t.prop is None for t in tokens)
-
-
 def parse(raw: str) -> Search:
     text = _unquote(raw)
     if len(text) > MAX_SEARCH_CHARS:
@@ -229,8 +223,9 @@ def parse(raw: str) -> Search:
     if not text.strip():
         raise _bad("empty $search")
     tokens = tokenize(text)
-    if _plain(tokens):  # no KQL syntax at all: one substring search, as before
-        return Search(text, None, None)
+    first = tokens[0] if len(tokens) == 1 else None
+    if isinstance(first, Term) and first.prop is None:  # one word or phrase: one engine search
+        return Search(first.value, None, None)
     parser = _Parser(tokens)
     node = parser.or_expr(0)
     if parser.peek() is not None:
@@ -257,14 +252,16 @@ def _day(value: str) -> tuple[datetime, datetime]:
             start = datetime(d.year, d.month, d.day, tzinfo=UTC)
             return start, start + timedelta(days=1)
         moment = datetime.fromisoformat(value[:-1] + "+00:00" if value.endswith("Z") else value)
-    except ValueError:
-        raise _bad(f"invalid date {value!r} (use YYYY-MM-DD or an ISO 8601 date-time)") from None
-    moment = moment if moment.tzinfo else moment.replace(tzinfo=UTC)
-    return moment, moment + timedelta(microseconds=1)
+        moment = moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+        return moment, moment + timedelta(microseconds=1)
+    except (ValueError, OverflowError):
+        raise _bad(
+            f"invalid date {value!r} (use YYYY-MM-DD or an ISO 8601 date-time before 9999-12-31)"
+        ) from None
 
 
-def _received_bounds(op: str, value: str) -> tuple[datetime | None, datetime | None]:
-    """[low, high) of `received` for the term."""
+def _date_bounds(op: str, value: str) -> tuple[datetime | None, datetime | None]:
+    """[low, high) of a `received` / `sent` term."""
     if op == ":" and ".." in value:
         lo, _, hi = value.partition("..")
         return _day(lo.strip())[0], _day(hi.strip())[1]
@@ -280,10 +277,11 @@ def _text(m: CanonicalMessage, prop: str) -> list[str]:
     if prop == "subject":
         return [m.subject]
     if prop == "body":
-        return [m.body_text or "", m.body_html or ""]
+        return [m.body_text or "", html_to_text(m.body_html or "")]
     if prop == "attachment":
         return [a.filename for a in m.attachments]
     people = {"from": [m.from_], "to": m.to, "cc": m.cc, "bcc": m.bcc,
+              "recipients": [*m.to, *m.cc, *m.bcc],
               "participants": [m.from_, *m.to, *m.cc, *m.bcc]}[prop]  # fmt: skip
     return [f"{a.email} {a.name or ''}" for a in people]
 
@@ -296,9 +294,11 @@ def _term(t: Term, m: CanonicalMessage) -> bool:
         return bool(m.attachments) == (v == "true")
     if t.prop == "isread":
         return ("SEEN" in m.flags) == (v == "true")
-    if t.prop == "received":
-        lo, hi = _received_bounds(t.op, t.value)
-        when = m.received_at or m.created_at
+    if t.prop in DATE_PROPS:
+        lo, hi = _date_bounds(t.op, t.value)
+        when = (m.received_at or m.created_at) if t.prop == "received" else m.created_at
+        if t.prop == "sent" and m.is_draft:
+            return False  # a draft has no sentDateTime
         return (lo is None or when >= lo) and (hi is None or when < hi)
     return any(v in s.lower() for s in _text(m, t.prop))
 

@@ -154,19 +154,25 @@ other value clears it). Other extended properties are not supported.
 | `$expand` | `attachments`; `singleValueExtendedProperties($filter=id eq '...')` |
 
 `$search` KQL subset (the value is quoted as a whole: `$search="subject:invoice AND
-hasAttachments:true"`; inner quotes as `\"`):
+hasAttachments:true"`; a phrase inside it is escaped: `$search="\"bank details\""`):
 
-- Property terms: `subject:`, `body:`, `from:`, `to:`, `cc:`, `bcc:`, `participants:`
+- Property terms: `subject:`, `body:` (plain-text body, or the text of the HTML body; never the
+  markup), `from:`, `to:`, `cc:`, `bcc:`, `recipients:` (to/cc/bcc), `participants:`
   (from/to/cc/bcc), `attachment:` (file name): case-insensitive substring; a value may be
   quoted (`subject:"bank details"`). `hasAttachments:` / `hasAttachment:` and `isRead:` take
-  `true`/`false`. `received` takes `:`/`=` (that UTC day or instant), `<`, `<=`, `>`, `>=` or a
-  range `received:2026-10-01..2026-10-15` (inclusive days), with `YYYY-MM-DD` or an ISO 8601
-  date-time.
-- Free words and `"phrases"` match subject, text body and sender address, as plain search.
+  `true`/`false`. The dates `received` and `sent` take `:`/`=` (that UTC day or instant), `<`,
+  `<=`, `>`, `>=` or a range `received:2026-10-01..2026-10-15` (inclusive days), with
+  `YYYY-MM-DD` or an ISO 8601 date-time (`9999-12-31` and later is refused). Drafts have no
+  `sent` date.
+- Free text: each word or `"phrase"` is a case-insensitive substring of subject, text body or
+  sender address. Several terms are ANDed (`$search="bank change"` = both words, any order);
+  one word or one phrase is a single engine search.
 - `AND` (also implied between terms), `OR`, `NOT` / `-`, and parentheses.
-- Any other `property:value` (e.g. `foo:bar`, `size:>10`) is refused with
-  `400 ErrorInvalidRequest` naming the supported properties, never silently empty. A query with
-  no KQL syntax keeps the substring behaviour (`$search="hello world"` matches that substring).
+- A `name:value` word whose name is not a property above (`re:meeting`, `mailto:a@x`,
+  `foo:bar`) is free text, as in Graph. Only malformed queries are `400 ErrorInvalidRequest`:
+  a bad value for a known property (`isRead:maybe`, `received:yesterday`), an empty value,
+  comparisons on a text property, unbalanced parentheses or quotes, more than 1024 characters
+  or nesting deeper than 32.
 - A positive top-level free-text term is run as the engine search (audited `search`); a query
   of property terms only reads the folder (audited `read`) and filters it.
 
@@ -271,7 +277,10 @@ Each Graph code maps back to exactly one simulator code.
 - No `$batch`, no change notifications (subscriptions), no mail rules, focused inbox, search
   folders, child folders, categories master list, mailbox settings or calendar.
 - Each Graph request may record more than one agent read in the audit trail (e.g. id
-  resolution + read); only writes count against the action budget.
+  resolution + read); only writes count against the action budget. Attachment bytes
+  (`contentBytes` of the attachment list, a single attachment, `$expand=attachments`, and
+  `$value`) are each one audited `AgentMailbox.get_attachment` read (25 MiB cap); a message's
+  MIME `$value` is one `get_raw` read.
 
 ## Cost and mailbox-size envelope
 
