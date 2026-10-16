@@ -1,4 +1,4 @@
-import { apiBlob, apiRequest, apiText, longTimeoutMs, type ApiConfig, type RequestOptions } from './client';
+import { apiBlob, apiRequest, apiText, buildUrl, longTimeoutMs, type ApiConfig, type RequestOptions } from './client';
 import type {
   // connect & status (UX-F3)
   AgentCredential,
@@ -48,6 +48,22 @@ import type {
 
 
 const seg = encodeURIComponent;
+
+/**
+ * `path` (as listed by the server) re-expressed relative to the API base, or an error when it
+ * would leave the API: another origin, outside `<base path>/v1/`, or encoded dot segments.
+ */
+export function apiRelativePath(baseUrl: string, path: string, here: string = window.location.href): string {
+  const refuse = () => new Error(`Refusing to download from ${path}: not a file of this API.`);
+  if (!path.startsWith('/') || /%2e/i.test(path) || /[\\]/.test(path)) throw refuse();
+  // An empty base URL means "this dashboard's origin" (the dev/preview proxy), path prefix none.
+  const base = new URL(baseUrl.trim() || '/', here);
+  const basePath = base.pathname.replace(/\/+$/, '');
+  const target = new URL(buildUrl(baseUrl, path), here);
+  const inside = target.origin === base.origin && target.pathname.startsWith(`${basePath}/v1/`);
+  if (!inside || target.search || target.hash) throw refuse();
+  return target.pathname.slice(basePath.length);
+}
 
 /** One user action's retry identity: reuse `idempotencyKey` for every attempt of that action. */
 export interface ActionOptions {
@@ -194,14 +210,16 @@ export function createApi(cfg: ApiConfig) {
     attachment: (id: string, mailboxId: string, messageId: string, attachmentId: string) =>
       apiBlob(cfg, `${run(id)}/mailboxes/${seg(mailboxId)}/messages/${seg(messageId)}/attachments/${seg(attachmentId)}`),
     /**
-     * Download an API-relative file URL the server handed out (ArtifactOut.url). Only same-API
-     * paths under /v1/ are accepted, so a listed URL can never send the key elsewhere.
+     * Download a file URL the server handed out (ArtifactOut.url). It must resolve, on the API's
+     * own origin, to a path under `<API base path>/v1/` (after URL normalisation; encoded dot
+     * segments refused), so a listed URL can never send the key anywhere else.
      */
     download: (path: string) => {
-      if (!/^\/v1\/[^?#]*$/.test(path) || path.includes('..')) {
-        return Promise.reject(new Error(`Refusing to download from ${path}: not an API path.`));
+      try {
+        return apiBlob(cfg, apiRelativePath(cfg.baseUrl, path));
+      } catch (e) {
+        return Promise.reject(e);
       }
-      return apiBlob(cfg, path);
     },
     activity: (id: string, afterId: number, limit = 100) =>
       get<ActivityPage>(`${run(id)}/activity`, { after_id: afterId, limit }),

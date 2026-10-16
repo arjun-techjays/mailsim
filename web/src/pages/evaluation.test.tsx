@@ -187,6 +187,7 @@ describe('Evaluation page', () => {
       expect(await screen.findByText(/can take a minute/)).toBeInTheDocument();
       const notice = await screen.findByTestId('unconfirmed');
       expect(notice).toHaveTextContent('The evaluation was not confirmed');
+      expect(screen.getByLabelText('Answer-key version')).toBeDisabled();
       // the list was refreshed: the stored evaluation already shows up
       await waitFor(() => expect(within(screen.getByTestId('evaluations-table')).getAllByRole('row')).toHaveLength(3));
       await user.click(within(notice).getByRole('button', { name: 'Check again' }));
@@ -211,6 +212,19 @@ describe('Evaluation page', () => {
       await waitFor(() => expect(screen.getByTestId('evaluation-conflict')).toHaveTextContent('replays are not evaluated'));
     });
 
+    it('an unconfirmed evaluation can be discarded to start over', async () => {
+      vi.stubEnv('VITE_LONG_REQUEST_TIMEOUT_MS', '300');
+      mockDb.runs.run_demo!.run.agent_build = 'slow';
+      const { user } = renderApp('/runs/run_demo/evaluations', sessionFor('evaluator'));
+      await screen.findByTestId('evaluation-report');
+      await user.click(screen.getByRole('button', { name: 'Run evaluation' }));
+      const notice = await screen.findByTestId('unconfirmed');
+      await user.click(within(notice).getByRole('button', { name: 'Discard and start over' }));
+      await user.click(within(notice).getByRole('button', { name: 'Start over anyway' }));
+      expect(screen.queryByTestId('unconfirmed')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Run evaluation' })).toBeEnabled();
+    });
+
     it('a replay run is not offered for evaluation', async () => {
       mockDb.runs.run_demo!.run.replay_of = 'run_orig';
       renderApp('/runs/run_demo/evaluations', sessionFor('evaluator'));
@@ -220,16 +234,16 @@ describe('Evaluation page', () => {
       expect(screen.queryByRole('button', { name: 'Run evaluation' })).toBeNull();
     });
 
-    it('a kind-only replay has no original link', async () => {
-      server.use(
-        http.get('*/v1/runs/:id', () =>
-          HttpResponse.json({ id: 'run_demo', status: 'PASSED', epoch: 1, virtual_time: null, agent_actions: 0, replay_of: null, kind: 'replay' }),
-        ),
+    it('no compatible answer key for "latest compatible" is explained with the keys that exist', async () => {
+      mockDb.runs.run_demo!.run.agent_build = 'no-key';
+      const { user } = renderApp('/runs/run_demo/evaluations', sessionFor('evaluator'));
+      await screen.findByTestId('evaluation-report');
+      await user.click(screen.getByRole('button', { name: 'Run evaluation' }));
+      const note = await screen.findByTestId('evaluation-conflict');
+      expect(note).toHaveAttribute('role', 'alert');
+      expect(note).toHaveTextContent(
+        'No answer key covers scenario v3, the version this run uses (existing: v1 (covers scenario v1, v2); v2 (covers scenario v2)).',
       );
-      renderApp('/runs/run_demo/evaluations', sessionFor('evaluator'));
-      const note = await screen.findByTestId('replay-not-evaluated');
-      expect(note).toHaveTextContent(/^This run is a replay: /);
-      expect(within(note).queryByRole('link')).toBeNull();
     });
   });
 });

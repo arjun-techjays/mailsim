@@ -60,6 +60,8 @@ test('a slow create and a slow evaluation are recovered without duplicates (UI-8
   await expect(page.getByText(/seeding its mailboxes/)).toBeVisible();
   const notice = page.getByTestId('unconfirmed');
   await expect(notice).toContainText('The run was not confirmed', { timeout: 10_000 });
+  await expect(notice.getByRole('heading', { name: 'The run was not confirmed' })).toBeFocused();
+  await expect(page.getByLabel('Agent build id')).toBeDisabled();
   await expectAccessible(page, 'unconfirmed create');
   await notice.getByRole('button', { name: 'Check again' }).click();
   const recovered = page.getByTestId('run-recovered');
@@ -93,4 +95,31 @@ test('a slow create and a slow evaluation are recovered without duplicates (UI-8
   expect(keys).toHaveLength(4);
   expect(keys[3]).toBe(keys[2]);
   expect(keys[2]).not.toBe(keys[0]);
+});
+
+test('no compatible answer key: the evaluation refusal lists the keys that exist (EV-4)', async ({ page }) => {
+  // Mock fault: build "no-key" -> "latest compatible" answers 409 with details.answer_keys.
+  await new ConnectPage(page).connectAs(KEYS.controller, 'controller');
+  await page.goto('/scenarios/finance.invoice-bank-change/start');
+  await expect(page.getByLabel('Agent build id')).toBeVisible();
+  await page.getByLabel('Agent build id').fill('no-key');
+  await page.getByRole('button', { name: 'Create run' }).click();
+  const runLink = page.getByRole('link', { name: /^Go to run run_/ });
+  const runId = ((await runLink.textContent()) as string).replace('Go to run ', '');
+  await page.getByRole('button', { name: 'Disconnect' }).click();
+  await page.getByLabel('API key').fill(KEYS.evaluator);
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(page.getByTestId('detected-role')).toHaveText('evaluator');
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Runs' }).click();
+  await page.getByRole('link', { name: runId, exact: true }).click();
+  await page.getByRole('link', { name: 'Evaluations', exact: true }).click();
+  await page.getByRole('button', { name: 'Run evaluation' }).click();
+  const conflict = page.getByTestId('evaluation-conflict');
+  await expect(conflict).toContainText('No answer key covers scenario v3, the version this run uses');
+  await expect(conflict).toContainText('existing: v1 (covers scenario v1, v2); v2 (covers scenario v2)');
+  await expect(conflict.getByRole('link', { name: 'write an answer key that covers it' })).toHaveAttribute(
+    'href',
+    '/scenarios/finance.invoice-bank-change/answer-key',
+  );
+  await expectAccessible(page, 'evaluation conflict');
 });

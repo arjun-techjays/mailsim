@@ -790,3 +790,11 @@ progress {
     min-width: 0;
   }
 }
+
+/* A fieldset used only to disable a group of controls at once. */
+fieldset.bare {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}

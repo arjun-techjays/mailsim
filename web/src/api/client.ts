@@ -3,6 +3,8 @@
 // - Parses the single error envelope {"error": {code, message, details, request_id}}.
 // - Per-request timeout via AbortController, surfaced as a distinct error kind.
 
+import { safeBaseName } from './filename';
+
 export type ApiErrorKind = 'http' | 'timeout' | 'network';
 
 export class ApiError extends Error {
@@ -122,11 +124,7 @@ export function dispositionFilename(header: string | null): string | null {
     const plain = /(?:^|;)\s*filename\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^;]+))/i.exec(header);
     if (plain) name = plain[1] !== undefined ? plain[1].replace(/\\(.)/g, '$1') : (plain[2] as string).trim();
   }
-  if (name === null) return null;
-  // Never let a server-chosen name pick a directory or hide control characters.
-  // eslint-disable-next-line no-control-regex
-  const base = (name.split(/[\\/]/).pop() as string).replace(/[\u0000-\u001f\u007f]/g, '').trim();
-  return base && base !== '.' && base !== '..' ? base : null;
+  return safeBaseName(name);
 }
 
 interface EnvelopeShape {

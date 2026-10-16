@@ -34,6 +34,14 @@ describe('chronological (UI-5)', () => {
     expect(chronological([reply, bare, bare]).map((m) => m.id)).toEqual(['x', 'x', 'y']);
   });
 
+  it('compares instants, not strings (offsets and fractions), falling back to text', () => {
+    const utc = msg('b', '2026-03-02T09:30:00Z', '<b@x>');
+    const offset = msg('a', '2026-03-02T10:00:00+01:00', '<a@x>'); // 09:00Z: earlier
+    const frac = msg('c', '2026-03-02T09:30:00.500Z', '<c@x>');
+    expect(chronological([utc, frac, offset]).map((m) => m.id)).toEqual(['a', 'b', 'c']);
+    expect(chronological([msg('y', 'zz', '<y@x>'), msg('x', 'aa', '<x@x>')]).map((m) => m.id)).toEqual(['x', 'y']);
+  });
+
   it('survives reply cycles and self references', () => {
     const a = msg('a', T, '<a@x>', '<b@x>');
     const b = msg('b', T, '<b@x>', '<a@x>');

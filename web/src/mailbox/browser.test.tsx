@@ -61,7 +61,7 @@ describe('Mailbox browser', () => {
     expect(seen).toEqual([{ url: '/v1/runs/run_demo/mailboxes/mbx_finance/messages/msg_invoice_1/attachments/att_1', auth: 'Bearer mk_evaluator' }]);
     expect(saved[0]?.type).toBe('application/octet-stream');
     expect(anchors[0]?.download).toBe('invoice-4471.pdf');
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:att');
+    await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:att'), { timeout: 2500 });
     expect(view.querySelector('iframe[src^="blob:"], object, embed')).toBeNull();
     server.events.removeAllListeners();
 

@@ -126,7 +126,7 @@ describe('Run detail', () => {
     expect(within(table).getByRole('row', { name: /trace\/run_demo\.jsonl/ })).toHaveTextContent('—');
     await user.click(within(table).getByRole('button', { name: 'Download blob/att/att_1' }));
     await waitFor(() => expect(anchors[0]?.download).toBe('att_1'));
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:a');
+    await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:a'), { timeout: 2500 });
   });
 
   it('artifact downloads: fallback name, errors, and foreign URLs refused', async () => {
@@ -150,7 +150,7 @@ describe('Run detail', () => {
     await user.click(await screen.findByRole('button', { name: 'Download blob/raw/x.eml' }));
     await waitFor(() => expect(anchors[0]?.download).toBe('x.eml'));
     await user.click(screen.getByRole('button', { name: 'Download r' }));
-    expect(await screen.findByText(/Refusing to download from https:\/\/evil\.example\/steal/)).toBeInTheDocument();
+    expect(await screen.findByText(/Refusing to download from https:\/\/evil\.example\/steal: not a file of this API/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Download gone' }));
     expect(await screen.findByText(/Could not download gone/)).toBeInTheDocument();
   });
@@ -202,27 +202,19 @@ describe('Run detail', () => {
     expect(screen.queryByRole('heading', { name: 'Run controls' })).toBeNull();
   });
 
-  it('a run marked kind "replay" without replay_of, and a normal run, for an evaluator', async () => {
-    server.use(
-      http.get('*/v1/runs/:id', ({ params }) =>
-        HttpResponse.json({
-          id: String(params.id),
-          status: 'PASSED',
-          epoch: 1,
-          virtual_time: null,
-          agent_actions: 0,
-          replay_of: null,
-          ...(params.id === 'run_k' ? { kind: 'replay' } : {}),
-        }),
-      ),
-    );
-    const { unmount } = renderApp('/runs/run_k', sessionFor('evaluator'));
-    expect(await screen.findByTestId('replay-badge')).toHaveTextContent(/^Replay$/);
-    expect(screen.getByTestId('replay-notice')).toHaveTextContent(/^This run is a replay: /);
-    unmount();
-    renderApp('/runs/run_n', sessionFor('evaluator'));
-    expect(await screen.findByRole('link', { name: 'Evaluations' })).toHaveAttribute('href', '/runs/run_n/evaluations');
+  it('a normal run offers evaluation and has no replay badge', async () => {
+    renderApp('/runs/run_demo', sessionFor('evaluator'));
+    expect(await screen.findByRole('link', { name: 'Evaluations' })).toHaveAttribute('href', '/runs/run_demo/evaluations');
     expect(screen.queryByTestId('replay-badge')).toBeNull();
+  });
+
+  it('a legacy replay stored as RUNNING only offers replay to a controller', async () => {
+    mockDb.runs.run_demo!.run.replay_of = 'run_orig';
+    renderApp('/runs/run_demo', sessionFor('controller'));
+    expect(await screen.findByTestId('controls-state')).toHaveTextContent('This run is a replay (RUNNING)');
+    expect(screen.getByRole('button', { name: 'Advance clock' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Replay & compare hash' })).toBeEnabled();
+    expect(await screen.findByTestId('inject-inactive')).toHaveTextContent('not available on a replay run');
   });
 
   it('UI-7: an action that produced no events shows "none", never a backwards range', async () => {

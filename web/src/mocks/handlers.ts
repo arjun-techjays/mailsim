@@ -8,6 +8,8 @@
 //   POST /v1/scenarios/{key}/runs with agent_build "slow", and POST /v1/runs/{id}/evaluations of
 //   such a run: the work is done but the first attempt of an Idempotency-Key never answers;
 //   a retry with the same key replays the stored response (agent keys redacted), like the server.
+//   POST /v1/runs/{id}/evaluations without a version on a run with agent_build "no-key" -> 409
+//   with details.answer_keys (no compatible answer key).
 import { delay, http, HttpResponse, type HttpResponseResolver } from 'msw';
 import type {
   BuildComparison,
@@ -583,6 +585,14 @@ export function createHandlers(db: MockDb = createMockDb()) {
         const version = body.answer_key_version ?? 2;
         if (![1, 2].includes(version)) {
           return fail(404, 'NOT_FOUND', `answer key version ${version} not found`);
+        }
+        // EV-4 (fault): runs with build "no-key" have no compatible key for "latest compatible"
+        // (server shape: details.answer_keys = [{answer_key_version, scenario_versions}]).
+        if (r.run.agent_build === 'no-key' && body.answer_key_version == null) {
+          return fail(409, 'CONFLICT', 'no answer key is compatible with the run', {
+            run_scenario_version: r.run.scenario_version,
+            answer_keys: (db.answerKeys[r.run.scenario_key ?? ""] ?? []).map((k) => ({ answer_key_version: k.version, scenario_versions: k.scenario_versions ?? [2] })), // fault: v2 treated as covering v2 only
+          });
         }
         // EV-4: in the mock, answer key v2 only covers scenario versions 2 and 3.
         if (r.run.scenario_version === 1 && version === 2) {

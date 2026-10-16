@@ -80,9 +80,8 @@ function AttachmentItem({ m, a, load }: { m: CanonicalMessage; a: AttachmentRef;
     setDone('');
     try {
       const { blob, filename } = await loader(m, a);
-      const saveAs = filename ?? (a.filename || `attachment-${a.id}`);
-      // Saved as opaque bytes: never rendered or opened in the page (strict CSP stays intact).
-      saveBlob(new Blob([blob], { type: 'application/octet-stream' }), saveAs);
+      // Opaque bytes under a sanitised name: never rendered or opened in the page.
+      const saveAs = saveBlob(blob, [filename, a.filename], `attachment-${a.id}`);
       setDone(`Downloaded ${saveAs}`);
     } catch (e) {
       setError(e);

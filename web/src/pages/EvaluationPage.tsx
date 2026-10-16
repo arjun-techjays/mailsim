@@ -15,7 +15,6 @@ import { EvaluationConflict } from '../evaluation/conflicts';
 import { EvaluationReportView } from '../evaluation/ReportView';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { runKeys } from '../run/keys';
-import { replayOf } from '../run/runState';
 
 function TriggerForm({ runId, scenarioKey, onCreated }: { runId: string; scenarioKey: string | null; onCreated: (id: string) => void }) {
   const api = useApi();
@@ -42,6 +41,8 @@ function TriggerForm({ runId, scenarioKey, onCreated }: { runId: string; scenari
       if (isUnconfirmed(e)) void qc.invalidateQueries({ queryKey: runKeys.evaluations(runId) });
     },
   });
+  const unconfirmed = mutation.isError && isUnconfirmed(mutation.error);
+  const locked = mutation.isPending || unconfirmed;
   const submit = (body: EvaluationRequest) => {
     lastBody.current = body;
     mutation.mutate(body);
@@ -59,51 +60,56 @@ function TriggerForm({ runId, scenarioKey, onCreated }: { runId: string; scenari
       <h2 id="trigger-h">Evaluate this run</h2>
       <p className="hint">Applies an answer key to the recorded run. The agent is not re-run.</p>
       <form className="form" onSubmit={onSubmit}>
-        <div className="field">
-          <label htmlFor="ak-version">Answer-key version</label>
-          <select id="ak-version" value={version} onChange={(e) => setVersion(e.target.value)}>
-            <option value="">Latest compatible</option>
-            {(keys.data ?? []).map((k) => (
-              <option key={k.id} value={k.version}>
-                v{k.version} ({k.source})
-              </option>
+        {/* Locked while an evaluation is in flight or unconfirmed: a changed request would get a new key. */}
+        <fieldset className="bare" disabled={locked}>
+          <div className="field">
+            <label htmlFor="ak-version">Answer-key version</label>
+            <select id="ak-version" value={version} onChange={(e) => setVersion(e.target.value)}>
+              <option value="">Latest compatible</option>
+              {(keys.data ?? []).map((k) => (
+                <option key={k.id} value={k.version}>
+                  v{k.version} ({k.source})
+                </option>
+              ))}
+            </select>
+            {keys.isError && <ErrorDisplay error={keys.error} title="Could not load answer keys" />}
+          </div>
+          <fieldset>
+            <legend>Deterministic checks</legend>
+            {(
+              [
+                ['', 'Run / answer-key default'],
+                ['on', 'On'],
+                ['off', 'Off'],
+              ] as const
+            ).map(([value, label]) => (
+              <label key={value || 'default'} className="radio">
+                <input type="radio" name="eval-checks" checked={checks === value} onChange={() => setChecks(value)} />
+                {label}
+              </label>
             ))}
-          </select>
-          {keys.isError && <ErrorDisplay error={keys.error} title="Could not load answer keys" />}
-        </div>
-        <fieldset>
-          <legend>Deterministic checks</legend>
-          {(
-            [
-              ['', 'Run / answer-key default'],
-              ['on', 'On'],
-              ['off', 'Off'],
-            ] as const
-          ).map(([value, label]) => (
-            <label key={value || 'default'} className="radio">
-              <input type="radio" name="eval-checks" checked={checks === value} onChange={() => setChecks(value)} />
-              {label}
-            </label>
-          ))}
+          </fieldset>
+          <label className="checkbox">
+            <input type="checkbox" checked={complete} onChange={(e) => setComplete(e.target.checked)} />
+            Complete the run (set PASSED/FAILED on a RUNNING run)
+          </label>
+          <button type="submit" disabled={locked}>
+            {mutation.isPending ? 'Evaluating…' : 'Run evaluation'}
+          </button>
         </fieldset>
-        <label className="checkbox">
-          <input type="checkbox" checked={complete} onChange={(e) => setComplete(e.target.checked)} />
-          Complete the run (set PASSED/FAILED on a RUNNING run)
-        </label>
-        <button type="submit" disabled={mutation.isPending}>
-          {mutation.isPending ? 'Evaluating…' : 'Run evaluation'}
-        </button>
-        {mutation.isPending && (
-          <p className="hint" role="status">
-            Grading the run; assertions judged by an LLM can take a minute.
-          </p>
-        )}
+        <p className="hint" role="status">
+          {mutation.isPending ? 'Grading the run; assertions judged by an LLM can take a minute.' : ''}
+        </p>
       </form>
-      {mutation.isError && isUnconfirmed(mutation.error) ? (
+      {unconfirmed ? (
         <UnconfirmedNotice
           error={mutation.error}
           what="evaluation"
           onRetry={() => submit(lastBody.current as EvaluationRequest)}
+          onDiscard={() => {
+            action.done();
+            mutation.reset();
+          }}
         />
       ) : (
         mutation.isError && (
@@ -129,11 +135,11 @@ function EvaluationContent({ runId }: { runId: string }) {
   return (
     <>
       {run.isError && <ErrorDisplay error={run.error} title="Could not load run" />}
-      {run.data && replayOf(run.data) !== false ? (
+      {run.data?.replay_of ? (
         <p className="notice" data-testid="replay-not-evaluated">
-          This run is a replay{run.data.replay_of ? ` of ${run.data.replay_of}` : ''}: it only checks that the recorded
+          This run is a replay of {run.data.replay_of}: it only checks that the recorded
           events rebuild the same state, so it is not evaluated.{' '}
-          {run.data.replay_of && <Link to={`/runs/${encodeURIComponent(run.data.replay_of)}/evaluations`}>Evaluate the original run</Link>}
+          <Link to={`/runs/${encodeURIComponent(run.data.replay_of)}/evaluations`}>Evaluate the original run</Link>
         </p>
       ) : (
         <TriggerForm

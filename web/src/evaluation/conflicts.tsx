@@ -5,10 +5,11 @@ import { isApiError } from '../api/client';
 const list = (v: unknown): string =>
   Array.isArray(v) ? v.map((x) => `v${String(x)}`).join(', ') : v == null ? 'all versions' : `v${String(v)}`;
 
+/** One entry of details.answer_keys: {answer_key_version, scenario_versions} (server shape; `version` tolerated). */
 function keyLabel(k: unknown): string {
   if (k && typeof k === 'object') {
-    const o = k as { version?: unknown; scenario_versions?: unknown };
-    return `v${String(o.version)} (covers scenario ${list(o.scenario_versions ?? null)})`;
+    const o = k as { answer_key_version?: unknown; version?: unknown; scenario_versions?: unknown };
+    return `v${String(o.answer_key_version ?? o.version)} (covers scenario ${list(o.scenario_versions ?? null)})`;
   }
   return `v${String(k)}`;
 }
@@ -51,7 +52,7 @@ export function EvaluationConflict({ error, scenarioKey }: { error: unknown; sce
   }
   if (!body) return null;
   return (
-    <p className="notice" data-testid="evaluation-conflict">
+    <p className="notice" role="alert" data-testid="evaluation-conflict">
       {body}
     </p>
   );

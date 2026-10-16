@@ -92,11 +92,17 @@ describe('Start run', () => {
       expect(await screen.findByText(/seeding its mailboxes/)).toBeInTheDocument();
       const notice = await screen.findByTestId('unconfirmed');
       expect(notice).toHaveTextContent('The run was not confirmed');
-      expect(notice).toHaveTextContent('never creates a second run');
+      expect(notice).toHaveTextContent('cannot create a second run');
       expect(within(notice).getByTestId('api-error')).toHaveTextContent('Request timed out');
+      // announced (focus moves to the notice) and the form is locked until resolved
+      expect(within(notice).getByRole('heading', { name: 'The run was not confirmed' })).toHaveFocus();
+      expect(screen.getByLabelText('Agent build id')).toBeDisabled();
+      expect(screen.getByRole('button', { name: 'Create run' })).toBeDisabled();
 
       await user.click(within(notice).getByRole('button', { name: 'Check again' }));
       const recovered = await screen.findByTestId('run-recovered');
+      expect(within(recovered).getByRole('heading', { level: 2 })).toHaveFocus();
+      expect(screen.getByLabelText('Agent build id')).toBeEnabled();
       expect(keys).toHaveLength(2);
       expect(keys[0]).toMatch(/^dash-/);
       expect(keys[1]).toBe(keys[0]);
@@ -118,6 +124,34 @@ describe('Start run', () => {
       await user.click(screen.getByRole('button', { name: 'Create run' }));
       await screen.findByTestId('agent-credentials');
       expect(keys[2]).not.toBe(keys[0]);
+    });
+
+    it('"Discard and start over" warns about duplicates, then unlocks the form with a new key', async () => {
+      vi.stubEnv('VITE_LONG_REQUEST_TIMEOUT_MS', '300');
+      const keys: (string | null)[] = [];
+      server.events.on('request:start', ({ request }) => {
+        if (request.method === 'POST' && request.url.endsWith('/runs')) keys.push(request.headers.get('idempotency-key'));
+      });
+      const { user } = renderApp('/scenarios/finance.invoice-bank-change/start', sessionFor('controller'));
+      await user.type(await screen.findByLabelText('Agent build id'), 'slow');
+      await user.click(screen.getByRole('button', { name: 'Create run' }));
+      const notice = await screen.findByTestId('unconfirmed');
+      await user.click(within(notice).getByRole('button', { name: 'Discard and start over' }));
+      const warning = within(notice).getByTestId('discard-warning');
+      expect(warning).toHaveAttribute('role', 'alert');
+      expect(warning).toHaveTextContent('creates a second one');
+      await user.click(within(warning).getByRole('button', { name: 'Keep this request' }));
+      expect(within(notice).queryByTestId('discard-warning')).toBeNull();
+      await user.click(within(notice).getByRole('button', { name: 'Discard and start over' }));
+      await user.click(screen.getByRole('button', { name: 'Start over anyway' }));
+      expect(screen.queryByTestId('unconfirmed')).toBeNull();
+      expect(screen.getByLabelText('Agent build id')).toBeEnabled();
+      await user.clear(screen.getByLabelText('Agent build id'));
+      await user.type(screen.getByLabelText('Agent build id'), 'fast');
+      await user.click(screen.getByRole('button', { name: 'Create run' }));
+      await screen.findByTestId('agent-credentials');
+      expect(keys).toHaveLength(2);
+      expect(keys[1]).not.toBe(keys[0]);
     });
 
     it('a retry while the first attempt still runs says so; minting can fail', async () => {
@@ -197,6 +231,7 @@ describe('Start run', () => {
       await user.click(screen.getByRole('button', { name: 'Create run' }));
       expect(screen.getByLabelText('Agent build id')).toHaveAttribute('aria-invalid', 'true');
       expect(screen.getByLabelText('Agent build id')).toHaveAccessibleDescription(/leave the field empty/);
+      expect(screen.getByRole('alert')).toHaveTextContent('leave the field empty');
       expect(screen.queryByTestId('agent-credentials')).toBeNull();
       await user.clear(screen.getByLabelText('Agent build id'));
       await user.click(screen.getByRole('button', { name: 'Create run' }));

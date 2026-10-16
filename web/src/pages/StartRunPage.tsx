@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { isRedacted } from '../api/client';
 import type { RunCreate, RunCreated, RunOut } from '../api/types';
@@ -82,9 +82,15 @@ function RecoveredRun({ run, onMinted }: { run: RunOut; onMinted: (created: RunC
     },
   });
   const runHref = `/runs/${encodeURIComponent(run.id)}`;
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    heading.current?.focus(); // announced: the notice replaces the one that had focus
+  }, []);
   return (
     <section aria-labelledby="recovered-h" className="card warning" data-testid="run-recovered">
-      <h2 id="recovered-h">Run {run.id} was created</h2>
+      <h2 id="recovered-h" tabIndex={-1} ref={heading}>
+        Run {run.id} was created
+      </h2>
       <p role="status">
         Its agent key was in the response that never reached this tab, and the API shows a key only once. Mint a new
         agent key for this run; keys issued earlier keep working until you revoke them on its Connect page.
@@ -165,6 +171,7 @@ export function StartRunPage() {
     });
   };
   const unconfirmed = mutation.isError && isUnconfirmed(mutation.error);
+  const locked = mutation.isPending || unconfirmed;
 
   return (
     <>
@@ -190,75 +197,76 @@ export function StartRunPage() {
         <ErrorDisplay error={scenario.error} title="Could not load scenario" />
       ) : (
         <form className="form" onSubmit={onSubmit}>
-          <div className="field">
-            <label htmlFor="sv">Scenario version</label>
-            <select id="sv" value={version} onChange={(e) => setVersion(e.target.value)}>
-              <option value="">Latest (v{scenario.data.latest_version?.version ?? '?'})</option>
-              {scenario.data.versions.map((v) => (
-                <option key={v} value={v}>
-                  v{v}
-                </option>
-              ))}
-            </select>
-          </div>
-          <fieldset>
-            <legend>Post-run deterministic checks</legend>
-            <p className="hint" id="checks-help">
-              Evaluation preference only. It is stored with the run and never shown to the agent.
-            </p>
-            <WhatIsThis term="checks" />
-            {(
-              [
-                ['', 'Answer-key default'],
-                ['on', 'On'],
-                ['off', 'Off'],
-              ] as const
-            ).map(([value, label]) => (
-              <label key={value || 'default'} className="radio">
-                <input
-                  type="radio"
-                  name="checks"
-                  value={value}
-                  checked={checks === value}
-                  onChange={() => setChecks(value)}
-                  aria-describedby="checks-help"
-                />
-                {label}
-              </label>
-            ))}
-          </fieldset>
-          <div className="field">
-            <label htmlFor="build">Agent build id</label>
-            <input
-              id="build"
-              value={build}
-              maxLength={200}
-              onChange={(e) => setBuild(e.target.value)}
-              placeholder="e.g. agent-v2"
-              aria-invalid={!!buildError || undefined}
-              aria-describedby={buildError ? 'build-err build-help' : 'build-help'}
-            />
-            <p id="build-help" className="hint">
-              Compare builds groups runs by this id; runs without one are grouped as “(no build)”.
-            </p>
-            {buildError && (
-              <p id="build-err" className="field-error">
-                {buildError}
+          {/* Locked while a create is in flight or unconfirmed: a changed request would get a new key. */}
+          <fieldset className="bare" disabled={locked}>
+            <div className="field">
+              <label htmlFor="sv">Scenario version</label>
+              <select id="sv" value={version} onChange={(e) => setVersion(e.target.value)}>
+                <option value="">Latest (v{scenario.data.latest_version?.version ?? '?'})</option>
+                {scenario.data.versions.map((v) => (
+                  <option key={v} value={v}>
+                    v{v}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <fieldset>
+              <legend>Post-run deterministic checks</legend>
+              <p className="hint" id="checks-help">
+                Evaluation preference only. It is stored with the run and never shown to the agent.
               </p>
-            )}
-          </div>
-          <label className="checkbox">
-            <input type="checkbox" checked={start} onChange={(e) => setStart(e.target.checked)} />
-            Start the run immediately
-          </label>
-          <button type="submit" disabled={mutation.isPending}>
-            {mutation.isPending ? 'Creating…' : 'Create run'}
-          </button>
-          {mutation.isPending && (
-            <p className="hint" role="status">
-              Creating the run and seeding its mailboxes; large scenarios can take a minute.
-            </p>
-          )}
+              <WhatIsThis term="checks" />
+              {(
+                [
+                  ['', 'Answer-key default'],
+                  ['on', 'On'],
+                  ['off', 'Off'],
+                ] as const
+              ).map(([value, label]) => (
+                <label key={value || 'default'} className="radio">
+                  <input
+                    type="radio"
+                    name="checks"
+                    value={value}
+                    checked={checks === value}
+                    onChange={() => setChecks(value)}
+                    aria-describedby="checks-help"
+                  />
+                  {label}
+                </label>
+              ))}
+            </fieldset>
+            <div className="field">
+              <label htmlFor="build">Agent build id</label>
+              <input
+                id="build"
+                value={build}
+                maxLength={200}
+                onChange={(e) => setBuild(e.target.value)}
+                placeholder="e.g. agent-v2"
+                aria-invalid={!!buildError || undefined}
+                aria-describedby={buildError ? 'build-err build-help' : 'build-help'}
+              />
+              <p id="build-help" className="hint">
+                Compare builds groups runs by this id; runs without one are grouped as “(no build)”.
+              </p>
+              {buildError && (
+                <p id="build-err" className="field-error" role="alert">
+                  {buildError}
+                </p>
+              )}
+            </div>
+            <label className="checkbox">
+              <input type="checkbox" checked={start} onChange={(e) => setStart(e.target.checked)} />
+              Start the run immediately
+            </label>
+            <button type="submit" disabled={locked}>
+              {mutation.isPending ? 'Creating…' : 'Create run'}
+            </button>
+          </fieldset>
+          <p className="hint" role="status">
+            {mutation.isPending ? 'Creating the run and seeding its mailboxes; large scenarios can take a minute.' : ''}
+          </p>
         </form>
       )}
       {unconfirmed ? (
@@ -266,6 +274,10 @@ export function StartRunPage() {
           error={mutation.error}
           what="run"
           onRetry={() => submit(lastBody.current as RunCreate)}
+          onDiscard={() => {
+            action.done();
+            mutation.reset();
+          }}
         />
       ) : (
         mutation.isError && <ErrorDisplay error={mutation.error} title="Could not create run" />

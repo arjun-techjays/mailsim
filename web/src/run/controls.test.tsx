@@ -45,7 +45,9 @@ describe('Run controls', () => {
     expect(btn('Reset (new epoch)')).toHaveFocus();
     expect(screen.getByTestId('run-epoch')).toHaveTextContent('2');
     await user.click(btn('Reset (new epoch)'));
+    expect(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Keep the current state' })).toHaveFocus();
     await user.click(btn('Reset run'));
+    expect(result()).toHaveFocus(); // the dialog is gone: focus continues at the outcome
     await waitFor(() => expect(result()).toHaveTextContent('Reset: run is now RUNNING (epoch 3)'));
 
     await user.click(btn('Replay & compare hash'));
@@ -63,10 +65,11 @@ describe('Run controls', () => {
     // cancel asks first (and can be called off), then the run is terminal
     await user.click(btn('Cancel run'));
     const cancelDialog = screen.getByRole('alertdialog', { name: 'Cancel this run?' });
-    await user.click(within(cancelDialog).getByRole('button', { name: 'Cancel' }));
+    await user.click(within(cancelDialog).getByRole('button', { name: 'Keep running' }));
     expect(screen.queryByRole('alertdialog')).toBeNull();
     await user.click(btn('Cancel run'));
     await user.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Cancel run' }));
+    expect(result()).toHaveFocus();
     await waitFor(() => expect(result()).toHaveTextContent('Cancelled: run is now CANCELLED'));
     await waitFor(() => expect(screen.queryByTestId('api-error')).toBeNull()); // cleared by the state change
     expect(screen.getByTestId('controls-state')).toHaveTextContent('This run is CANCELLED and cannot change any more');

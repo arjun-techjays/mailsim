@@ -27,9 +27,7 @@ export function ReportDownloads({ runId, evaluationId }: { runId: string; evalua
     setDone('');
     try {
       const { text, filename } = await api.report(runId, evaluationId, format);
-      const name = filename ?? `${runId}-${evaluationId}.${ext}`;
-      // Opaque bytes: a download never renders on the dashboard origin, whatever the server type.
-      saveBlob(new Blob([text], { type: 'application/octet-stream' }), name);
+      const name = saveBlob(text, [filename, `${runId}-${evaluationId}.${ext}`]);
       setDone(`Downloaded ${name}`);
     } catch (e) {
       setError(e);

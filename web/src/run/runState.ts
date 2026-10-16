@@ -11,11 +11,16 @@ export function isTerminal(status: string): boolean {
   return TERMINAL_STATUSES.includes(status);
 }
 
-/** Whether `action` can succeed on a run in `status` (READY: start, cancel, reset; RUNNING: all but start). */
-export function canDo(status: string, action: RunAction): boolean {
+/**
+ * Whether `action` can succeed on `run` (READY: start, cancel, reset; RUNNING: all but start;
+ * terminal: replay only). A replay run (replay_of set) only offers replay, whatever status a
+ * legacy replay was stored with.
+ */
+export function canDo(run: Pick<RunOut, 'status' | 'replay_of'>, action: RunAction): boolean {
+  if (action === 'replay') return true;
+  if (run.replay_of) return false;
+  const { status } = run;
   switch (action) {
-    case 'replay':
-      return true;
     case 'start':
       return status === 'READY';
     case 'cancel':
@@ -27,15 +32,16 @@ export function canDo(status: string, action: RunAction): boolean {
 }
 
 /** One sentence on what the run's state allows, for the controls. */
-export function stateHint(status: string): string {
+export function stateHint(run: Pick<RunOut, 'status' | 'replay_of'>): string {
+  const { status } = run;
+  if (status === 'REPLAYED' || run.replay_of) {
+    return `This run is a replay (${status}): it only checks that the recorded events rebuild the same state, so only replay remains.`;
+  }
   if (status === 'READY') {
     return 'This run is READY: start it so the agent can work and the clock can move. Cancel and reset are also available.';
   }
   if (status === 'RUNNING') {
     return 'This run is RUNNING: advance the clock, inject mail, reset or cancel it. Start is not needed again.';
-  }
-  if (status === 'REPLAYED') {
-    return 'This run is a replay (REPLAYED): it only checks that the recorded events rebuild the same state, so only replay remains.';
   }
   if (isTerminal(status)) {
     return `This run is ${status} and cannot change any more: only replay (and evaluation) remain.`;
@@ -43,16 +49,9 @@ export function stateHint(status: string): string {
   return `This run is ${status}: it is not ready yet, so only replay is available.`;
 }
 
-/**
- * The run this one replays, when it is a replay (RunOut.replay_of; a `kind: "replay"` without
- * the id still counts). Replays verify determinism and are not graded.
- */
-export function replayOf(run: RunOut): string | null | false {
-  const kind = (run as RunOut & { kind?: unknown }).kind;
-  if (run.replay_of) return run.replay_of;
-  return kind === 'replay' ? null : false;
-}
-
-export function isReplayRun(run: RunOut): boolean {
-  return replayOf(run) !== false;
+/** Why mail cannot be injected into `run` (shown next to disabled inject controls). */
+export function injectOffReason(run: Pick<RunOut, 'status' | 'replay_of'>): string {
+  return run.replay_of
+    ? `Injecting mail is not available on a replay run (${run.status}).`
+    : `Injecting mail needs a RUNNING run; this run is ${run.status}.`;
 }

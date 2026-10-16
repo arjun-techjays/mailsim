@@ -67,6 +67,35 @@ describe('dispositionFilename', () => {
   });
 });
 
+describe('apiRelativePath', () => {
+  const here = 'http://dash.test/runs/r1?tab=artifacts';
+  it('accepts API paths under the base path and strips the base path', async () => {
+    const { apiRelativePath } = await import('./endpoints');
+    expect(apiRelativePath('', '/v1/runs/r/artifacts/blob/raw/a.eml', here)).toBe('/v1/runs/r/artifacts/blob/raw/a.eml');
+    expect(apiRelativePath('http://api.test', '/v1/x', here)).toBe('/v1/x');
+    expect(apiRelativePath('http://api.test/prefix/', '/v1/x', here)).toBe('/v1/x');
+  });
+  it('refuses other origins, paths outside /v1/, dot segments (also encoded), queries and backslashes', async () => {
+    const { apiRelativePath } = await import('./endpoints');
+    for (const bad of [
+      'https://evil.example/v1/x',
+      '//evil.example/v1/x',
+      'v1/x',
+      '/v2/x',
+      '/v1/../admin',
+      '/v1/%2e%2e/admin',
+      '/v1/%2E/x',
+      '/v1/x?y=1',
+      '/v1/x#y',
+      '/v1\\..\\x',
+      '/v1',
+    ]) {
+      expect(() => apiRelativePath('', bad, here), bad).toThrow(/not a file of this API/);
+    }
+    expect(() => apiRelativePath('http://api.test/prefix', '/v1/x/../../../v1/y', here)).toThrow();
+  });
+});
+
 describe('isRedacted', () => {
   it('recognises the server placeholder for one-time secrets', () => {
     expect(isRedacted('<redacted: shown once>')).toBe(true);

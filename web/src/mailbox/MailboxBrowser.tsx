@@ -10,6 +10,7 @@ import { address } from '../components/format';
 import { Empty, Loading } from '../components/Status';
 import { useCursorList } from '../hooks/useCursorList';
 import { runKeys, runLinks } from '../run/keys';
+import { canDo, injectOffReason } from '../run/runState';
 import { ComposeInject } from './ComposeInject';
 import { ReadingPane } from './ReadingPane';
 import type { ParsedSnapshot } from './snapshot';
@@ -209,6 +210,7 @@ export function MailboxBrowser({
 }) {
   const api = useApi();
   const controller = hasRole(useRole(), ['controller']);
+  const canInject = canDo(run, 'inject');
   const { mailboxes, error: listError } = useRunMailboxes(run, snapshot);
   const [userSelected, setUserSelected] = useState(false);
   const [composing, setComposing] = useState(false);
@@ -273,8 +275,8 @@ export function MailboxBrowser({
               type="button"
               onClick={() => setComposing(true)}
               aria-expanded={composing}
-              disabled={run.status !== 'RUNNING'}
-              aria-describedby={run.status !== 'RUNNING' ? 'mb-inject-off' : undefined}
+              disabled={!canInject}
+              aria-describedby={!canInject ? 'mb-inject-off' : undefined}
             >
               Inject email here
             </button>
@@ -283,9 +285,7 @@ export function MailboxBrowser({
         <p className="hint mb-who">
           {mailbox.isAgent ? 'This is the mailbox the agent under test works in.' : `A persona mailbox (${mailbox.email}).`}{' '}
           Reading here is not an agent action: nothing is recorded and no triggers fire.
-          {controller && run.status !== 'RUNNING' && (
-            <span id="mb-inject-off"> Injecting mail needs a RUNNING run; this run is {run.status}.</span>
-          )}
+          {controller && !canInject && <span id="mb-inject-off"> {injectOffReason(run)}</span>}
         </p>
         <MessageList
           key={`${mailbox.id}:${folderId ?? ''}`}

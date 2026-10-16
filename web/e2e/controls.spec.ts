@@ -47,7 +47,7 @@ test.describe('run controls', () => {
 
     await page.getByRole('button', { name: 'Reset (new epoch)' }).click();
     const reset = page.getByRole('alertdialog', { name: 'Reset this run to its starting state?' });
-    await expect(reset.getByRole('button', { name: 'Cancel' })).toBeFocused();
+    await expect(reset.getByRole('button', { name: 'Keep the current state' })).toBeFocused();
     await expectAccessible(page, 'reset confirmation');
     await page.keyboard.press('Escape');
     await expect(reset).toHaveCount(0);
@@ -55,6 +55,7 @@ test.describe('run controls', () => {
     await expect(page.getByTestId('run-epoch')).toHaveText('2');
     await page.getByRole('button', { name: 'Reset (new epoch)' }).click();
     await page.getByRole('button', { name: 'Reset run' }).click();
+    await expect(run.controlResult()).toBeFocused();
     await expect(run.controlResult()).toContainText('Reset: run is now RUNNING (epoch 3)');
     await expect(page.getByTestId('run-epoch')).toHaveText('3');
 
@@ -63,6 +64,9 @@ test.describe('run controls', () => {
     await expect(replay).toContainText('Replay matches');
     await expect(replay).toContainText('identical');
 
+    await page.getByRole('button', { name: 'Cancel run' }).click();
+    await page.getByRole('alertdialog', { name: 'Cancel this run?' }).getByRole('button', { name: 'Keep running' }).click();
+    await expect(page.getByTestId('controls-state')).toContainText('RUNNING');
     await page.getByRole('button', { name: 'Cancel run' }).click();
     await page.getByRole('alertdialog', { name: 'Cancel this run?' }).getByRole('button', { name: 'Cancel run' }).click();
     await expect(run.controlResult()).toContainText('CANCELLED');

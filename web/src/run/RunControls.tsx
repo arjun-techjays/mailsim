@@ -85,6 +85,13 @@ export function RunControls({ run }: { run: RunOut }) {
   const [secondsError, setSecondsError] = useState('');
   const [confirm, setConfirm] = useState<'cancel' | 'reset' | null>(null);
   const opener = useRef<HTMLButtonElement | null>(null);
+  const resultRegion = useRef<HTMLDivElement>(null);
+  /** After a confirmed cancel/reset the dialog (and its buttons) is gone: continue at the result. */
+  const confirmed = (op: 'cancel' | 'reset') => {
+    setConfirm(null);
+    mutation.mutate(op);
+    resultRegion.current?.focus();
+  };
 
   const mutation = useMutation({
     mutationFn: async (op: Op): Promise<Outcome> => {
@@ -148,12 +155,12 @@ export function RunControls({ run }: { run: RunOut }) {
   };
 
   const busy = mutation.isPending;
-  const off = (action: Parameters<typeof canDo>[1]) => busy || !canDo(run.status, action);
+  const off = (action: Parameters<typeof canDo>[1]) => busy || !canDo(run, action);
   return (
     <section aria-labelledby="controls-h" className="card">
       <h2 id="controls-h">Run controls</h2>
       <p className="hint" id="controls-state" data-testid="controls-state">
-        {stateHint(run.status)}
+        {stateHint(run)}
       </p>
       <div className="row" role="group" aria-label="Lifecycle" aria-describedby="controls-state">
         <button type="button" disabled={off('start')} onClick={() => mutation.mutate('start')}>
@@ -176,12 +183,10 @@ export function RunControls({ run }: { run: RunOut }) {
         <ConfirmDialog
           title="Cancel this run?"
           confirmLabel="Cancel run"
+          cancelLabel="Keep running"
           busy={busy}
           onCancel={closeConfirm}
-          onConfirm={() => {
-            setConfirm(null);
-            mutation.mutate('cancel');
-          }}
+          onConfirm={() => confirmed('cancel')}
         >
           <p>
             The run becomes CANCELLED for good: the agent can no longer act in it and the clock stops. Its events stay
@@ -193,12 +198,10 @@ export function RunControls({ run }: { run: RunOut }) {
         <ConfirmDialog
           title="Reset this run to its starting state?"
           confirmLabel="Reset run"
+          cancelLabel="Keep the current state"
           busy={busy}
           onCancel={closeConfirm}
-          onConfirm={() => {
-            setConfirm(null);
-            mutation.mutate('reset');
-          }}
+          onConfirm={() => confirmed('reset')}
         >
           <p>
             Every mailbox goes back to the scenario’s starting point in a new epoch (epoch {run.epoch + 1}). What the
@@ -229,7 +232,7 @@ export function RunControls({ run }: { run: RunOut }) {
           Advance clock
         </button>
       </form>
-      <div role="status" aria-live="polite" data-testid="control-result">
+      <div role="status" aria-live="polite" aria-label="Result" tabIndex={-1} ref={resultRegion} data-testid="control-result">
         {busy && <p>Working…</p>}
         {outcome && <OutcomeView outcome={outcome} />}
       </div>

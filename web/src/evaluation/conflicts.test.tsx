@@ -30,16 +30,16 @@ describe('EvaluationConflict', () => {
     expect(screen.getByTestId('evaluation-conflict')).toHaveTextContent('covers scenario all versions');
     expect(screen.queryByRole('link')).toBeNull();
     r2.unmount();
-    const r3 = show(conflict({ run_scenario_version: 4, answer_keys: [{ version: 2, scenario_versions: [2] }, 3] }));
+    const r3 = show(conflict({ run_scenario_version: 4, answer_keys: [{ answer_key_version: 2, scenario_versions: [2] }, { answer_key_version: 3, scenario_versions: null }] }));
     expect(screen.getByTestId('evaluation-conflict')).toHaveTextContent(
-      'No answer key covers scenario v4, the version this run uses (existing: v2 (covers scenario v2); v3). Pick a compatible version',
+      'No answer key covers scenario v4, the version this run uses (existing: v2 (covers scenario v2); v3 (covers scenario all versions)). Pick a compatible version',
     );
     r3.unmount();
     const r4 = show(conflict({ answer_key_version: 1, scenario_versions: 3, run_scenario_version: 1 }));
     expect(screen.getByTestId('evaluation-conflict')).toHaveTextContent('covers scenario v3,');
     r4.unmount();
-    const r5 = show(conflict({ run_scenario_version: 4, answer_keys: [{ version: 5 }] }));
-    expect(screen.getByTestId('evaluation-conflict')).toHaveTextContent('v5 (covers scenario all versions)');
+    const r5 = show(conflict({ run_scenario_version: 4, answer_keys: [{ version: 5 }, 6] }));
+    expect(screen.getByTestId('evaluation-conflict')).toHaveTextContent('v5 (covers scenario all versions); v6');
     r5.unmount();
     show(conflict({ run_scenario_version: 4, answer_keys: [] }));
     expect(screen.getByTestId('evaluation-conflict')).toHaveTextContent(/^No answer key covers scenario v4, the version this run uses\. Pick/);

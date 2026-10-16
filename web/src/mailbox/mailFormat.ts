@@ -29,6 +29,14 @@ export function snippet(m: Pick<CanonicalMessage, 'body_text'>): string {
 
 const when = (m: Pick<CanonicalMessage, 'received_at' | 'created_at'>) => m.received_at ?? m.created_at;
 
+/** Compares two timestamps as instants (offsets and precision differ between sources), else as text. */
+function compareTime(a: string, b: string): number {
+  const ta = Date.parse(a);
+  const tb = Date.parse(b);
+  if (!Number.isNaN(ta) && !Number.isNaN(tb)) return ta - tb;
+  return a.localeCompare(b);
+}
+
 type Sortable = Pick<CanonicalMessage, 'id' | 'received_at' | 'created_at' | 'message_id_header' | 'in_reply_to' | 'references'>;
 
 /**
@@ -51,7 +59,7 @@ export function chronological<T extends Sortable>(list: readonly T[]): T[] {
     return d;
   };
   return [...list].sort(
-    (a, b) => when(a).localeCompare(when(b)) || depth(a) - depth(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+    (a, b) => compareTime(when(a), when(b)) || depth(a) - depth(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
   );
 }
 

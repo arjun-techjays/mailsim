@@ -18,14 +18,13 @@ function DownloadArtifact({ a, url }: { a: ArtifactOut; url: string }) {
   const api = useApi();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const name = a.ref.split('/').pop() || a.ref;
   const go = async () => {
     setBusy(true);
     setError(null);
     try {
       const { blob, filename } = await api.download(url);
-      // Opaque bytes, saved as a file: never rendered in the dashboard.
-      saveBlob(new Blob([blob], { type: 'application/octet-stream' }), filename ?? name);
+      // Opaque bytes, saved as a file under a sanitised name: never rendered in the dashboard.
+      saveBlob(blob, [filename, a.ref], `artifact-${a.kind}`);
     } catch (e) {
       setError(e);
     } finally {

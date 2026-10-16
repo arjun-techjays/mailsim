@@ -39,7 +39,7 @@ describe('Report downloads', () => {
     await waitFor(() => expect(screen.getByTestId('report-download-status')).toHaveTextContent('run_demo-eval_1.json'));
     expect(await readBlob(created[2])).toContain('"evaluation_id":"eval_1"');
     expect(click).toHaveBeenCalledTimes(3);
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock');
+    await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock'), { timeout: 2500 });
     expect(auth.every((a) => a === 'Bearer mk_evaluator')).toBe(true);
     server.events.removeAllListeners();
   });
