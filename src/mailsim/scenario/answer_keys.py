@@ -240,17 +240,35 @@ def list_answer_keys(session: Session, scope: Scope, scenario_key: str) -> list[
 def answer_key_for(
     session: Session, scope: Scope, scenario_key: str, scenario_version: int, version: int | None
 ) -> m.AnswerKey:
-    """The requested key version, or the latest key compatible with `scenario_version`."""
-    candidates = [
-        k
-        for k in list_answer_keys(session, scope, scenario_key)
-        if k.scenario_versions is None or scenario_version in k.scenario_versions
-    ]
+    """The requested key version, or the latest key compatible with `scenario_version`.
+
+    NOT_FOUND when the requested version (or any key) does not exist; CONFLICT when keys
+    exist but none that fits is compatible with the run's scenario version (details name the
+    key versions, their `scenario_versions` and the run's scenario version)."""
+    keys = list_answer_keys(session, scope, scenario_key)
     if version is not None:
-        candidates = [k for k in candidates if k.version == version]
-    if not candidates:
+        keys = [k for k in keys if k.version == version]
+    if not keys:
         raise NotFound(
-            f"no answer key for {scenario_key} v{scenario_version}"
-            + (f" (version {version})" if version is not None else "")
+            f"no answer key for {scenario_key}"
+            + (f" version {version}" if version is not None else "")
         )
-    return candidates[-1]
+    candidates = [
+        k for k in keys if k.scenario_versions is None or scenario_version in k.scenario_versions
+    ]
+    if candidates:
+        return candidates[-1]
+    if version is not None:
+        raise Conflict(
+            f"answer key {scenario_key} v{version} is not compatible with scenario version "
+            f"{scenario_version} (it covers {keys[0].scenario_versions})",
+            details={"answer_key_version": version,
+                     "scenario_versions": keys[0].scenario_versions,
+                     "run_scenario_version": scenario_version},
+        )  # fmt: skip
+    raise Conflict(
+        f"no answer key of {scenario_key} is compatible with scenario version {scenario_version}",
+        details={"run_scenario_version": scenario_version,
+                 "answer_keys": [{"answer_key_version": k.version,
+                                  "scenario_versions": k.scenario_versions} for k in keys]},
+    )  # fmt: skip

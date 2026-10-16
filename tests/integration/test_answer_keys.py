@@ -67,8 +67,13 @@ def test_file_keys_compatibility_and_selection(env):
         assert answer_key_for(s, env.scope, KEY, 1, None).version == 3
         assert answer_key_for(s, env.scope, KEY, 1, 2).version == 2
         assert answer_key_for(s, env.scope, KEY, 9, None).version == 3  # all-versions key
-        with pytest.raises(NotFound):
+        # an existing but incompatible key version is a CONFLICT that names both sides
+        with pytest.raises(Conflict, match="not compatible with scenario version 9") as exc:
             answer_key_for(s, env.scope, KEY, 9, 2)
+        assert exc.value.details == {"answer_key_version": 2, "scenario_versions": [1],
+                                     "run_scenario_version": 9}  # fmt: skip
+        with pytest.raises(NotFound, match="version 42"):
+            answer_key_for(s, env.scope, KEY, 1, 42)
     with pytest.raises(Conflict, match="different content"):
         publish_key(env, key_doc(version=3, checks_default="off"))
     publish_key(env, key_doc(version=6, scenario_versions=None))
@@ -78,6 +83,17 @@ def test_file_keys_compatibility_and_selection(env):
         publish_key(env, key_doc(version=4, scenario_versions=[7]))
     with pytest.raises(NotFound):
         publish_key(env, key_doc(scenario="no.such.scenario"))
+
+
+def test_no_compatible_key_at_all_is_a_conflict_listing_the_keys(env):
+    env.version()  # inline key v1: scenario version 1 only
+    with env.session_factory() as s:
+        with pytest.raises(Conflict, match="compatible with scenario version 2") as exc:
+            answer_key_for(s, env.scope, KEY, 2, None)
+        assert exc.value.details == {"run_scenario_version": 2, "answer_keys": [
+            {"answer_key_version": 1, "scenario_versions": [1]}]}  # fmt: skip
+        with pytest.raises(NotFound):
+            answer_key_for(s, env.scope, "no.such.scenario", 1, None)
 
 
 def test_answer_key_is_immutable(env, session_factory):
