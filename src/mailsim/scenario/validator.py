@@ -19,6 +19,7 @@ from mailsim.scenario.answer_key import (
     find_leaks,
     secret_strings,
 )
+from mailsim.scenario.references import ScenarioRefs, reference_issues
 from mailsim.scenario.schema import (
     AGENT_OPERATIONS,
     TRIGGER_ACTIONS,
@@ -154,6 +155,10 @@ def validate_authoring(body: ScenarioBody) -> list[Issue]:
                 "brackets or commas, at most 254 characters)")  # fmt: skip
     if not is_domain(body.organization.domain):
         err("scenario.organization.domain", "not a domain name (labels of letters, digits, '-')")
+    # inline assertions become an answer key on publish: same reference rules as key files
+    for ref in reference_issues(body.evaluation.assertions, [ScenarioRefs.of(body.version, body)],
+                                prefix="scenario.evaluation.assertions"):  # fmt: skip
+        err(ref.path, ref.message)
     return out
 
 

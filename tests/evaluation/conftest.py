@@ -13,7 +13,7 @@ from mailsim.evaluation.contract import AssertionOutcome, EvaluationReport
 from mailsim.evaluation.engine import evaluate_run
 from mailsim.evaluation.service import EvaluationService
 from mailsim.scenario.answer_key import AnswerKeyDoc
-from mailsim.scenario.answer_keys import create_answer_key_version
+from mailsim.scenario.answer_keys import _scenario, _store, create_answer_key_version
 from tests.scenarios import write_variant
 
 KEY = "finance.invoice-bank-change"
@@ -58,14 +58,19 @@ class World:
     next_key: list[int] = field(default_factory=lambda: [2])
 
     def key(self, *assertions: dict[str, Any], checks_default: str = "on",
-            scenario_versions: list[int] | None = None) -> int:  # fmt: skip
+            scenario_versions: list[int] | None = None, unchecked: bool = False) -> int:  # fmt: skip
+        """Publish an answer key; `unchecked` stores it without the publish-time reference
+        checks (like a key stored before they existed), to test evaluation-time behaviour."""
         version = self.next_key[0]
         self.next_key[0] += 1
         doc = AnswerKeyDoc.model_validate({"answer_key_version": "1.0", "answer_key": {
             "scenario": KEY, "version": version, "checks_default": checks_default,
             "scenario_versions": scenario_versions, "assertions": list(assertions)}})  # fmt: skip
         with self.env.session_factory.begin() as s:
-            create_answer_key_version(s, self.env.scope, doc, self.env.blobs)
+            if unchecked:
+                _store(s, _scenario(s, self.env.scope, KEY), doc, "file")
+            else:
+                create_answer_key_version(s, self.env.scope, doc, self.env.blobs)
         return version
 
     def evaluate(self, version: int | None = None, *, checks: str | None = None,
@@ -74,8 +79,9 @@ class World:
                             checks=checks, judge=judge, evaluation_id="evl_test")  # fmt: skip
 
     def check(self, assertion: dict[str, Any], *, checks: str | None = None,
-              judge: Any = None) -> AssertionOutcome:  # fmt: skip
-        report = self.evaluate(self.key(assertion), checks=checks, judge=judge)
+              judge: Any = None, unchecked: bool = False) -> AssertionOutcome:  # fmt: skip
+        report = self.evaluate(self.key(assertion, unchecked=unchecked), checks=checks,
+                               judge=judge)  # fmt: skip
         assert len(report.outcomes) == 1
         return report.outcomes[0]
 

@@ -79,7 +79,9 @@ def test_state_counts_and_filters(world):
     # another persona's mailbox: the vendor received the reply
     assert st({"mailbox": "vendor", "folder": "inbox", "subject_contains": "Re: Invoice"},
               {"eq": 1}).status is Status.PASS  # fmt: skip
-    ghost = st({"mailbox": "ghost"}, {"min": 1})
+    # unknown persona: refused at publish; a key stored earlier still evaluates safely
+    ghost = world.check(a("state", {"where": {"mailbox": "ghost"}, "count": {"min": 1}}),
+                        unchecked=True)  # fmt: skip
     assert ghost.status is Status.FAIL and "ghost" in ghost.diff.actual["note"]
 
 
@@ -155,7 +157,8 @@ def test_content_expectations_on_sent_mail(world):
     missing = ct(contains=["invoice number"])
     assert missing.status is Status.FAIL
     assert missing.diff.actual["messages"][0]["missing"] == ["invoice number"]
-    ghost = ct(where={"mailbox": "ghost"}, contains=["x"])
+    ghost = world.check(a("content", {"where": {"mailbox": "ghost"}, "contains": ["x"]}),
+                        unchecked=True)  # fmt: skip
     assert ghost.status is Status.FAIL and "ghost" in ghost.reason
 
 

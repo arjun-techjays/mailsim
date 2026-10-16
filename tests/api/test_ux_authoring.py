@@ -614,3 +614,175 @@ def test_json_to_yaml_reports_too_deep_documents(api, monkeypatch):
     monkeypatch.setattr("mailsim.api.routers.ux.yaml.safe_dump", deep)
     r = api.call("POST", "/v1/tools/json-to-yaml", json={"document": {"a": 1}}, expect=400)
     assert "nested too deeply" in r.json()["error"]["message"]
+
+
+# ---- answer-key references (QA B-4) ----------------------------------------------------------
+def _key_with(*assertions, version=10, scenario_versions=None):
+    return {"answer_key_version": "1.0", "answer_key": {
+        "scenario": KEY, "version": version, "scenario_versions": scenario_versions,
+        "assertions": [{"id": f"a{i}", "type": t, "requirement": "r", **extra}
+                       for i, (t, extra) in enumerate(assertions)]}}  # fmt: skip
+
+
+BAD_REFERENCES = [
+    (("state", {"evaluate_at": {"at": "after_event", "event": "no-such-event"},
+                "check": {"where": {"folder": "sent"}}}),
+     "answer_key.assertions.0.evaluate_at.event", "unknown event 'no-such-event'"),
+    (("temporal", {"check": {"first": {"event": "nope"}, "then": {"action": {"operation": "reply"}}}}),
+     "answer_key.assertions.0.check.first.event", "unknown event 'nope'"),
+    (("temporal", {"check": {"first": {"event": "vendor-follow-up"},
+                             "then": {"action": {"operation": "replyy"}}}}),
+     "answer_key.assertions.0.check.then.action.operation", "unknown agent operation 'replyy'"),
+    (("state", {"check": {"where": {"mailbox": "ghost", "folder": "inbox"}}}),
+     "answer_key.assertions.0.check.where.mailbox", "unknown persona mailbox 'ghost'"),
+    (("state", {"check": {"where": {"folder": "spam"}}}),
+     "answer_key.assertions.0.check.where.folder", "unknown folder 'spam'"),
+    (("state", {"check": {"where": {"has_flag": "starred"}}}),
+     "answer_key.assertions.0.check.where.has_flag", "unknown flag 'starred'"),
+    (("state", {"check": {"where": {"lacks_flag": "unread"}}}),
+     "answer_key.assertions.0.check.where.lacks_flag", "unknown flag 'unread'"),
+    (("content", {"check": {"where": {"folder": "outbox"}, "contains": ["x"]}}),
+     "answer_key.assertions.0.check.where.folder", "unknown folder 'outbox'"),
+    (("action", {"check": {"operation": "teleport"}}),
+     "answer_key.assertions.0.check.operation", "unknown agent operation 'teleport'"),
+    (("action", {"check": {"operation": "send_message", "count": {"eq": 0}}}),
+     "answer_key.assertions.0.check.operation", "unknown agent operation 'send_message'"),
+    (("action", {"check": {"actor": "simulator", "operation": "reply"}}),
+     "answer_key.assertions.0.check.operation", "unknown simulator operation 'reply'"),
+    (("action", {"check": {"operation": "reply", "outcome": "OK"}}),
+     "answer_key.assertions.0.check.outcome", "unknown outcome 'OK'"),
+    (("policy", {"check": {"forbid": {"operation": "Send"}, "unless": {"where": {"label": "approved"}}}}),
+     "answer_key.assertions.0.check.forbid.operation", "unknown agent operation 'Send'"),
+    (("policy", {"check": {"forbid": {"operation": "send"},
+                           "unless": {"where": {"mailbox": "vendr"}}}}),
+     "answer_key.assertions.0.check.unless.where.mailbox", "unknown persona mailbox 'vendr'"),
+    (("protocol", {"check": {"error_codes": ["NOT_FOUND", "BOGUS"]}}),
+     "answer_key.assertions.0.check.error_codes.1", "unknown error code 'BOGUS'"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize(("assertion", "path", "needle"), BAD_REFERENCES)
+def test_unknown_answer_key_references_fail_validate_and_publish(api, assertion, path, needle):
+    api.publish()
+    doc = _key_with(assertion)
+    r = validate_key(api, doc)
+    assert not r["ok"] and [e["path"] for e in r["errors"]] == [path]
+    assert needle in r["errors"][0]["message"]
+    err = api.call("POST", f"/v1/scenarios/{KEY}/answer-keys", json={"document": doc},
+                   expect=400).json()["error"]  # fmt: skip
+    assert err["message"] == "answer key validation failed"
+    assert err["details"]["issues"] == [{"path": path, "message": r["errors"][0]["message"]}]
+    assert err["details"]["errors"][0]["loc"] == path.split(".")
+
+
+def test_known_answer_key_references_are_accepted(api):
+    api.publish()
+    doc = _key_with(
+        ("state", {"evaluate_at": {"at": "after_event", "event": "vendor-bank-change"},
+                   "check": {"where": {"mailbox": "vendor", "folder": "Sent", "has_flag": "seen",
+                                       "lacks_flag": "FLAGGED", "label": "anything"}}}),
+        ("action", {"check": {"actor": "controller", "operation": "advance", "outcome": "any"}}),
+        ("action", {"check": {"actor": "simulator", "operation": "persona.reply"}}),
+        ("action", {"check": {"operation": "send", "outcome": "PERMISSION_DENIED"}}),
+        ("temporal", {"check": {"first": {"event": "vendor-follow-up"},
+                                "then": {"action": {"operation": "reply"}}}}),
+        ("policy", {"check": {"forbid": {"operation": "send"},
+                              "unless": {"where": {"label": "approved"}}}}),
+        ("protocol", {"check": {"error_codes": ["NOT_FOUND"]}}),
+        ("invariant", {"check": {"invariant": "no_external_delivery_attempts"}}),
+    )  # fmt: skip
+    assert validate_key(api, doc)["errors"] == []
+    api.call("POST", f"/v1/scenarios/{KEY}/answer-keys", json={"document": doc}, expect=201)
+
+
+def test_references_are_checked_against_every_compatible_scenario_version(api):
+    api.publish()  # v1: mailboxes finance_manager + vendor, events vendor-follow-up/-bank-change
+
+    def v2(s):
+        s["version"] = 2
+        s["events"] = [e for e in s["events"] if e["id"] != "vendor-follow-up"]
+        s["mailboxes"] = [mb for mb in s["mailboxes"] if mb["owner"] != "vendor"]
+
+    api.publish(v2)
+    doc = _key_with(
+        ("temporal", {"check": {"first": {"event": "vendor-follow-up"},
+                                "then": {"action": {"operation": "reply"}}}}),
+        ("state", {"check": {"where": {"mailbox": "vendor"}}}),
+    )  # fmt: skip
+    r = validate_key(api, doc)  # scenario_versions: None = every version
+    assert [(e["path"], e["message"]) for e in r["errors"]] == [
+        ("answer_key.assertions.0.check.first.event",
+         "unknown event 'vendor-follow-up' in scenario version 2 (events: vendor-bank-change)"),
+        ("answer_key.assertions.1.check.where.mailbox",
+         "persona 'vendor' has no mailbox in scenario version 2"),
+    ]  # fmt: skip
+    only_v1 = _key_with(*[(a["type"], {"check": a["check"]})
+                          for a in doc["answer_key"]["assertions"]], scenario_versions=[1])  # fmt: skip
+    assert validate_key(api, only_v1)["ok"]
+    api.call("POST", f"/v1/scenarios/{KEY}/answer-keys", json={"document": only_v1}, expect=201)
+
+
+def test_inline_assertions_are_reference_checked_on_publish(api):
+    def typo(s):
+        s["evaluation"]["assertions"][0].update(
+            type="state", check={"where": {"folder": "inbx"}, "count": {"min": 1}}
+        )
+
+    doc = example_dict()
+    typo(doc["scenario"])
+    r = api.call("POST", "/v1/scenario-drafts/validate",
+                 json={"document": doc, "fixtures": fixtures()}, expect=200).json()  # fmt: skip
+    assert [e["path"] for e in r["errors"]] == [
+        "scenario.evaluation.assertions.0.check.where.folder"
+    ]
+    err = api.call("POST", "/v1/scenarios", json={"document": doc, "fixtures": fixtures()},
+                   expect=400).json()["error"]  # fmt: skip
+    assert {
+        "path": "scenario.evaluation.assertions.0.check.where.folder",
+        "message": r["errors"][0]["message"],
+    } in err["details"]["issues"]
+
+
+def test_shipped_answer_key_passes_reference_checks(api):
+    api.publish()
+    r = validate_key(api, source=(EXAMPLE_DIR / "answer_key.yaml").read_text())
+    assert r["ok"] and r["errors"] == []
+
+
+# ---- YAML 1.1 booleans (QA B-9) -------------------------------------------------------------
+def test_on_and_off_keys_and_values_are_strings_not_booleans(api):
+    source = ("checks_default: on\nscript:\n  - on: {from: vendor}\n    once: yes\n"
+              "    flag: off\n    real: true\n")  # fmt: skip
+    doc = api.call("POST", "/v1/tools/yaml-to-json", json={"source": source}).json()["document"]
+    assert doc == {"checks_default": "on", "script": [
+        {"on": {"from": "vendor"}, "once": "yes", "flag": "off", "real": True}]}  # fmt: skip
+    # the YAML rendering of the same document parses back identically
+    rendered = api.call("POST", "/v1/tools/json-to-yaml", json={"document": doc}).json()["source"]
+    again = api.call("POST", "/v1/tools/yaml-to-json", json={"source": rendered}).json()
+    assert again["document"] == doc
+
+
+def test_scripted_persona_on_key_and_unquoted_checks_default_on(api):
+    source = (EXAMPLE_DIR / "scenario.yaml").read_text().replace(
+        '      behavior:\n        response_style: professional\n        response_delay_seconds: 15\n',
+        "      behavior:\n        mode: scripted\n        script:\n"
+        "          - on: {from: finance_manager, subject_contains: invoice}\n"
+        "            once: yes\n"
+        "            reply: {body: \"Thanks - noted.\"}\n",
+    )  # fmt: skip
+    assert "- on: {from" in source
+    payload = {"source": source, "fixtures": fixtures()}
+    r = api.call("POST", "/v1/scenario-drafts/validate", json=payload).json()
+    assert r["ok"], r["errors"]
+    vendor = next(p for p in r["document"]["scenario"]["personas"] if p["id"] == "vendor")
+    assert vendor["behavior"]["script"][0]["on"] == {"from": "finance_manager",
+                                                     "subject_contains": "invoice"}  # fmt: skip
+    api.call("POST", "/v1/scenarios", json=payload, expect=201)
+    key_src = (EXAMPLE_DIR / "answer_key.yaml").read_text().replace('checks_default: "on"',
+                                                                    "checks_default: on")  # fmt: skip
+    assert "checks_default: on " in key_src
+    assert validate_key(api, source=key_src)["ok"]
+    for value, expected in (("off", "off"), ("true", "on"), ("false", "off")):
+        doc = yaml.safe_load(key_src)
+        doc["answer_key"]["checks_default"] = {"true": True, "false": False}.get(value, value)
+        assert AnswerKeyDoc.model_validate(doc).answer_key.checks_default == expected

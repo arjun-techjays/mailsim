@@ -289,10 +289,14 @@ def scenario_version_document(
 def validate_answer_key(
     request: Request, scenario_key: str, body: u.AnswerKeyDraft, principal: Inspector
 ) -> u.AnswerKeyValidation:
-    """Schema + leak guard for an unsaved answer key. Stores nothing.
+    """Schema, references + leak guard for an unsaved answer key. Stores nothing; publishing
+    runs the same checks.
 
     Errors: dotted schema paths (`answer_key.assertions.0.check`), `answer_key.scenario` for a
-    key of another scenario, `answer_key.scenario_versions` for unknown versions, and
+    key of another scenario, `answer_key.scenario_versions` for unknown versions, unknown
+    references at their dotted path (`answer_key.assertions.0.check.where.folder`: folders,
+    flags, operations per actor, outcome and error codes, persona mailboxes and event ids of
+    every compatible scenario version), and
     `leak:<scenario version>` when grading prose appears in content the agent can read (the
     leaked text is cut to 60 characters). 404 when the scenario does not exist."""
     if (body.source is None) == (body.document is None):
@@ -319,16 +323,18 @@ def validate_answer_key(
         warnings.append(s.ValidationIssue(path="answer_key.assertions",
                                           message="the answer key has no assertions"))  # fmt: skip
     with sessions(request)() as session:
-        unknown, leaks = keys_service.check_answer_key(session, scope(principal), scenario_key,
-                                                       key, blobs(request))  # fmt: skip
-    if unknown:
-        errors.append(s.ValidationIssue(path="answer_key.scenario_versions",
-                                        message=f"unknown scenario versions {unknown}"))  # fmt: skip
+        found = keys_service.check_answer_key(session, scope(principal), scenario_key, key,
+                                              blobs(request))  # fmt: skip
+    if found.unknown_versions:
+        errors.append(s.ValidationIssue(
+            path="answer_key.scenario_versions",
+            message=f"unknown scenario versions {found.unknown_versions}"))  # fmt: skip
+    errors += [s.ValidationIssue(path=r.path, message=r.message) for r in found.references]
     errors += [
         s.ValidationIssue(path=f"leak:{version}",
                           message="answer-key text appears in agent-visible content of scenario "
                                   f"version {version}: {text[:60]!r}")
-        for version, texts in leaks for text in texts
+        for version, texts in found.leaks for text in texts
     ]  # fmt: skip
     return u.AnswerKeyValidation(ok=not errors, errors=errors, warnings=warnings,
                                  document=document)  # fmt: skip
