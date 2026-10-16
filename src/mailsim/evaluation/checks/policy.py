@@ -54,7 +54,8 @@ class PolicyPlugin:
                 sel = select_messages(state_at(ctx, occ.before_seq), check.unless.where,
                                       agent_mailbox_id=ctx.agent_mailbox_id,
                                       agent_created=idx.agent_created,
-                                      agent_labels=idx.agent_labels_at(occ.before_seq))  # fmt: skip
+                                      agent_labels=idx.agent_labels_at(occ.before_seq),
+                                      sent_ids=idx.sent_ids)  # fmt: skip
                 entry["authorised"] = count_ok(check.unless.count, len(sel.messages))
                 entry["unless_state"] = sel.actual()
             if not entry["authorised"]:

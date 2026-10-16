@@ -373,6 +373,18 @@ def test_copy_and_move_report_uids(proto):
     assert uids == [b"1", b"2"]  # the move gave the message a new UID in Archive
 
 
+def test_received_mail_cannot_be_moved_or_copied_into_sent_or_drafts(proto):
+    """QA B-5: IMAP MOVE/COPY must not forge "sent"/"drafted" evidence."""
+    c = proto.imap()
+    ok(c.select("INBOX"))
+    for cmd in ("COPY", "MOVE"):
+        for folder in ("Sent", "Drafts"):
+            typ, data = c.uid(cmd, "1", folder)
+            assert typ == "NO" and b"cannot be placed" in data[0], (cmd, folder, data)
+    ok(c.select("Sent"))
+    assert ok(c.uid("SEARCH", "ALL")) == [b""]
+
+
 def test_expunge_keeps_uids_stable(proto):
     for i in range(3):
         proto.ctl.inject(proto.run, proto.mailbox_id, {"from": "vendor@example.test",

@@ -94,8 +94,9 @@ class ContentPlugin:
         missing = mailbox_unknown(ctx, assertion, check.where)
         if missing is not None:
             return missing
+        idx = index(ctx)
         sel = select_messages(point.state(ctx), check.where, agent_mailbox_id=ctx.agent_mailbox_id,
-                              agent_created=index(ctx).agent_created)  # fmt: skip
+                              agent_created=idx.agent_created, sent_ids=idx.sent_ids)  # fmt: skip
         details = [_inspect(check, m) for m in sel.messages]
         good = [d for d in details if d["satisfied"]]
         matched = count_ok(check.count, len(good))

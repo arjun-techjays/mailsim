@@ -204,3 +204,14 @@ def test_agent_never_sees_answer_key_text(api, agent):
                 f"/v1/mailboxes/{mbx}/changes"):  # fmt: skip
         seen += api.call("GET", url, key=key, expect=200).text
     assert "message" in seen and not [s for s in secrets if s in seen]
+
+
+def test_received_mail_cannot_be_patched_into_sent_or_drafts(api, agent):
+    """QA B-5: a PATCH folder change must not forge "sent"/"drafted" evidence."""
+    rid, mbx, key = agent
+    first = items(api, f"/v1/mailboxes/{mbx}/messages?folder=inbox", key)[0]
+    for folder in ("Sent", "drafts"):
+        r = api.call("PATCH", f"/v1/mailboxes/{mbx}/messages/{first['id']}", key=key,
+                     json={"folder": folder})  # fmt: skip
+        assert "cannot be placed" in err(r, 403, "PERMISSION_DENIED")["message"]
+    assert items(api, f"/v1/mailboxes/{mbx}/messages?folder=sent", key) == []

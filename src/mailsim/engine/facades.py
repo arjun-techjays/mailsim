@@ -42,11 +42,19 @@ class AgentMailbox:
         return self._e.list_messages_page(*self._a(), folder=folder, page_size=page_size,
                                           cursor=cursor, order=order, actor=AGENT)  # fmt: skip
 
-    def resolve_external_id(self, provider: str, entity_type: str, external_id: str) -> str:
-        """Gmail/Graph id -> internal id, restricted to this mailbox."""
+    def resolve_external_id(self, provider: str, entity_type: str | Sequence[str],
+                            external_id: str) -> str:  # fmt: skip
+        """Gmail/Graph id -> internal id, restricted to this mailbox. Several entity types are
+        tried in order as ONE read (NOT_FOUND only if none matches): adapters must not probe
+        with separate calls, which would record their misses as agent errors."""
         return self._e.resolve_external_id(
             *self._a(), provider, entity_type, external_id, actor=AGENT
         )
+
+    def present_messages(self, message_ids: Sequence[str]) -> dict[str, CanonicalMessage]:
+        """Those of `message_ids` still in this mailbox (one read; missing ids are no error).
+        For internal lookups such as change feeds, where a message may have been deleted."""
+        return self._e.present_messages(*self._a(), message_ids, actor=AGENT)
 
     def get_message(self, message_id: str) -> CanonicalMessage:
         return self._e.get_message(*self._a(), message_id, actor=AGENT)
@@ -107,10 +115,14 @@ class AgentMailbox:
     def create_draft(self, *, to: list[str], subject: str, text: str = "",
                      cc: list[str] | None = None, bcc: list[str] | None = None,
                      html: str | None = None, in_reply_to: str | None = None,
-                     references: list[str] | None = None) -> dict[str, Any]:  # fmt: skip
+                     references: list[str] | None = None, reply_to: str | None = None,
+                     forward_of: str | None = None) -> dict[str, Any]:  # fmt: skip
+        """`reply_to` / `forward_of` (internal id of a message in this mailbox): the draft
+        answers it, and sending it is one `reply` / `forward` (Outlook createReply, Gmail
+        drafts with In-Reply-To), not a plain `send`."""
         return self._e.create_draft(*self._a(), to=to, subject=subject, text=text, cc=cc, bcc=bcc,
                                     html=html, in_reply_to=in_reply_to, references=references,
-                                    actor=AGENT)  # fmt: skip
+                                    reply_to=reply_to, forward_of=forward_of, actor=AGENT)  # fmt: skip
 
     def update_draft(self, message_id: str, *, to: list[str], subject: str, text: str = "",
                      cc: list[str] | None = None, bcc: list[str] | None = None,

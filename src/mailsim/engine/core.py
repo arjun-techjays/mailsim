@@ -115,6 +115,9 @@ class DraftContent:
     in_reply_to: str | None = None
     references: list[str] = field(default_factory=list)
     attachments: list[ParsedAttachment] = field(default_factory=list)
+    # what the draft answers: {"kind": "reply" | "forward", "message_id": <original>}; sending
+    # it is then that operation (spec: a reply drafted then sent is a reply)
+    origin: dict[str, str] | None = None
 
 
 @dataclass
@@ -1301,40 +1304,88 @@ class SimEngine:
             subject=d.subject, date=c.now, text=d.text, html=d.html, in_reply_to=d.in_reply_to,
             references=d.references or None, attachments=d.attachments or None,
         )  # fmt: skip
+        ids: dict[str, Any] = {"draft_id": draft_id}
+        if d.origin:
+            ids["origin"] = dict(d.origin)
         return self._insert_raw(
             c, mailbox_id, raw, event_type="draft.created", folder_type="drafts",
             flags=["DRAFT", "SEEN"], received_at=None, bcc=[_addr(a) for a in d.bcc], is_draft=True,
-            actor=actor, operation="draft", provider_ids={"draft_id": draft_id},
+            actor=actor, operation="draft", provider_ids=ids,
         )  # fmt: skip
 
     def create_draft(
         self, scope: Scope, run_id: str, mailbox_id: str, *, to: list[str], subject: str,
         text: str = "", cc: list[str] | None = None, bcc: list[str] | None = None,
         html: str | None = None, in_reply_to: str | None = None,
-        references: list[str] | None = None, actor: str = AGENT,
+        references: list[str] | None = None, reply_to: str | None = None,
+        forward_of: str | None = None, actor: str = AGENT,
     ) -> dict[str, Any]:  # fmt: skip
+        """A new draft. `reply_to` / `forward_of` name the message (internal id, this mailbox,
+        not a draft) the draft answers: sending it is then ONE `reply` / `forward` with the same
+        semantics as the direct operation. A reply draft gets the original's threading headers
+        unless given; a forward draft carries the original's attachments."""
+        if reply_to is not None and forward_of is not None:
+            raise InvalidRequest("a draft answers at most one message (reply_to or forward_of)")
         content = DraftContent(
             to, cc or [], bcc or [], subject, text, html, in_reply_to, references or []
         )
 
         def fn(c: Ctx) -> dict[str, Any]:
+            origin_id = reply_to if reply_to is not None else forward_of
+            if origin_id is not None:
+                orig = self._message(c, mailbox_id, origin_id)
+                if orig.is_draft:
+                    raise InvalidRequest(f"message {origin_id} is a draft; it cannot be answered")
+                content.origin = {"kind": "reply" if reply_to is not None else "forward",
+                                  "message_id": orig.id}  # fmt: skip
+                if reply_to is not None and content.in_reply_to is None:
+                    content.in_reply_to = orig.message_id_header
+                    content.references = content.references or [*orig.references,
+                                                                 orig.message_id_header]  # fmt: skip
+                if forward_of is not None:
+                    content.attachments = self._blob_attachments(c, orig.id)
             draft_id = c.gen.next("drf")
             return {"message_id": self._insert_draft(c, mailbox_id, content, draft_id, actor),
                     "draft_id": draft_id}  # fmt: skip
 
-        return self._command(scope, run_id, actor, "draft", {"to": to, "subject_chars": len(subject)}, fn,
-                             mailbox_id=mailbox_id)  # fmt: skip
+        input_: dict[str, Any] = {"to": to, "subject_chars": len(subject)}
+        if reply_to is not None or forward_of is not None:
+            input_["reply_to" if reply_to is not None else "forward_of"] = reply_to or forward_of
+        return self._command(scope, run_id, actor, "draft", input_, fn, mailbox_id=mailbox_id)
 
     def move(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str, folder: str,
              *, actor: str = AGENT) -> None:  # fmt: skip
         def fn(c: Ctx) -> None:
-            self._message(c, mailbox_id, message_id)
+            row = self._message(c, mailbox_id, message_id)
             target = self._resolve_folder(c, mailbox_id, folder)
+            self._check_placement(c, row, target, actor)
             c.emit("message.moved", {"mailbox_id": mailbox_id, "message_id": message_id, "folder_id": target.id},
                    actor=actor, operation="move")  # fmt: skip
 
         self._command(scope, run_id, actor, "move", {"message_id": message_id, "folder": folder},
                       fn, mailbox_id=mailbox_id)  # fmt: skip
+
+    def _check_placement(self, c: Ctx, row: m.Message, target: m.Folder, actor: str) -> None:
+        """Sent and Drafts hold only what the account itself wrote: an agent may not move or
+        copy received mail there (that would forge "sent"/"drafted" evidence). Its own mail
+        (From = this mailbox) may go to Sent, a draft may go back to Drafts."""
+        if (
+            actor != AGENT
+            or target.system_type not in ("sent", "drafts")
+            or row.folder_id == target.id
+        ):
+            return
+        if target.system_type == "drafts" and row.is_draft:
+            return
+        mb = self._mailbox(c, row.mailbox_id)
+        if target.system_type == "sent" and not row.is_draft and row.from_.get("email") == mb.email:
+            return
+        what = "a draft" if row.is_draft else "received mail"
+        raise PermissionDenied(
+            f"{what} cannot be placed in {target.name}: it holds only messages this account "
+            f"{'sent' if target.system_type == 'sent' else 'drafted'}",
+            details={"folder": target.system_type},
+        )
 
     def _resolve_folder(self, c: Ctx, mailbox_id: str, folder: str) -> m.Folder:
         rows = c.session.execute(
@@ -1465,6 +1516,7 @@ class SimEngine:
                 old.in_reply_to,
                 list(old.references),
                 self._blob_attachments(c, old.id) if keep_attachments else [],
+                old.provider_ids.get("origin"),
             )
             self._emit_delete(c, old, actor, "draft")
             return {"message_id": self._insert_draft(c, mailbox_id, content, draft_id, actor),
@@ -1474,12 +1526,37 @@ class SimEngine:
                              {"message_id": message_id, "to": to, "subject_chars": len(subject)}, fn,
                              mailbox_id=mailbox_id)  # fmt: skip
 
+    @staticmethod
+    def _draft_operation(session: Session, run_id: str, mailbox_id: str,
+                         draft: m.Message | None) -> tuple[str, m.Message | None]:  # fmt: skip
+        """`send`, or `reply` / `forward` when the draft answers a message still in the
+        mailbox (then also that original)."""
+        origin = (draft.provider_ids.get("origin") if draft is not None and draft.is_draft
+                  else None)  # fmt: skip
+        if not isinstance(origin, dict) or origin.get("kind") not in ("reply", "forward"):
+            return "send", None
+        orig = session.get(m.Message, (str(origin.get("message_id")), run_id))
+        if orig is None or orig.mailbox_id != mailbox_id or orig.is_draft:
+            return "send", None  # the original is gone: an ordinary send of the draft
+        return str(origin["kind"]), orig
+
     def send_draft(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str, *,
                    actor: str = AGENT) -> dict[str, Any]:  # fmt: skip
-        """Draft -> sent: the draft disappears, a Sent copy appears, recipients receive it."""
+        """Draft -> sent: the draft disappears, a Sent copy appears, recipients receive it.
+
+        A draft that answers a message (create_draft reply_to / forward_of) is sent as ONE
+        `reply` / `forward` operation: permission, budget, triggers and policies see that
+        operation, and a reply marks the original ANSWERED, exactly like the direct command."""
+        with self._sf() as s:  # decide the operation the guard checks (re-verified under lock)
+            run = get_run(s, scope, run_id)
+            op, _ = self._draft_operation(s, run.id, mailbox_id,
+                                          s.get(m.Message, (message_id, run.id)))  # fmt: skip
 
         def fn(c: Ctx) -> dict[str, Any]:
             d = self._draft(c, mailbox_id, message_id)
+            now_op, orig = self._draft_operation(c.session, c.run.id, mailbox_id, d)
+            if now_op != op:  # pragma: no cover - the draft's original vanished concurrently
+                raise Conflict("the draft changed while it was being sent; send it again")
             to, cc, bcc = (
                 [a["email"] for a in d.to],
                 [a["email"] for a in d.cc],
@@ -1493,12 +1570,18 @@ class SimEngine:
                 list(d.references),
             )
             atts = self._blob_attachments(c, d.id)
-            self._emit_delete(c, d, actor, "send")
-            return self._send(c, mailbox_id, to, cc, bcc, subject, text, html, irt, refs or None,
-                              actor, "send", attachments=atts)  # fmt: skip
+            self._emit_delete(c, d, actor, op)
+            result = self._send(c, mailbox_id, to, cc, bcc, subject, text, html, irt,
+                                refs or None, actor, op, attachments=atts)  # fmt: skip
+            if op == "reply" and orig is not None:
+                c.emit("message.flags_changed", {"mailbox_id": mailbox_id, "message_id": orig.id, "add": ["ANSWERED"], "remove": []},
+                       actor=actor, operation="reply")  # fmt: skip
+            return result
 
-        return self._command(scope, run_id, actor, "send", {"draft_message_id": message_id}, fn,
-                             mailbox_id=mailbox_id)  # fmt: skip
+        input_: dict[str, Any] = {"draft_message_id": message_id}
+        if op != "send":
+            input_["draft_of"] = op
+        return self._command(scope, run_id, actor, op, input_, fn, mailbox_id=mailbox_id)
 
     def copy(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str, folder: str, *,
              actor: str = AGENT) -> dict[str, Any]:  # fmt: skip
@@ -1507,6 +1590,7 @@ class SimEngine:
         def fn(c: Ctx) -> dict[str, Any]:
             row = self._message(c, mailbox_id, message_id)
             target = self._resolve_folder(c, mailbox_id, folder)
+            self._check_placement(c, row, target, actor)
             atts = c.session.execute(
                 select(m.Attachment).where(m.Attachment.run_id == c.run.id, m.Attachment.message_id == row.id)
                 .order_by(m.Attachment.id)
@@ -1880,28 +1964,55 @@ class SimEngine:
                           mailbox_id)  # fmt: skip
 
     def resolve_external_id(self, scope: Scope, run_id: str, mailbox_id: str, provider: str,
-                            entity_type: str, external_id: str, *, actor: str = AGENT) -> str:  # fmt: skip
-        """Provider id -> internal id, only for entities inside `mailbox_id` (else NOT_FOUND)."""
-        if entity_type not in ("message", "thread", "draft"):
+                            entity_type: str | Sequence[str], external_id: str, *,
+                            actor: str = AGENT) -> str:  # fmt: skip
+        """Provider id -> internal id, only for entities inside `mailbox_id` (else NOT_FOUND).
+
+        `entity_type` may list several kinds tried in order (e.g. a Graph id naming a message
+        OR a draft): ONE recorded read, which fails only when none of them matches."""
+        kinds = (entity_type,) if isinstance(entity_type, str) else tuple(entity_type)
+        if not kinds or any(k not in ("message", "thread", "draft") for k in kinds):
             raise InvalidRequest("entity_type must be message, thread or draft")
 
         def fn(c: Ctx) -> str:
             self._mailbox(c, mailbox_id)
             pid = m.ProviderId
-            entity = c.session.scalar(
-                select(pid.entity_id).where(pid.run_id == c.run.id, pid.provider == provider,
-                                            pid.entity_type == entity_type, pid.external_id == external_id)
-            )  # fmt: skip
-            owner: m.Thread | m.Message | None = None
-            if entity:
-                owner = (c.session.get(m.Thread, (entity, c.run.id)) if entity_type == "thread"
-                         else c.session.get(m.Message, (entity, c.run.id)))  # fmt: skip
-            if owner is None or owner.mailbox_id != mailbox_id:
-                raise NotFound(f"{provider} {entity_type} {external_id} not found")
-            return str(entity)
+            for kind in kinds:
+                entity = c.session.scalar(
+                    select(pid.entity_id).where(pid.run_id == c.run.id, pid.provider == provider,
+                                                pid.entity_type == kind, pid.external_id == external_id)
+                )  # fmt: skip
+                owner: m.Thread | m.Message | None = None
+                if entity:
+                    owner = (c.session.get(m.Thread, (entity, c.run.id)) if kind == "thread"
+                             else c.session.get(m.Message, (entity, c.run.id)))  # fmt: skip
+                if owner is not None and owner.mailbox_id == mailbox_id:
+                    return str(entity)
+            raise NotFound(f"{provider} {'/'.join(kinds)} {external_id} not found")
 
         return self._read(scope, run_id, actor, "read",
-                          {"provider": provider, "entity_type": entity_type}, fn, mailbox_id)  # fmt: skip
+                          {"provider": provider, "entity_type": "|".join(kinds)}, fn, mailbox_id)  # fmt: skip
+
+    def present_messages(self, scope: Scope, run_id: str, mailbox_id: str,
+                         message_ids: Sequence[str], *, actor: str = AGENT) -> dict[str, CanonicalMessage]:  # fmt: skip
+        """The listed messages that still exist in this mailbox, keyed by id: ONE read that
+        never fails for a missing id (change feeds look up messages that may be gone)."""
+        wanted = list(dict.fromkeys(message_ids))
+
+        def fn(c: Ctx) -> dict[str, CanonicalMessage]:
+            self._mailbox(c, mailbox_id)
+            if not wanted:
+                return {}
+            rows = c.session.execute(
+                select(m.Message).where(m.Message.run_id == c.run.id, m.Message.mailbox_id == mailbox_id,
+                                        m.Message.id.in_(wanted))
+            ).scalars().all()  # fmt: skip
+            found = {r.id: self._canonical(c, r) for r in rows}
+            return {i: found[i] for i in wanted if i in found}
+
+        return self._read(
+            scope, run_id, actor, "read", {"message_ids": len(wanted)}, fn, mailbox_id
+        )
 
     def get_message(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str,
                     *, actor: str = AGENT) -> CanonicalMessage:  # fmt: skip
