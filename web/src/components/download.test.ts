@@ -1,7 +1,14 @@
 import { REVOKE_AFTER_MS, saveBlob } from './download';
 
 describe('saveBlob', () => {
-  afterEach(() => vi.useRealTimers());
+  const realCreate = URL.createObjectURL;
+  const realRevoke = URL.revokeObjectURL;
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    URL.createObjectURL = realCreate;
+    URL.revokeObjectURL = realRevoke;
+  });
 
   it('saves octet-stream bytes under a sanitised name and revokes the URL after a delay', () => {
     vi.useFakeTimers();
@@ -24,5 +31,13 @@ describe('saveBlob', () => {
     vi.advanceTimersByTime(REVOKE_AFTER_MS);
     expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:x');
     expect(saveBlob('text', [null], 'fallback.bin')).toBe('fallback.bin');
+  });
+
+  it('sanitises the fallback name too, and uses "download" when nothing is usable', () => {
+    URL.createObjectURL = vi.fn(() => 'blob:y');
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    expect(saveBlob('x', [null], 'attachment-../\u202Eexe.txt')).toBe('exe.txt');
+    expect(saveBlob('x', ['..'], '..')).toBe('download');
   });
 });

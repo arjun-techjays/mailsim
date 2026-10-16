@@ -11,7 +11,7 @@ export const REVOKE_AFTER_MS = 1000;
  * extension. Returns the name used.
  */
 export function saveBlob(data: Blob | string, names: readonly (string | null | undefined)[], fallback = 'download'): string {
-  const name = pickFilename(names, fallback);
+  const name = pickFilename([...names, fallback], 'download');
   const url = URL.createObjectURL(new Blob([data], { type: 'application/octet-stream' }));
   try {
     const a = document.createElement('a');

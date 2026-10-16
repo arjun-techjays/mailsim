@@ -1,4 +1,5 @@
 import { createContext, useContext } from 'react';
+import type { AgentCredential } from '../api/types';
 
 /**
  * An agent key held by this tab, per run. Keys are shown once by the API, so the dashboard
@@ -16,9 +17,8 @@ export interface HeldKey {
 }
 
 /** AgentCredential.key_id where the server provides it (optional in the contract). */
-export function credentialKeyId(cred: object): string | null {
-  // SCHEMA-CAST: remove once schema.gen.ts (integration) has AgentCredential.key_id.
-  const id = (cred as { key_id?: unknown }).key_id;
+export function credentialKeyId(cred: Pick<AgentCredential, 'key_id'>): string | null {
+  const id = cred.key_id;
   return typeof id === 'string' && id ? id : null;
 }
 

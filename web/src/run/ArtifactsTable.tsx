@@ -8,10 +8,9 @@ import { bytes } from '../components/format';
 import { Empty, Loading } from '../components/Status';
 import { runKeys } from './keys';
 
-/** ArtifactOut.url (QA-A3; absent on older servers, null for the trace). */
+/** ArtifactOut.url (absent on older servers, null for the trace). */
 const urlOf = (a: ArtifactOut): string | null => {
-  // SCHEMA-CAST: remove once schema.gen.ts (integration) has ArtifactOut.url.
-  const u = (a as ArtifactOut & { url?: unknown }).url;
+  const u = a.url;
   return typeof u === 'string' && u ? u : null;
 };
 

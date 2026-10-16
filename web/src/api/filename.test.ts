@@ -7,6 +7,11 @@ describe('safeBaseName', () => {
     expect(safeBaseName('a\u202Ab\u202Bc\u202Cd\u202De\u2066f\u2067g\u2068h\u2069i\u200Ej\u200Fk\u061Cl.txt')).toBe('abcdefghijkl.txt');
   });
 
+  it('removes zero-width characters, the BOM and line/paragraph separators', () => {
+    expect(safeBaseName('a\u200Bb\u200Cc\u200Dd\uFEFFe\u2028f\u2029g.pdf')).toBe('abcdefg.pdf');
+    for (const bad of ['\u200B', '\uFEFF\u200D']) expect(safeBaseName(bad)).toBeNull();
+  });
+
   it('removes C0/C1 controls and DEL, keeps ordinary Unicode', () => {
     expect(safeBaseName('a\u0000b\u0007c\u001fd\u007fe\u0085f\u009fg.pdf')).toBe('abcdefg.pdf');
     expect(safeBaseName('résumé 2026.pdf')).toBe('résumé 2026.pdf');
