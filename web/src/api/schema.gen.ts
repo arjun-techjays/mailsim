@@ -384,8 +384,9 @@ export interface paths {
         /**
          * Run Artifact
          * @description Download one listed blob artifact (`artifact_id` = its `ref`) as an attachment. Only
-         *     blobs this run lists for the caller are served (reports: evaluators only), with
-         *     `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`; 404 otherwise.
+         *     blobs this run lists for the caller are served (reports: evaluators only); 404 otherwise.
+         *     Served with `Content-Security-Policy: sandbox`, `X-Content-Type-Options: nosniff` and the
+         *     recorded content type only when it is a passive type (else application/octet-stream).
          */
         get: operations["run_artifact_v1_runs__run_id__artifacts__artifact_id__get"];
         put?: never;
@@ -876,7 +877,9 @@ export interface paths {
         /**
          * Create Answer Key
          * @description Publish a hidden answer-key version (controller or evaluator). The response is
-         *     metadata only.
+         *     metadata only. Runs the checks of `.../answer-keys/validate` (400 with `details.issues`);
+         *     references are checked against the compatible scenario versions that exist now (all of
+         *     them when `scenario_versions` is omitted); later scenario versions do not re-check it.
          */
         post: operations["create_answer_key_v1_scenarios__scenario_key__answer_keys_post"];
         delete?: never;
@@ -903,7 +906,8 @@ export interface paths {
          *     key of another scenario, `answer_key.scenario_versions` for unknown versions, unknown
          *     references at their dotted path (`answer_key.assertions.0.check.where.folder`: folders,
          *     flags, operations per actor, outcome and error codes, persona mailboxes and event ids of
-         *     every compatible scenario version), and
+         *     every compatible scenario version; with `scenario_versions` omitted, the versions that exist
+         *     now: a later scenario version does not re-check stored keys), and
          *     `leak:<scenario version>` when grading prose appears in content the agent can read (the
          *     leaked text is cut to 60 characters). 404 when the scenario does not exist.
          */

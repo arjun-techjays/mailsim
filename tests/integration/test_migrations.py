@@ -47,3 +47,12 @@ def test_scratch_databases_are_dropped_even_when_the_test_fails():
         assert url.endswith("/" + name) and _exists(name)
         raise RuntimeError("test body failed")
     assert not _exists(name)
+
+
+@pytest.mark.parametrize("name", ["mailsim", "postgres", "mailsim_test; DROP", 'x"test', "Test_X"])
+def test_database_helpers_only_touch_test_databases(name):
+    from tests.conftest import drop_database, recreate_database
+
+    for helper in (recreate_database, drop_database):
+        with pytest.raises(ValueError, match="not a \\*test\\* database"):
+            helper(name)

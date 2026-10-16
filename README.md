@@ -61,7 +61,11 @@ Expired idempotency records are swept on each claim; `python -m mailsim.serve sw
   advance replay`), outcomes (`ok`, `any` or an error code), protocol `error_codes`, and the
   persona mailboxes and event ids (`evaluate_at.event`, temporal `first`/`then`) of **every**
   scenario version the key is compatible with (`scenario_versions`, all when omitted). Labels
-  are free-form and not checked.
+  are free-form and not checked. A key that covers all versions (`scenario_versions` omitted)
+  is checked against the versions that exist **when it is published**: publishing a later
+  scenario version does not re-check stored keys (a name missing from that version then grades
+  as it always did, e.g. `no mailbox for persona` or INCONCLUSIVE). List `scenario_versions`
+  explicitly, or publish a new key version, when a new scenario version renames things.
 * **YAML booleans.** Only `true`/`false` are booleans; `on`/`off`/`yes`/`no` stay strings
   (YAML 1.2 rules), so a persona script's `on:` key and `checks_default: on` work unquoted.
   Where a boolean is expected (`once: yes`), those strings are still accepted.
@@ -84,6 +88,17 @@ Expired idempotency records are swept on each claim; `python -m mailsim.serve sw
   carries a `url` (`GET /v1/runs/{id}/artifacts/{ref}`, controller or evaluator; reports
   evaluator only) served as an attachment with `X-Content-Type-Options: nosniff` and
   `Content-Security-Policy: sandbox`.
+
+## Release notes
+
+* **QA-A3 (evaluation, validation, runs).** Answer keys with unknown references are refused
+  (validate and publish). New run status `REPLAYED`; replay runs are not evaluated and are
+  hidden from `/accuracy` and the runs list by default (`include_replays=true`). Incompatible
+  answer keys answer 409. Report and artifact downloads are attachments
+  (`GET /v1/runs/{id}/artifacts/{ref}`); only passive content types are echoed, everything
+  else (HTML, SVG, XML, scripts) is `application/octet-stream`. **Breaking:** `/accuracy`
+  reports runs without a build as `(no build)` (was `unspecified`): `builds=unspecified` no
+  longer selects them, use `builds=(no build)`.
 
 ## Local development: Claude Code CLI provider and no-auth dashboard
 

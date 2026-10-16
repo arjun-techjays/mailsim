@@ -156,7 +156,8 @@ def test_evaluating_with_an_incompatible_key_is_a_conflict_with_details(world):
 
 # ---- EV-5: downloads ------------------------------------------------------------------------
 @pytest.mark.parametrize(("fmt", "ext", "ctype"), [
-    ("json", "json", "application/json"), ("junit", "xml", "application/xml"),
+    ("json", "json", "application/json"),
+    ("junit", "xml", "application/octet-stream"),  # XML is never echoed (renderable)
     ("markdown", "md", "text/markdown"),
 ])  # fmt: skip
 def test_report_downloads_are_named_attachments(world, fmt, ext, ctype):
@@ -164,7 +165,7 @@ def test_report_downloads_are_named_attachments(world, fmt, ext, ctype):
     evl = evaluate(world, run).json()["evaluation_id"]
     r = world.call("GET", f"/v1/runs/{run}/evaluations/{evl}/report?format={fmt}", "evaluator",
                    expect=200)  # fmt: skip
-    assert r.headers["content-type"].startswith(ctype)
+    assert r.headers["content-type"] == ctype
     assert r.headers["content-disposition"] == f'attachment; filename="{run}-{evl}.{ext}"'
     assert r.headers["x-content-type-options"] == "nosniff"
 
@@ -216,10 +217,60 @@ def test_attachment_artifacts_keep_a_safe_name_and_type(world):
     att = next(a for a in listed if a["content_type"] == "text/html")
     r = world.call("GET", att["url"], expect=200)
     assert r.content.startswith(b"<script>")
-    assert r.headers["content-type"].startswith("text/html")  # recorded type, but never rendered
+    assert (
+        r.headers["content-type"] == "application/octet-stream"
+    )  # recorded text/html: never echoed
     disposition = r.headers["content-disposition"]
     assert (
         disposition.startswith('attachment; filename="r_sum')
         and "filename*=UTF-8''r%C3%A9" in disposition
     )
     assert '"x"' not in disposition and r.headers["content-security-policy"].startswith("sandbox")
+
+
+# ---- review follow-ups ----------------------------------------------------------------------
+def test_a_legacy_replay_stored_running_is_not_live(world):
+    """Replays made before REPLAYED existed stayed READY/RUNNING: still no commands, no agent."""
+    from sqlalchemy import update
+
+    from mailsim.store import models as m
+
+    created = world.create_run(agent_build="b1")
+    run = created["run"]["id"]
+    key, mbx = world.agent(created)
+    other = agent_run(world)
+    with world.sf.begin() as s:  # what an old replay row looks like: live status + replay_of
+        s.execute(update(m.Run).where(m.Run.id == run).values(replay_of=other))
+    assert world.call("GET", f"/v1/runs/{run}", expect=200).json()["status"] == "RUNNING"
+    err(world.call("POST", f"/v1/runs/{run}/clock/advance", json={"seconds": 5}), 409,
+        "RUN_NOT_ACTIVE")  # fmt: skip
+    err(world.call("POST", f"/v1/runs/{run}/cancel"), 409, "RUN_NOT_ACTIVE")
+    body = err(world.call("POST", f"/v1/runs/{run}/agent-credentials"), 409, "CONFLICT")
+    assert body["details"]["replay_of"] == other
+    # the agent key issued before is dead, and operator reads still work
+    assert world.call("GET", f"/v1/mailboxes/{mbx}/messages", key=key).status_code == 401
+    world.call("GET", f"/v1/runs/{run}/mailboxes/{mbx}/messages", expect=200)
+    err(evaluate(world, run, expect=409), 409, "CONFLICT")
+
+
+@pytest.mark.parametrize(("given", "served"), [
+    ("application/pdf", "application/pdf"), ("IMAGE/PNG; name=x.png", "image/png"),
+    ("text/plain; charset=utf-8", "text/plain"), ("text/csv", "text/csv"),
+    ("application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+    ("text/html", "application/octet-stream"), ("image/svg+xml", "application/octet-stream"),
+    ("application/xml", "application/octet-stream"), ("text/xml", "application/octet-stream"),
+    ("application/xhtml+xml", "application/octet-stream"),
+    ("application/javascript", "application/octet-stream"),
+    ("video/mp4", "application/octet-stream"), ("garbage", "application/octet-stream"),
+    ("", "application/octet-stream"), (None, "application/octet-stream"),
+])  # fmt: skip
+def test_only_passive_content_types_are_echoed(given, served):
+    from mailsim.api.downloads import safe_content_type, safe_download_headers
+
+    assert safe_content_type(given) == served
+    headers = safe_download_headers("../x.html", given)
+    assert headers["Content-Type"] == served
+    assert headers["Content-Disposition"].startswith('attachment; filename="x.html"; filename*=')
+    assert safe_download_headers("", None)["Content-Disposition"] == (
+        'attachment; filename="download"')  # fmt: skip

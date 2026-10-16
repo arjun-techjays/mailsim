@@ -296,7 +296,8 @@ def validate_answer_key(
     key of another scenario, `answer_key.scenario_versions` for unknown versions, unknown
     references at their dotted path (`answer_key.assertions.0.check.where.folder`: folders,
     flags, operations per actor, outcome and error codes, persona mailboxes and event ids of
-    every compatible scenario version), and
+    every compatible scenario version; with `scenario_versions` omitted, the versions that exist
+    now: a later scenario version does not re-check stored keys), and
     `leak:<scenario version>` when grading prose appears in content the agent can read (the
     leaked text is cut to 60 characters). 404 when the scenario does not exist."""
     if (body.source is None) == (body.document is None):

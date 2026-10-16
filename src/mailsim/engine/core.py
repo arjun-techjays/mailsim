@@ -275,6 +275,10 @@ class SimEngine:
         self, ctx: Ctx, actor: str, operation: str, mailbox_id: str | None, require_running: bool
     ) -> None:
         run = ctx.run
+        if run.replay_of is not None and not (actor != AGENT and operation in READ_OPERATIONS):
+            # a replay copy is never live, whatever status it was stored with (replays made
+            # before REPLAYED existed stayed READY/RUNNING): only operator reads are allowed
+            raise RunNotActive(f"run {run.id} is a replay of {run.replay_of}; it takes no commands")
         if require_running and run.status != RunStatus.RUNNING:
             raise RunNotActive(f"run is {run.status}, not RUNNING")
         if actor != AGENT:

@@ -6,10 +6,8 @@ WS-B). Without one, they answer 501 UNSUPPORTED_OPERATION.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Annotated, Any, Literal, Protocol
-from urllib.parse import quote
 
 from fastapi import APIRouter, Header, Query, Request, Response
 from pydantic import ValidationError
@@ -20,6 +18,7 @@ from mailsim.api import authoring
 from mailsim.api import schemas as s
 from mailsim.api.auth import issue_key, project_keys, revoke_agent_keys, revoke_scoped_key
 from mailsim.api.deps import Authenticated, Controller, Evaluator, Inspector, not_implemented
+from mailsim.api.downloads import safe_download_headers
 from mailsim.api.errors import ErrorEnvelope
 from mailsim.api.idempotency import idempotent
 from mailsim.api.pagination import decode_sequence_cursor, encode_sequence_cursor
@@ -51,8 +50,6 @@ Idem = Annotated[str | None, Header(alias="Idempotency-Key", max_length=200)]
 REPORT_TYPES = {"json": "application/json", "junit": "application/xml",
                 "markdown": "text/markdown; charset=utf-8"}  # fmt: skip
 REPORT_EXTENSIONS = {"json": "json", "junit": "xml", "markdown": "md"}
-_MIME_TYPE = re.compile(r"[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*")
-_UNSAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]")
 
 
 class EvaluationService(Protocol):
@@ -228,7 +225,9 @@ def create_answer_key(
     request: Request, scenario_key: str, body: s.AnswerKeyCreate, principal: Inspector
 ) -> s.AnswerKeyOut:
     """Publish a hidden answer-key version (controller or evaluator). The response is
-    metadata only."""
+    metadata only. Runs the checks of `.../answer-keys/validate` (400 with `details.issues`);
+    references are checked against the compatible scenario versions that exist now (all of
+    them when `scenario_versions` is omitted); later scenario versions do not re-check it."""
     data = authoring.answer_key_data(body.source, body.document)
     try:
         doc = AnswerKeyDoc.model_validate(data)
@@ -267,9 +266,11 @@ def _agent_credential(request: Request, principal: Principal, run_id: str) -> s.
     ctl = controller(request, principal)
     with sessions(request)() as session:
         run = repos.get_run(session, scope(principal), run_id)
-        if run.status in {str(st) for st in TERMINAL}:
-            raise Conflict(f"run is {run.status}; agent credentials are only issued for live runs",
-                           details={"status": run.status})  # fmt: skip
+        if run.status in {str(st) for st in TERMINAL} or run.replay_of is not None:
+            raise Conflict(f"run is {run.status}{' (a replay)' if run.replay_of else ''}; agent "
+                           "credentials are only issued for live runs",
+                           details={"status": run.status,
+                                    **({"replay_of": run.replay_of} if run.replay_of else {})})  # fmt: skip
         sv = session.get(m.ScenarioVersion, run.scenario_version_id)
         assert sv is not None
         body = sv.spec["scenario"]
@@ -463,13 +464,12 @@ def replay_run(
     return idempotent(request, principal, idempotency_key, {}, 200, replay)
 
 
-def _artifacts(request: Request, principal: Principal,
-               run_id: str) -> list[tuple[s.ArtifactOut, str]]:  # fmt: skip
-    """(artifact, download file name) of a run; reports only for evaluators."""
+def _artifacts(request: Request, principal: Principal, run_id: str) -> list[s.ArtifactOut]:
+    """Artifacts of a run; reports only for evaluators."""
     view = inspector(request, principal)
     state = view.state(run_id)  # scope-checked
-    out = [(s.ArtifactOut(kind="trace", ref=f"/v1/runs/{run_id}/events",
-                          content_type="application/json"), "")]  # fmt: skip
+    out = [s.ArtifactOut(kind="trace", ref=f"/v1/runs/{run_id}/events",
+                         content_type="application/json")]  # fmt: skip
 
     def url(ref: str) -> str:
         return f"/v1/runs/{run_id}/artifacts/{ref}"
@@ -479,14 +479,14 @@ def _artifacts(request: Request, principal: Principal,
         ref = row["raw_blob_ref"]
         if ref and ref not in seen:
             seen.add(ref)
-            out.append((s.ArtifactOut(kind="raw_mime", ref=ref, content_type="message/rfc822",
-                                      url=url(ref)), f"{run_id}-{ref[:12]}.eml"))  # fmt: skip
+            out.append(s.ArtifactOut(kind="raw_mime", ref=ref, content_type="message/rfc822",
+                                     url=url(ref)))  # fmt: skip
     for att in state["attachments"]:
         if att["blob_ref"] not in seen:
             seen.add(att["blob_ref"])
-            out.append((s.ArtifactOut(kind="attachment", ref=att["blob_ref"],
-                                      content_type=att["mime_type"], size=att["size"],
-                                      url=url(att["blob_ref"])), att["filename"]))  # fmt: skip
+            out.append(s.ArtifactOut(kind="attachment", ref=att["blob_ref"],
+                                     content_type=att["mime_type"], size=att["size"],
+                                     url=url(att["blob_ref"])))  # fmt: skip
     if isinstance(view, EvaluatorView):
         with sessions(request)() as session:
             reports = session.execute(
@@ -495,10 +495,9 @@ def _artifacts(request: Request, principal: Principal,
                 .where(m.Evaluation.run_id == run_id)
                 .order_by(m.ReportRow.created_at, m.ReportRow.id)
             ).scalars()
-            out += [(s.ArtifactOut(kind="report", ref=r.blob_ref, url=url(r.blob_ref),
-                                   content_type=REPORT_TYPES.get(r.format,
-                                                                 "application/octet-stream")),
-                     report_filename(run_id, r.evaluation_id, r.format))
+            out += [s.ArtifactOut(kind="report", ref=r.blob_ref, url=url(r.blob_ref),
+                                  content_type=REPORT_TYPES.get(r.format,
+                                                                "application/octet-stream"))
                     for r in reports]  # fmt: skip
     return out
 
@@ -507,7 +506,7 @@ def _artifacts(request: Request, principal: Principal,
 def run_artifacts(request: Request, run_id: str, principal: Inspector) -> list[s.ArtifactOut]:
     """Trace, raw MIME and attachment blobs; evaluation reports for evaluators only. Blob
     artifacts carry a `url` that downloads them (`GET /v1/runs/{run_id}/artifacts/{ref}`)."""
-    return [artifact for artifact, _name in _artifacts(request, principal, run_id)]
+    return _artifacts(request, principal, run_id)
 
 
 @router.get(
@@ -517,31 +516,44 @@ def run_artifacts(request: Request, run_id: str, principal: Inspector) -> list[s
 )
 def run_artifact(request: Request, run_id: str, artifact_id: str, principal: Inspector) -> Response:
     """Download one listed blob artifact (`artifact_id` = its `ref`) as an attachment. Only
-    blobs this run lists for the caller are served (reports: evaluators only), with
-    `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`; 404 otherwise."""
-    for artifact, name in _artifacts(request, principal, run_id):
-        if artifact.kind != "trace" and artifact.ref == artifact_id:
-            ctype = artifact.content_type.strip().lower()
-            if not _MIME_TYPE.fullmatch(ctype.split(";")[0].strip()):
-                ctype = "application/octet-stream"
-            return Response(blobs(request).get(artifact.ref), media_type=ctype,
-                            headers=download_headers(name))  # fmt: skip
-    raise NotFound(f"artifact {artifact_id[:80]} not found for run {run_id}")
+    blobs this run lists for the caller are served (reports: evaluators only); 404 otherwise.
+    Served with `Content-Security-Policy: sandbox`, `X-Content-Type-Options: nosniff` and the
+    recorded content type only when it is a passive type (else application/octet-stream)."""
+    evaluator = isinstance(inspector(request, principal), EvaluatorView)
+    found: tuple[str, str] | None = None  # (content type, file name)
+    with sessions(request)() as session:
+        repos.get_run(session, scope(principal), run_id)  # scope-checked
+        for model in (m.Message, m.SinkMessage):
+            if session.scalar(select(model.id).where(model.run_id == run_id,
+                                                     model.raw_blob_ref == artifact_id).limit(1)):  # fmt: skip
+                found = ("message/rfc822", f"{run_id}-{artifact_id[:12]}.eml")
+                break
+        if found is None:
+            att = session.execute(
+                select(m.Attachment.mime_type, m.Attachment.filename)
+                .where(m.Attachment.run_id == run_id, m.Attachment.blob_ref == artifact_id)
+                .limit(1)
+            ).first()
+            if att is not None:
+                found = (att.mime_type, att.filename)
+        if found is None and evaluator:
+            rep = session.execute(
+                select(m.ReportRow.evaluation_id, m.ReportRow.format)
+                .join(m.Evaluation, m.Evaluation.id == m.ReportRow.evaluation_id)
+                .where(m.Evaluation.run_id == run_id, m.ReportRow.blob_ref == artifact_id)
+                .limit(1)
+            ).first()
+            if rep is not None:
+                found = (REPORT_TYPES.get(rep.format, "application/octet-stream"),
+                         report_filename(run_id, rep.evaluation_id, rep.format))  # fmt: skip
+    if found is None:
+        raise NotFound(f"artifact {artifact_id[:80]} not found for run {run_id}")
+    return Response(blobs(request).get(artifact_id),
+                    headers=safe_download_headers(found[1], found[0]))  # fmt: skip
 
 
 def report_filename(run_id: str, evaluation_id: str, fmt: str) -> str:
     return f"{run_id}-{evaluation_id}.{REPORT_EXTENSIONS.get(fmt, 'bin')}"
-
-
-def download_headers(filename: str) -> dict[str, str]:
-    """Headers for serving recorded (untrusted) bytes: always a download, never rendered."""
-    fallback = _UNSAFE_FILENAME.sub("_", filename)[:150].strip("._") or "download"
-    disposition = f'attachment; filename="{fallback}"'
-    if fallback != filename:
-        disposition += f"; filename*=UTF-8''{quote(filename[:150], safe='')}"
-    return {"Content-Disposition": disposition, "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": "sandbox; default-src 'none'",
-            "Cache-Control": "private, no-store"}  # fmt: skip
 
 
 # ---- evaluations (WS-B service) --------------------------------------------------------
@@ -617,5 +629,6 @@ def evaluation_report(
     sc = scope(principal)
     if evaluation_id not in {r.evaluation_id for r in service.list(sc, run_id)}:
         raise NotFound(f"evaluation {evaluation_id} not found")
-    return Response(service.report_blob(sc, evaluation_id, fmt), media_type=REPORT_TYPES[fmt],
-                    headers=download_headers(report_filename(run_id, evaluation_id, fmt)))  # fmt: skip
+    name = report_filename(run_id, evaluation_id, fmt)
+    return Response(service.report_blob(sc, evaluation_id, fmt),
+                    headers=safe_download_headers(name, REPORT_TYPES[fmt]))  # fmt: skip

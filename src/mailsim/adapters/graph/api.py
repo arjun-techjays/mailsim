@@ -28,6 +28,7 @@ from mailsim.adapters.graph import odata
 from mailsim.adapters.graph import resources as res
 from mailsim.adapters.graph.errors import GraphAuthError, GraphRoute, SyncStateGone
 from mailsim.api.auth import InvalidCredential, verify_key
+from mailsim.api.downloads import safe_download_headers
 from mailsim.api.routers._common import app_state
 from mailsim.auth.principal import Principal, Role
 from mailsim.domain.errors import (
@@ -897,7 +898,8 @@ def get_attachment(message_id: str, attachment_id: str, ctx: Context) -> JSONRes
 def get_attachment_content(message_id: str, attachment_id: str, ctx: Context) -> Response:
     m, i = _attachment(ctx, message_id, attachment_id)
     att = m.attachments[i]
-    return Response(app_state(ctx.request, "blobs").get(att.blob_ref), media_type=att.mime_type)
+    return Response(app_state(ctx.request, "blobs").get(att.blob_ref),
+                    headers=safe_download_headers(att.filename, att.mime_type))  # fmt: skip
 
 
 # ------------------------------------------------------------------- capability discovery
