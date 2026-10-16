@@ -2145,10 +2145,12 @@
         "description": "Forward a message (with its attachments) to new recipients; `text` goes above it.",
         "properties": {
           "cc": {
-            "description": "addresses; \"Name <addr@example.com>\" is accepted (the name is dropped)",
+            "description": "addresses; \"Name <addr@example.com>\" is accepted (the name is dropped); quote a name that contains a comma ('\"Smith, John\" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.",
             "items": {
+              "maxLength": 8192,
               "type": "string"
             },
+            "maxItems": 100,
             "title": "Cc",
             "type": "array"
           },
@@ -2158,10 +2160,12 @@
             "type": "string"
           },
           "to": {
-            "description": "addresses; \"Name <addr@example.com>\" is accepted (the name is dropped)",
+            "description": "addresses; \"Name <addr@example.com>\" is accepted (the name is dropped); quote a name that contains a comma ('\"Smith, John\" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.",
             "items": {
+              "maxLength": 8192,
               "type": "string"
             },
+            "maxItems": 100,
             "minItems": 1,
             "title": "To",
             "type": "array"
@@ -3418,18 +3422,22 @@
         "additionalProperties": false,
         "properties": {
           "bcc": {
-            "description": "addresses; \"Name <addr@example.com>\" is accepted (the name is dropped)",
+            "description": "addresses; \"Name <addr@example.com>\" is accepted (the name is dropped); quote a name that contains a comma ('\"Smith, John\" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.",
             "items": {
+              "maxLength": 8192,
               "type": "string"
             },
+            "maxItems": 100,
             "title": "Bcc",
             "type": "array"
           },
           "cc": {
-            "description": "addresses; \"Name <addr@example.com>\" is accepted (the name is dropped)",
+            "description": "addresses; \"Name <addr@example.com>\" is accepted (the name is dropped); quote a name that contains a comma ('\"Smith, John\" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.",
             "items": {
+              "maxLength": 8192,
               "type": "string"
             },
+            "maxItems": 100,
             "title": "Cc",
             "type": "array"
           },
@@ -3455,10 +3463,12 @@
             "type": "string"
           },
           "to": {
-            "description": "addresses; \"Name <addr@example.com>\" is accepted (the name is dropped)",
+            "description": "addresses; \"Name <addr@example.com>\" is accepted (the name is dropped); quote a name that contains a comma ('\"Smith, John\" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.",
             "items": {
+              "maxLength": 8192,
               "type": "string"
             },
+            "maxItems": 100,
             "title": "To",
             "type": "array"
           }
@@ -4292,7 +4302,7 @@
                 }
               }
             },
-            "description": "The attachment bytes, always as a download (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`)."
+            "description": "The attachment bytes, always as a download (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`). Active types (HTML, SVG, XML, scripts, ...) are served as application/octet-stream."
           },
           "default": {
             "content": {
@@ -4949,7 +4959,7 @@
     },
     "/v1/runs/{run_id}/agent-credentials": {
       "post": {
-        "description": "Issue an additional agent key for a run (e.g. after a lost or redacted response, or one\nkey per interface). Earlier agent keys are NOT revoked: revoke one explicitly with\n`DELETE /v1/keys/{key_id}`. Cancelling or completing the run revokes all of them.",
+        "description": "Issue an additional agent key for a run (e.g. after a lost or redacted response, or one\nkey per interface). Earlier agent keys are NOT revoked: revoke one explicitly with\n`DELETE /v1/keys/{key_id}`. Cancelling or completing the run revokes all of them. At most\n16 live agent keys per run: beyond that, 409 CONFLICT until one is revoked.",
         "operationId": "create_agent_credential_v1_runs__run_id__agent_credentials_post",
         "parameters": [
           {
@@ -5912,7 +5922,7 @@
                 }
               }
             },
-            "description": "The attachment bytes, always as a download (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`)."
+            "description": "The attachment bytes, always as a download (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`). Active types (HTML, SVG, XML, scripts, ...) are served as application/octet-stream."
           },
           "default": {
             "content": {

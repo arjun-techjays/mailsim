@@ -384,7 +384,8 @@ export interface paths {
          * Create Agent Credential
          * @description Issue an additional agent key for a run (e.g. after a lost or redacted response, or one
          *     key per interface). Earlier agent keys are NOT revoked: revoke one explicitly with
-         *     `DELETE /v1/keys/{key_id}`. Cancelling or completing the run revokes all of them.
+         *     `DELETE /v1/keys/{key_id}`. Cancelling or completing the run revokes all of them. At most
+         *     16 live agent keys per run: beyond that, 409 CONFLICT until one is revoked.
          */
         post: operations["create_agent_credential_v1_runs__run_id__agent_credentials_post"];
         delete?: never;
@@ -1937,7 +1938,7 @@ export interface components {
         ForwardRequest: {
             /**
              * Cc
-             * @description addresses; "Name <addr@example.com>" is accepted (the name is dropped)
+             * @description addresses; "Name <addr@example.com>" is accepted (the name is dropped); quote a name that contains a comma ('"Smith, John" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.
              */
             cc?: string[];
             /**
@@ -1947,7 +1948,7 @@ export interface components {
             text: string;
             /**
              * To
-             * @description addresses; "Name <addr@example.com>" is accepted (the name is dropped)
+             * @description addresses; "Name <addr@example.com>" is accepted (the name is dropped); quote a name that contains a comma ('"Smith, John" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.
              */
             to: string[];
         };
@@ -2409,12 +2410,12 @@ export interface components {
         SendRequest: {
             /**
              * Bcc
-             * @description addresses; "Name <addr@example.com>" is accepted (the name is dropped)
+             * @description addresses; "Name <addr@example.com>" is accepted (the name is dropped); quote a name that contains a comma ('"Smith, John" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.
              */
             bcc?: string[];
             /**
              * Cc
-             * @description addresses; "Name <addr@example.com>" is accepted (the name is dropped)
+             * @description addresses; "Name <addr@example.com>" is accepted (the name is dropped); quote a name that contains a comma ('"Smith, John" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.
              */
             cc?: string[];
             /** Html */
@@ -2431,7 +2432,7 @@ export interface components {
             text: string;
             /**
              * To
-             * @description addresses; "Name <addr@example.com>" is accepted (the name is dropped)
+             * @description addresses; "Name <addr@example.com>" is accepted (the name is dropped); quote a name that contains a comma ('"Smith, John" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.
              */
             to?: string[];
         };
@@ -2821,7 +2822,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The attachment bytes, always as a download (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`). */
+            /** @description The attachment bytes, always as a download (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`). Active types (HTML, SVG, XML, scripts, ...) are served as application/octet-stream. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3656,7 +3657,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The attachment bytes, always as a download (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`). */
+            /** @description The attachment bytes, always as a download (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`). Active types (HTML, SVG, XML, scripts, ...) are served as application/octet-stream. */
             200: {
                 headers: {
                     [name: string]: unknown;
