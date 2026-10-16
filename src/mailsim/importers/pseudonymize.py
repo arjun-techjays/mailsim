@@ -64,8 +64,8 @@ _SIGNOFF_WORDS = re.compile(
 # parentheses, optional +/00/011 prefix, 7+ digits in total, see `is_phone`) plus short
 # extensions (x1234, ext. 3-1234, 87-7454).
 PHONE_RUN = re.compile(
-    r"(?<![\w.,$/:#-])(?:\+\s?)?\(?\d{1,5}\)?"
-    r"(?:(?:[ .\-/]|\)\s?|\s?\(|\s-\s?|-\s)\(?\d{1,5}\)?){1,6}"
+    r"(?<![\w.,$/\-\u2013\u2212])(?<!\d[:#])(?:\+\s?)?\(?\d{1,7}\)?"
+    r"(?:(?:[ .\-/\u2013\u2212]|\)\s?|\s?\(|\s-\s?|-\s)\(?\d{1,7}\)?){1,6}"
     r"(?![\w:]|[.,]\d)"
 )
 PHONE_SHORT = re.compile(
@@ -91,11 +91,16 @@ def is_phone(run: str) -> bool:
         return False
     if re.fullmatch(r"\d{3}-\d{2}-\d{4}|\d{5}-\d{4}", text):
         return False  # SSN and ZIP+4 shapes: scrubbed and scanned by their own rules
+    if re.fullmatch(r"\d{6}(?:\s?/\s?\d{6})+", text):
+        return False  # deal-number lists (481620/481621): hashed by ID6_LIST
     if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", text) or re.fullmatch(r"\d+\.\d{1,2}", text):
         return False
     groups = re.findall(r"\d+", text)
     seps = re.findall(r"[^\d]+", text.lstrip("+("))
-    return not (all(sep == " " for sep in seps) and len(groups) < 3)
+    if all(sep == " " for sep in seps) and len(groups) < 3:
+        # "713 8531234" / "0207 7834040": a 7-digit subscriber number, 10-11 digits in total
+        return len(groups) == 2 and len(groups[1]) == 7 and 10 <= len("".join(groups)) <= 11
+    return True
 
 
 DEAL_NO = re.compile(
@@ -105,7 +110,8 @@ DEAL_NO = re.compile(
 BARE_ID6 = re.compile(r"(?<![\w$.,/#:-])\d{6}(?![\w/-]|[.,]\d)")
 ID6_LIST = re.compile(r"\b\d{6}(?:\s?/\s?\d{6})+\b")  # 481620/481621
 PASSCODE = re.compile(
-    r"(?i)\b((?:pass\s?code|access\s?code|pin|password|conf(?:erence)?\s?id)\s*[:#]?\s*)(\d{3,})"
+    r"(?i)\b((?:pass\s?code|access\s?code|code|pin|password|conf(?:erence)?\s?id)\s*[:#]?\s*)"
+    r"(\d{3,})"
 )
 # "This is Li Sun", "my name is ...": the words after an introduction are a name
 _INTRO = re.compile(
@@ -782,6 +788,9 @@ class Pseudonymizer:
             value = N.ENTITY_MAP[key]
             if key.islower():
                 text = re.sub(re.escape(key), value, text, flags=re.IGNORECASE)
+            elif key in N.ENTITY_NAMES:  # distinctive names: any case ("dynegy", "DYNEGY")
+                text = re.sub(rf"(?<![A-Za-z]){re.escape(key)}(?![A-Za-z])", value, text,
+                              flags=re.IGNORECASE)  # fmt: skip
             else:
                 text = re.sub(rf"(?<![A-Za-z]){re.escape(key)}(?![a-z])", value, text)
         return text

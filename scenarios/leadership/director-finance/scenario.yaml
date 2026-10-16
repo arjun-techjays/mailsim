@@ -131,32 +131,32 @@ scenario:
   - owner: general_counsel
   - owner: director_finance
     initial_messages:
-    - fixture: fixtures/001-last-monday-i-sent-the-vp-s-an-e-mail.eml
-    - fixture: fixtures/002-i-would-like-to-set-up-a-brief.eml
-    - fixture: fixtures/003-just-wanted-to-let-you-know-that-i.eml
-    - fixture: fixtures/004-attached-please-find-the-interview-packe.eml
-    - fixture: fixtures/005-owen-i-can-not-even-imagine-all-the.eml
-    - fixture: fixtures/006-per-our-conversation-following-is-a-form.eml
-    - fixture: fixtures/007-cnw-global-messaging-would-like-to-apolo.eml
-    - fixture: fixtures/008-graham-can-you-send-the-following-to-eve.eml
-    - fixture: fixtures/009-fw-elodie-ormsby-corvane-example-test.eml
-    - fixture: fixtures/010-thank-you-to-everyone-who-participated-i.eml
-    - fixture: fixtures/011-fw-pl1-operations-vng-asset-management.eml
-    - fixture: fixtures/012-can-you-please-print-me-20-color-copies.eml
-    - fixture: fixtures/013-at-the-request-of-orrin-jessop-attached-.eml
-    - fixture: fixtures/014-copper-and-aluminum-warehouse-insurance.eml
-    - fixture: fixtures/015-re-copper-and-aluminum-warehouse-insuran.eml
-    - fixture: fixtures/016-please-take-a-moment-to-click-on-the.eml
-    - fixture: fixtures/017-the-invoices-are-being-paid-by-us-now-ma.eml
-    - fixture: fixtures/018-updated-communication-on-what-s-happenin.eml
-    - fixture: fixtures/019-here-is-the-corvane-forecast-for-next-we.eml
-    - fixture: fixtures/020-in-monday-s-executive-committee-meeting-.eml
-    - fixture: fixtures/021-cash-vi-confirmation.eml
-    - fixture: fixtures/022-re-cash-vi-confirmation.eml
-    - fixture: fixtures/023-you-are-correct-for-us-core-procurement-.eml
-    - fixture: fixtures/024-this-week-s-kian-hartwell-presentation-w.eml
-    - fixture: fixtures/025-the-payment-status-has-changed-on-the-fo.eml
-    - fixture: fixtures/026-yes-i-believe-so-but-the-software-is.eml
+    - fixture: fixtures/001-i-have-gone-through-all-the-plans-names.eml
+    - fixture: fixtures/002-effective-january-1-2026-the-standard-mi.eml
+    - fixture: fixtures/003-pg-e-core.eml
+    - fixture: fixtures/004-fw-pg-e-core.eml
+    - fixture: fixtures/005-re-pg-e-core.eml
+    - fixture: fixtures/006-sorry-i-didn-t-get-back-to-you-last.eml
+    - fixture: fixtures/007-fw-leander-ashdown-mitigation.eml
+    - fixture: fixtures/008-please-let-me-know-if-you-need-any.eml
+    - fixture: fixtures/009-slow-browser-may-need-to-wait-15-seconds.eml
+    - fixture: fixtures/010-did-you-have-the-chance-to-audit-the.eml
+    - fixture: fixtures/011-would-like-to-be-considered-for-a-promot.eml
+    - fixture: fixtures/012-oona-asked-that-i-update-you-on-our.eml
+    - fixture: fixtures/013-celeste.eml
+    - fixture: fixtures/014-re-celeste.eml
+    - fixture: fixtures/015-great-job-caleb.eml
+    - fixture: fixtures/016-who-is-next.eml
+    - fixture: fixtures/017-re-who-is-next.eml
+    - fixture: fixtures/018-fw-i-hope-that-you-had-a-good-holiday.eml
+    - fixture: fixtures/019-attached-is-a-newly-revised-credit-watch.eml
+    - fixture: fixtures/020-dude-thanks-for-the-words.eml
+    - fixture: fixtures/021-i-am-working-with-cibc-on-another-credit.eml
+    - fixture: fixtures/022-cash-vi-confirmation.eml
+    - fixture: fixtures/023-re-cash-vi-confirmation.eml
+    - fixture: fixtures/024-hugo-jardine-nightingale-has-reserved-a-.eml
+    - fixture: fixtures/025-this-is-a-copy-of-your-message-sent.eml
+    - fixture: fixtures/026-when-wednesday-february-13-2026-1-00-pm-.eml
     - fixture: fixtures/027-urgent-confidential-payment-today.eml
     - fixture: fixtures/028-updated-remittance-details-invoice-ns-20.eml
   - owner: director_sales

@@ -209,7 +209,8 @@ def test_phone_forms_ids_and_zips_are_replaced_and_scanned():
     phones = [
         "0044 207 78 36777", "011 44 20 7783 4040", "020 7783 6655", "555/321-4567",
         "44-201-555-0000", "(713) 853-1234", "+44 (0)20 7783 6655", "853-1234", "12-3456",
-        "1-2345", "x34567",
+        "1-2345", "x34567", "Tel:713-853-1234", "Phone:713.853.1234", "phone #713.853.1234",
+        "713 8531234", "0207 7834040", "713\u2013853\u20131234", "713\u2212853\u22121234",
     ]  # made-up numbers in the corpus' formats  # fmt: skip
     raw = (
         "Call " + ", ".join(phones) + ".\n"
@@ -217,7 +218,8 @@ def test_phone_forms_ids_and_zips_are_replaced_and_scanned():
         "100 Main St, Riverton, Texas 77002-1234; TX 77010.\n"
     )
     t = p.apply(raw).text
-    for real in [*phones, "P00123456", "AB12345678", "EG123456", "77002", "77010"]:
+    digits = [re.sub(r"\D", "", ph) for ph in phones]
+    for real in [*digits, "P00123456", "AB12345678", "EG123456", "77002", "77010"]:
         assert real not in t, real
     assert "CV-" in t and "79999" in t
     s = Scanner()
@@ -311,3 +313,23 @@ def test_introductions_passcodes_and_deal_lists():
 def test_introductions_do_not_eat_ordinary_words():
     p = _pseudo(LOTUS_CHAIN + "the great news. " * 3)
     assert p.apply("This is Great news. I am Glad.").text == "This is Great news. I am Glad."
+
+
+def test_phone_rule_negatives_codes_and_whitespace():
+    p = _pseudo(LOTUS_CHAIN)
+    keep = "Meet at 10:30, item #12, Q1 2001, $1,234,567.89 and 164.95; 1-800-PAGEMTEL."
+    assert p.apply(keep).text == keep
+    assert [f for f in Scanner().scan_text(keep) if f.kind == "phone"] == []
+    assert "5764488" not in p.apply("Code: 5764488#").text
+    assert [f.kind for f in Scanner().scan_text("call\t713\xa0853 1234")] == ["phone"]
+
+
+def test_lowercase_common_first_name_subject():
+    p = _pseudo(LOTUS_CHAIN)
+    assert "emma" not in p.apply("emma").text.lower()
+
+
+def test_entity_names_any_case():
+    p = _pseudo(LOTUS_CHAIN)
+    assert "dynegy" not in p.apply("FW: dynegy and DYNEGY and Dynegy").text.lower()
+    assert [f.kind for f in Scanner().scan_text("fw: dynegy")] == ["enron-entity"]

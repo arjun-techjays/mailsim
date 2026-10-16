@@ -90,7 +90,8 @@ class Scanner:
     def scan_text(self, text: str, path: str = "<text>") -> list[Finding]:
         out: list[Finding] = []
         for no, line in enumerate(text.splitlines(), start=1):
-            out.extend(self._line(line, path, no))
+            # same whitespace normalisation as clean_body (tabs, NBSP)
+            out.extend(self._line(line.replace("\t", " ").replace("\xa0", " "), path, no))
         return out
 
     def _line(self, line: str, path: str, no: int) -> list[Finding]:
@@ -130,6 +131,9 @@ class Scanner:
             hit("personnel-id", m.group(0))
         for m in ZIP_HQ.finditer(line):
             hit("zip", m.group(0))
+        for name in N.ENTITY_NAMES:
+            if re.search(rf"(?<![A-Za-z]){re.escape(name)}(?![A-Za-z])", line, re.IGNORECASE):
+                hit("enron-entity", name)
         for tok in re.findall(r"\b[A-Z]{3,4}\b", line):
             if tok in N.ENRON_ACRONYMS:
                 hit("enron-acronym", tok)

@@ -145,6 +145,14 @@ ENTITY_MAP: dict[str, str] = {
     "ENAC": "CNAC",
 }
 
+# Distinctive entity names mapped case-insensitively and flagged by the scanner in any case.
+ENTITY_NAMES: frozenset[str] = frozenset(
+    [
+        "Dynegy", "Azurix", "Dabhol", "Transwestern", "Chewco", "Whitewing", "Andersen",
+        "Arthur Andersen", "Vinson & Elkins", "Vinson and Elkins", "EnronOnline", "Enron Online",
+    ]
+)  # fmt: skip
+
 # Enron entity acronyms the scanner flags if they survive (keys of ENTITY_MAP above).
 ENRON_ACRONYMS: frozenset[str] = frozenset(
     [
@@ -616,6 +624,40 @@ COMMON_FIRST: frozenset[str] = frozenset(
         "Wendy",
         "William",
         "Willie",
+        "Emma",
+        "Olivia",
+        "Sophia",
+        "Isabella",
+        "Ava",
+        "Mia",
+        "Abigail",
+        "Madison",
+        "Chloe",
+        "Ella",
+        "Lily",
+        "Hannah",
+        "Natalie",
+        "Victoria",
+        "Samantha",
+        "Megan",
+        "Ashley",
+        "Brittany",
+        "Courtney",
+        "Amber",
+        "Heidi",
+        "Kristen",
+        "Tiffany",
+        "Vanessa",
+        "Wanda",
+        "Yolanda",
+        "Tonya",
+        "Latoya",
+        "Tamara",
+        "Gina",
+        "Sheila",
+        "Tanya",
+        "Twila",
+        "Darla",
     ]
 )
 

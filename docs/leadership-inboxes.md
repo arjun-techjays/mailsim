@@ -152,16 +152,23 @@ against the CEO pack and checks that the results agree.
        without `+` (`44-207-…`) and short extensions (`12-3456`).
      * Personnel-style IDs (`P00123456`) become `CV-nnnnnnn`. The former head-office ZIP
        (`77002`, and `77xxx` after `TX`/`Texas`) becomes `79999`.
-     * Entity acronyms (EPMI, ENE, EOTT, …) map to fictional ones. The scanner flags any that
+     * Entity acronyms (EPMI, ENE, EOTT, EOPS, …) map to fictional ones. Distinctive entity
+       names (Dynegy, Azurix, Andersen, …) map in any letter case. The scanner flags any that
        survive.
      * Phone numbers use one generic rule: any run of digit groups separated only by space,
        `.`, `-`, `/` or parentheses, with an optional `+`/`00`/`011` prefix and 7+ digits in
        total, unless it is a date (with an optional timezone), a year range, an IP address, a
        decimal number or the fictional `555-01xx` form. A run separated only by single spaces
-       needs 3+ groups, so table figures like `2025 150` survive. Short extensions
-       (`x1234`, `87-7454`) are handled separately.
-     * Deal, contract, confirmation and ticket numbers (`deal 478198`, `K#36621`) and bare
-       6-digit numbers are replaced by same-length seeded hashes. Amounts with commas or
+       needs 3+ groups, so table figures like `2025 150` survive. The exception is a 7-digit
+       subscriber number after an area code (`713 8531234`, 10-11 digits in total). En dashes
+       and minus signs count as separators, and a label like `Tel:` or `phone #` in front
+       doesn't hide the number. Short extensions (`x1234`, `87-7454`) are handled separately.
+       Vanity toll-free numbers (`1-800-PAGEMTEL`) are public and stay as they are.
+     * The scanner normalises tabs and non-breaking spaces before matching, as `clean_body`
+       does.
+     * Deal, contract, confirmation and ticket numbers (`deal 478198`, `K#36621`), bare 6-digit
+       numbers, slash-joined deal lists and pass/access/conference codes (`Code: 5764488#`)
+       are replaced by same-length seeded hashes. Amounts with commas or
        decimals are left alone.
      * `names.HASHED_DENY` lists real names that the rules cannot catch. It stores only
        `sha256(lower-cased token)`. This is an **unsalted** hash: it keeps the names out of
