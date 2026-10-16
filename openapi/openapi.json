@@ -3747,7 +3747,7 @@
     }
   },
   "info": {
-    "description": "Email agent testing simulator. External delivery is impossible by design.",
+    "description": "Mail API.",
     "title": "mailsim",
     "version": "1.0.0-wave0"
   },
