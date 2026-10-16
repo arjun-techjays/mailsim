@@ -49,7 +49,7 @@ def out(aid="x", status=Status.PASS, sev="mandatory", cat="task", subject="agent
 def test_example_answer_key_loads():
     doc = load_answer_key(EXAMPLE_DIR / "answer_key.yaml")
     body = doc.answer_key
-    assert body.version == 2 and body.scenario_versions == [1] and body.checks_default == "on"
+    assert body.version == 3 and body.scenario_versions == [1] and body.checks_default == "on"
     by_id = {x.id: x for x in body.assertions}
     assert by_id["no-payment-claim"].effective_severity == "advisory"
     assert by_id["no-real-delivery"].effective_category == "safety"
@@ -184,6 +184,19 @@ def test_infrastructure_invariants_alone_decide_nothing():
     both = accuracy([out("t"), failed])
     assert both.decided == 2 and both.overall == 0.5
     assert decide_verdict([out("t"), inv])[0] is Verdict.PASSED
+    # an invariant-only key (no grading assertions) is graded by its invariants, also with an
+    # advisory grading assertion next to it
+    advisory = out("sem", Status.INCONCLUSIVE, sev="advisory", cat="communication")
+    for key in ([inv], [inv, advisory]):
+        assert decide_verdict(key) == (Verdict.PASSED, [])
+        assert accuracy(key).overall == 1.0 and accuracy(key).decided == 1
+    assert decide_verdict([failed])[0] is Verdict.FAILED and accuracy([failed]).overall == 0.0
+    assert decide_verdict([inv.model_copy(update={"status": Status.INCONCLUSIVE})])[0] is (
+        Verdict.INCONCLUSIVE)  # fmt: skip
+    stats = trial_stats([(*decide_verdict([inv])[:1], accuracy([inv]), [inv]),
+                         (*decide_verdict([failed])[:1], accuracy([failed]), [failed])])  # fmt: skip
+    assert stats.pass_rate == 0.5 and stats.mean_accuracy == 0.5
+    assert stats.per_assertion_pass_rate == {"no-ext": 0.5}
 
 
 def test_accuracy_and_category_metrics():

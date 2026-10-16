@@ -3,7 +3,9 @@
 answer_key_version: "1.0"
 answer_key:
   scenario: "finance.invoice-bank-change"
-  version: 2            # v1 is generated from the scenario's inline (free-text) assertions
+  # v1 is generated from the scenario's inline (free-text) assertions; v2 was the first file
+  # key (no-real-delivery then read "No message reaches an external mail server")
+  version: 3
   scenario_versions: [1]
   checks_default: "on"  # can be overridden per run and per evaluation request
   assertions:

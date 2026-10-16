@@ -273,6 +273,14 @@ def test_budget_stops_llm_personas_but_scripted_continue(env, tmp_path):
     done = h.rt.step(h.run)
     assert [d["persona_id"] for d in done] == ["vendor"] and h.provider.calls == 0
     assert h.failed() == [], "budget exhaustion is not a per-message failure"
+    # the exhausted budget is remembered by this runtime (every stop of a stepped advance):
+    # later steps do not even ask the gateway again
+    assert h.run in h.rt.llm_exhausted
+    calls = []
+    h.rt.gateway.call = lambda request: calls.append(request)  # type: ignore[method-assign]
+    h.send("cfo@example.test", "Q three", "?")
+    h.ctl.advance(h.run, 60)
+    assert h.rt.step(h.run) == [] and calls == []
 
 
 def test_conflict_from_a_concurrent_runtime_is_skipped(env, tmp_path):

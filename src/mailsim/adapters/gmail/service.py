@@ -42,7 +42,7 @@ from mailsim.domain.errors import (
     UnsupportedOperation,
 )
 from mailsim.domain.models import Address, CanonicalMessage
-from mailsim.engine.facades import AgentMailbox
+from mailsim.engine.facades import AgentMailbox, DraftThreading
 from mailsim.engine.pagination import decode_cursor, encode_cursor
 from mailsim.mime.build import build_mime
 from mailsim.mime.parse import ParsedMessage, parse_mime
@@ -457,10 +457,15 @@ class GmailService:
 
     def update_draft(self, gdid: str, raw: bytes) -> CanonicalMessage:
         """Replace the draft's content; the draft id stays, the message id changes (as in
-        Gmail). Reply headers carry over from the original draft."""
+        Gmail). The new message's In-Reply-To / References decide its threading and which
+        message it answers, as in drafts.create."""
         current = self.draft(gdid)
-        _, content = self._draft_content(raw)
-        out = self.mb.update_draft(current.id, **content, keep_attachments=False)
+        parsed, content = self._draft_content(raw)
+        orig = self._reply_target(parsed)
+        threading = DraftThreading(parsed.in_reply_to, tuple(parsed.references),
+                                   orig.id if orig is not None else None)  # fmt: skip
+        out = self.mb.update_draft(current.id, **content, keep_attachments=False,
+                                   threading=threading)  # fmt: skip
         self._changed()
         return self.mb.get_message(out["message_id"])
 

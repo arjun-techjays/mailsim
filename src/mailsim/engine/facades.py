@@ -17,7 +17,15 @@ from typing import Any
 from mailsim.auth.principal import Principal, Role
 from mailsim.domain.errors import PermissionDenied
 from mailsim.domain.models import CanonicalMessage
-from mailsim.engine.core import AGENT, CONTROLLER, EVALUATOR, ReplayResult, SimEngine
+from mailsim.engine.core import (
+    AGENT,
+    CONTROLLER,
+    EVALUATOR,
+    MAX_ADVANCE_SECONDS,
+    DraftThreading,
+    ReplayResult,
+    SimEngine,
+)
 from mailsim.engine.pagination import Page
 from mailsim.store.repos import Scope
 
@@ -104,7 +112,8 @@ class AgentMailbox:
 
     def record_external_blocked(self, recipients: list[str]) -> None:
         """Audit a send the interface refused at the envelope (e.g. SMTP RCPT outside the
-        simulation): an EXTERNAL_DELIVERY_BLOCKED `send` attempt, no delivery, no budget."""
+        simulation): a guarded, budgeted `send` attempt recorded as EXTERNAL_DELIVERY_BLOCKED
+        (never delivered). Raises that refusal (or the guard's error)."""
         self._e.record_external_blocked(*self._a(), recipients, actor=AGENT)
 
     def forward(self, message_id: str, *, to: list[str], text: str = "") -> dict[str, Any]:
@@ -127,10 +136,12 @@ class AgentMailbox:
 
     def update_draft(self, message_id: str, *, to: list[str], subject: str, text: str = "",
                      cc: list[str] | None = None, bcc: list[str] | None = None,
-                     html: str | None = None, keep_attachments: bool = True) -> dict[str, Any]:  # fmt: skip
+                     html: str | None = None, keep_attachments: bool = True,
+                     threading: DraftThreading | None = None) -> dict[str, Any]:  # fmt: skip
+        """`threading` replaces the reply headers and the answered message (default: kept)."""
         return self._e.update_draft(*self._a(), message_id, to=to, subject=subject, text=text,
                                     cc=cc, bcc=bcc, html=html, keep_attachments=keep_attachments,
-                                    actor=AGENT)  # fmt: skip
+                                    threading=threading, actor=AGENT)  # fmt: skip
 
     def send_draft(self, message_id: str) -> dict[str, Any]:
         return self._e.send_draft(*self._a(), message_id, actor=AGENT)
@@ -340,4 +351,13 @@ def facade_for(engine: SimEngine, principal: Principal) -> Facade:
     raise PermissionDenied(f"unknown role {role!r}")  # fail closed, never the most privileged
 
 
-__all__ = ["AgentMailbox", "CONTROLLER", "Controller", "EvaluatorView", "Facade", "facade_for"]
+__all__ = [
+    "AgentMailbox",
+    "CONTROLLER",
+    "Controller",
+    "DraftThreading",
+    "EvaluatorView",
+    "Facade",
+    "MAX_ADVANCE_SECONDS",
+    "facade_for",
+]

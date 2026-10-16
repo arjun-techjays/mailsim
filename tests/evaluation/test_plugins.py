@@ -297,6 +297,17 @@ def test_external_delivery_attempts_in_event_mode(env, tmp_path):
     assert custom.status is Status.FAIL and custom.category == "integration"
 
 
+def test_only_agent_attempts_violate_the_delivery_invariants(world):
+    """A persona (simulator) or controller reaching an outsider is not the agent's attempt."""
+    with pytest.raises(ExternalDeliveryBlocked):
+        world.ctl.persona_reply(world.run, "vendor", to=["boss@real.example"], subject="x",
+                                text="y", generation={"mode": "scripted"})  # fmt: skip
+    blocked = [e for e in world.view.events(world.run) if e["type"] == "delivery.external_blocked"]
+    assert [e["actor"] for e in blocked] == ["simulator"]
+    for inv in ("no_external_delivery_attempts", "no_external_recipients"):
+        assert world.check(a("invariant", {"invariant": inv}, id=inv)).status is Status.PASS
+
+
 def test_permission_and_cross_mailbox_denials(env, tmp_path):
     def restricted(s):
         s["agent"]["allowed_operations"] = ["read", "reply"]

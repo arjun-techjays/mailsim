@@ -308,10 +308,16 @@ def test_draft_reply_send_and_history_are_clean_and_one_reply(gm):
         "x"))}})  # fmt: skip
     gm.post("/drafts/send", json={"id": plain["id"]})
     gm.get("/history", params={"startHistoryId": h0})
+    # drafts.update decides the threading from the NEW message: a reply draft rewritten
+    # without reply headers is a plain send
+    gone = gm.post("/drafts", json={"message": {"raw": b64(raw)}})
+    gm.call("PUT", f"/drafts/{gone['id']}", json={"message": {"raw": b64(raw_message(
+        {"To": "vendor@example.test", "Subject": "no longer a reply"}, "x"))}})  # fmt: skip
+    gm.post("/drafts/send", json={"id": gone["id"]})
     acts = gm.actions()
     assert {o for _, o in acts} == {"ok"}, acts
     writes = [op for op, _ in acts if op not in ("read", "search", "create_run", "start")]
-    assert writes == ["draft", "draft", "reply", "draft", "send"]
+    assert writes == ["draft", "draft", "reply", "draft", "send", "draft", "draft", "send"]
     assert "MAILSIM_ANSWERED" in gm.get(f"/messages/{gm.gid(INVOICE)}")["labelIds"]
     armed = [e["payload"]["id"] for e in gm.ev.events(gm.run) if e["type"] == "event.armed"]
     assert armed == ["vendor-bank-change"]

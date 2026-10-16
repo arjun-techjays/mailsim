@@ -48,14 +48,13 @@ from mailsim.domain.errors import (
     UpstreamUnavailable,
 )
 from mailsim.domain.states import RunStatus
-from mailsim.engine.facades import Controller
+from mailsim.engine.facades import MAX_ADVANCE_SECONDS, Controller
 from mailsim.llm.gateway import LLMGateway
 from mailsim.personas.prompt import build_persona_request
 from mailsim.scenario.schema import BehaviorSpec, ScriptRule
 
 log = logging.getLogger("mailsim.personas")
 MAX_THREAD_DEPTH = 20
-MAX_ADVANCE_SECONDS = 10 * 365 * 86400  # the engine's own bound on one advance
 Msg = dict[str, Any]
 
 
@@ -137,14 +136,20 @@ def advance_clock(ctl: Controller, runtime: PersonaRuntime | None, run_id: str,
     fired: list[str] = []
     replies = 0
     stepped_at: datetime | None = None
+    dues: list[datetime] | None = None  # recomputed only after a stop changed the mailboxes
     while True:
-        due = runtime.next_due(run_id, after=stepped_at)
+        if dues is None:
+            dues = runtime.due_times(run_id)
+        due = next((d for d in dues if stepped_at is None or d > stepped_at), None)
         stop = target if due is None or due >= target else max(due, now)
         result = ctl.advance(run_id, (target - now).total_seconds(), stop_at=stop)
         fired += result["fired"]
         now = parse_ts(result["virtual_time"])
-        replies += len(runtime.step(run_id))
+        answered = len(runtime.step(run_id))
+        replies += answered
         stepped_at = now
+        if result["fired"] or answered:
+            dues = None
         if now >= target:
             return {"fired": fired, "virtual_time": result["virtual_time"],
                     "persona_replies": replies}  # fmt: skip
@@ -160,6 +165,9 @@ class PersonaRuntime:
     def __init__(self, controller: Controller, gateway: LLMGateway) -> None:
         self.controller = controller
         self.gateway = gateway
+        # runs whose LLM budget ran out: no further LLM attempts by this runtime instance (one
+        # per request, so across all steps of one stepped advance)
+        self.llm_exhausted: set[str] = set()
 
     def step(self, run_id: str) -> list[dict[str, Any]]:
         """Answer every due message once; returns what was delivered in this step."""
@@ -170,6 +178,7 @@ class PersonaRuntime:
         now = parse_ts(run["virtual_time"])
         agent = self.controller.agent_mailbox_owner(run_id)
         st = _StepState(state, self.controller.persona_generations(run_id))
+        st.llm_stopped = run_id in self.llm_exhausted
         done: list[dict[str, Any]] = []
         try:
             for persona in st.personas:
@@ -181,24 +190,26 @@ class PersonaRuntime:
             log.info("persona step stopped: run %s is no longer active", run_id)
         return done
 
-    def next_due(self, run_id: str, *, after: datetime | None = None) -> datetime | None:
-        """Earliest due time of a reply this runtime would send (strictly later than `after`,
-        if given), or None. Lets the clock stop exactly there (`advance_clock`)."""
+    def due_times(self, run_id: str) -> list[datetime]:
+        """Sorted due times of every reply this runtime would send (due or not yet), so the
+        clock can stop exactly there (`advance_clock`). Empty for a run that is not RUNNING."""
         state = self.controller.state(run_id)
         run = state["run"]
         if run["status"] != RunStatus.RUNNING or not run.get("virtual_time"):
-            return None
+            return []
         agent = self.controller.agent_mailbox_owner(run_id)
         st = _StepState(state, self.controller.persona_generations(run_id))
-        best: datetime | None = None
+        dues: set[datetime] = set()
         for persona in st.personas:
             pid, behavior = persona["id"], st.behaviors[persona["id"]]
             if pid == agent or behavior.mode == "silent" or pid not in st.mailboxes:
                 continue
-            for due, *_ in self._pending(persona, behavior, st):
-                if (after is None or due > after) and (best is None or due < best):
-                    best = due
-        return best
+            dues.update(due for due, *_ in self._pending(persona, behavior, st))
+        return sorted(dues)
+
+    def next_due(self, run_id: str, *, after: datetime | None = None) -> datetime | None:
+        """Earliest due time (strictly later than `after`, if given), or None."""
+        return next((d for d in self.due_times(run_id) if after is None or d > after), None)
 
     def _pending(self, persona: dict[str, Any], behavior: BehaviorSpec,
                  st: _StepState) -> list[tuple[datetime, Msg, int | None, list[Msg]]]:  # fmt: skip
@@ -271,6 +282,7 @@ class PersonaRuntime:
             return None  # another runtime already recorded an outcome for this message
         except SimulationLimitExceeded:
             st.llm_stopped = True
+            self.llm_exhausted.add(run_id)
             log.warning("persona LLM budget exhausted for run %s", run_id)
             return None
         except UpstreamUnavailable as exc:

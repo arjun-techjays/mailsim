@@ -411,13 +411,13 @@ def test_answer_key_document_is_evaluator_only(api, other_api):
     api.publish()
     created = api.call("POST", f"/v1/scenarios/{KEY}/answer-keys", "evaluator",
                        json={"document": ANSWER_KEY}, expect=201).json()  # fmt: skip
-    doc = api.call("GET", f"/v1/scenarios/{KEY}/answer-keys/2/document", "evaluator",
+    doc = api.call("GET", f"/v1/scenarios/{KEY}/answer-keys/3/document", "evaluator",
                    expect=200).json()  # fmt: skip
     full = AnswerKeyDoc.model_validate(ANSWER_KEY).model_dump(mode="json", by_alias=True)
     assert doc["document"] == full and doc["spec_hash"] == created["spec_hash"]
-    api.call("GET", f"/v1/scenarios/{KEY}/answer-keys/2/document", "controller", expect=403)
+    api.call("GET", f"/v1/scenarios/{KEY}/answer-keys/3/document", "controller", expect=403)
     api.call("GET", f"/v1/scenarios/{KEY}/answer-keys/9/document", "evaluator", expect=404)
-    other_api.call("GET", f"/v1/scenarios/{KEY}/answer-keys/2/document", "evaluator",
+    other_api.call("GET", f"/v1/scenarios/{KEY}/answer-keys/3/document", "evaluator",
                    expect=404)  # fmt: skip
 
 

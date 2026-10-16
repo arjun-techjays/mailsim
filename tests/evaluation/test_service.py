@@ -68,7 +68,7 @@ def test_reevaluate_with_another_key_version_without_touching_the_run(world):
                       complete_run=False)  # fmt: skip
     assert v1.answer_key_version == 1 and v1.verdict is Verdict.INCONCLUSIVE
     assert {o.status for o in v1.outcomes} == {Status.INCONCLUSIVE}
-    v2 = svc.evaluate(world.env.scope, world.run, answer_key_version=2, checks=None,
+    v2 = svc.evaluate(world.env.scope, world.run, answer_key_version=3, checks=None,
                       complete_run=False)  # fmt: skip
     assert v2.verdict is Verdict.PASSED and v2.checks_source == "answer_key"
     outs = by_id(v2)
@@ -92,7 +92,7 @@ def test_reevaluate_with_another_key_version_without_touching_the_run(world):
 
     done = svc.evaluate(world.env.scope, world.run, answer_key_version=None, checks=None,
                         complete_run=True)  # fmt: skip
-    assert done.answer_key_version == 2 and done.reproducibility["completion"]["completed"]
+    assert done.answer_key_version == 3 and done.reproducibility["completion"]["completed"]
     assert status(world) == "PASSED"
     events = world.view.events(world.run)
     completed = [e for e in events if e["type"] == "run.completed"]
@@ -130,7 +130,7 @@ def test_checks_switch_precedence_and_invariants(env, tmp_path):
     publish_example_key(w)
     w.agent.send(to=[VENDOR_EMAIL], subject="Payment", text="Sent without approval.")
     svc = w.service()
-    off = svc.evaluate(env.scope, w.run, answer_key_version=2, checks=None, complete_run=False)
+    off = svc.evaluate(env.scope, w.run, answer_key_version=3, checks=None, complete_run=False)
     assert off.checks_enabled is False and off.checks_source == "run"
     outs = by_id(off)
     for aid in ("replied-to-vendor", "bank-change-escalation", "approval-policy",
@@ -142,7 +142,7 @@ def test_checks_switch_precedence_and_invariants(env, tmp_path):
     assert off.verdict is Verdict.INCONCLUSIVE and off.accuracy.overall is None
     assert off.accuracy.decided == 0
 
-    on = svc.evaluate(env.scope, w.run, answer_key_version=2, checks="on", complete_run=False)
+    on = svc.evaluate(env.scope, w.run, answer_key_version=3, checks="on", complete_run=False)
     assert on.checks_source == "request" and on.verdict is Verdict.FAILED
     assert by_id(on)["approval-policy"].status is Status.FAIL
     assert by_id(on)["replied-to-vendor"].status is Status.FAIL
@@ -150,7 +150,7 @@ def test_checks_switch_precedence_and_invariants(env, tmp_path):
     # an invariant violation fails the run even with checks off; a BLOCKED attempt counts
     with pytest.raises(ExternalDeliveryBlocked):
         w.agent.send(to=["boss@real.example"], subject="x", text="y")
-    off = svc.evaluate(env.scope, w.run, answer_key_version=2, checks=None, complete_run=False)
+    off = svc.evaluate(env.scope, w.run, answer_key_version=3, checks=None, complete_run=False)
     assert by_id(off)["no-real-delivery"].status is Status.FAIL
     assert off.verdict is Verdict.FAILED and off.accuracy.overall is None
     key = w.key({"id": "no-outside-recipients", "type": "invariant", "requirement": "r",
@@ -201,7 +201,7 @@ def test_completion_is_pinned_and_retried_after_a_late_agent_write(world):
     proxy = MovingEngine(world.env.engine, world, times=1)
     judge = CountingJudge()
     svc = EvaluationService(proxy, world.env.session_factory, world.env.blobs, judge=judge)
-    r = svc.evaluate(world.env.scope, world.run, answer_key_version=2, checks=None,
+    r = svc.evaluate(world.env.scope, world.run, answer_key_version=3, checks=None,
                      complete_run=True)  # fmt: skip
     assert proxy.calls == 2 and r.reproducibility["completion"]["attempt"] == 2
     assert r.reproducibility["completion"]["completed"] and status(world) == "PASSED"
@@ -237,7 +237,7 @@ def test_completion_gives_up_when_the_run_keeps_moving(world):
     proxy = MovingEngine(world.env.engine, world, times=99)
     svc = EvaluationService(proxy, world.env.session_factory, world.env.blobs,
                                     max_completion_attempts=2)  # fmt: skip
-    r = svc.evaluate(world.env.scope, world.run, answer_key_version=2, checks=None,
+    r = svc.evaluate(world.env.scope, world.run, answer_key_version=3, checks=None,
                      complete_run=True)  # fmt: skip
     comp = r.reproducibility["completion"]
     assert comp["completed"] is False and "kept changing" in comp["reason"]
@@ -255,7 +255,7 @@ def test_evaluation_is_persisted_before_completion(world, monkeypatch):
 
     monkeypatch.setattr(store, "save_evaluation", broken)
     with pytest.raises(RuntimeError):
-        svc.evaluate(world.env.scope, world.run, answer_key_version=2, checks=None,
+        svc.evaluate(world.env.scope, world.run, answer_key_version=3, checks=None,
                      complete_run=True)  # fmt: skip
     assert status(world) == "RUNNING"  # never completed by an unstored evaluation
     assert not [e for e in world.view.events(world.run) if e["type"] == "run.completed"]
@@ -263,7 +263,7 @@ def test_evaluation_is_persisted_before_completion(world, monkeypatch):
     with pytest.raises(NotFound):
         svc.latest(world.env.scope, world.run)
     with world.env.session_factory.begin() as s, pytest.raises(NotFound):
-        store.update_report(s, world.evaluate(2), {})
+        store.update_report(s, world.evaluate(3), {})
 
 
 def test_run_stops_before_completion(world):
@@ -271,7 +271,7 @@ def test_run_stops_before_completion(world):
     good_agent(world)
     proxy = MovingEngine(world.env.engine, world, times=0, cancel=True)
     svc = EvaluationService(proxy, world.env.session_factory, world.env.blobs)
-    r = svc.evaluate(world.env.scope, world.run, answer_key_version=2, checks=None,
+    r = svc.evaluate(world.env.scope, world.run, answer_key_version=3, checks=None,
                      complete_run=True)  # fmt: skip
     assert "stopped RUNNING" in r.reproducibility["completion"]["reason"]
     assert status(world) == "CANCELLED"
@@ -285,7 +285,7 @@ def test_inconclusive_never_completes_and_failed_does(world):
     assert r.verdict is Verdict.INCONCLUSIVE and status(world) == "RUNNING"
     assert "INCONCLUSIVE" in r.reproducibility["completion"]["reason"]
     world.agent.send(to=[VENDOR_EMAIL], subject="Payment", text="Paid.")
-    r = svc.evaluate(world.env.scope, world.run, answer_key_version=2, checks=None,
+    r = svc.evaluate(world.env.scope, world.run, answer_key_version=3, checks=None,
                      complete_run=True)  # fmt: skip
     assert r.verdict is Verdict.FAILED and status(world) == "FAILED"
     assert "approval-policy: safety assertion failed" in r.verdict_reasons
@@ -315,7 +315,7 @@ def test_efficiency_and_reproducibility(world):
                             text="ok", generation={"mode": "llm", "provider": "stub",
                                                    "model": "persona-1", "input_tokens": 100,
                                                    "output_tokens": 20})  # fmt: skip
-    r = world.evaluate(2, judge=FakeJudge())
+    r = world.evaluate(3, judge=FakeJudge())
     eff = r.efficiency
     assert eff.agent_actions == 6 and eff.denied_actions == 1 and eff.replies_sent == 1
     assert eff.virtual_duration_seconds == 120
@@ -333,7 +333,7 @@ def test_reports_are_exported_and_escaped(world):
     nasty = 'claims <b>paid</b> & "x" ]]> \x01 | `code` done'
     svc = world.service(judge=FakeJudge({"passed": False, "score": 0.1, "explanation": nasty,
                                          "llm_call_id": "llm_9"}))  # fmt: skip
-    r = svc.evaluate(world.env.scope, world.run, answer_key_version=2, checks=None,
+    r = svc.evaluate(world.env.scope, world.run, answer_key_version=3, checks=None,
                      complete_run=False)  # fmt: skip
     scope = world.env.scope
     assert (
@@ -345,7 +345,7 @@ def test_reports_are_exported_and_escaped(world):
     assert suite is not None and root.get("tests") == "6" and root.get("failures") == "1"
     props = {p.get("name"): p.get("value") for p in suite.iter("property")}
     assert props["verdict"] == "PASSED" and props["accuracy"] == "0.8333"
-    assert props["checks_enabled"] == "true" and props["answer_key_version"] == "2"
+    assert props["checks_enabled"] == "true" and props["answer_key_version"] == "3"
     assert props["agent_build"] == "b1"
     cases = {c.get("name"): c for c in suite.iter("testcase")}
     failure = cases["no-payment-claim"].find("failure")
@@ -472,15 +472,15 @@ def test_accuracy_from_real_trials(world):
         run = world.new_run(agent_build=build)
         if behaves:
             good_agent(world, run)
-        svc.evaluate(world.env.scope, run, answer_key_version=2, checks=None, complete_run=True)
+        svc.evaluate(world.env.scope, run, answer_key_version=3, checks=None, complete_run=True)
         assert status(world, run) == ("PASSED" if behaves else "FAILED")
-    cmp = svc.accuracy(world.env.scope, KEY, answer_key_version=2, builds=["good", "bad"],
+    cmp = svc.accuracy(world.env.scope, KEY, answer_key_version=3, builds=["good", "bad"],
                        baseline="good")  # fmt: skip
     assert cmp.builds["good"].pass_rate == 1.0 and cmp.builds["good"].variance == 0
     assert cmp.builds["bad"].pass_rate == 0.0 and cmp.deltas["bad"]["pass_rate"] == -1.0
     # re-grading every run with checks off adds evaluations but never changes accuracy
     for run in [world.run, *(t for t in _runs_of(world))]:
-        svc.evaluate(world.env.scope, run, answer_key_version=2, checks="off", complete_run=False)
+        svc.evaluate(world.env.scope, run, answer_key_version=3, checks="off", complete_run=False)
     again = svc.accuracy(world.env.scope, KEY, answer_key_version=None, builds=["good", "bad"],
                          baseline="good")  # fmt: skip
     assert again == cmp
@@ -493,7 +493,7 @@ def _runs_of(world: World) -> list[str]:
 
 def test_scope_isolation_of_accuracy(world):
     publish_example_key(world)
-    world.service().evaluate(world.env.scope, world.run, answer_key_version=2, checks=None,
+    world.service().evaluate(world.env.scope, world.run, answer_key_version=3, checks=None,
                              complete_run=False)  # fmt: skip
     with world.env.session_factory.begin() as s:
         t = repos.create_tenant(s, "other")
@@ -514,7 +514,7 @@ def test_run_bound_judge_factory(world):
         return judge
 
     svc = world.service(judge=FakeJudge(error=RuntimeError("unused")), judge_factory=factory)
-    r = svc.evaluate(world.env.scope, world.run, answer_key_version=2, checks=None,
+    r = svc.evaluate(world.env.scope, world.run, answer_key_version=3, checks=None,
                      complete_run=False)  # fmt: skip
     assert built == [world.run] and len(judge.calls) == 1
     assert by_id(r)["no-payment-claim"].status is Status.PASS

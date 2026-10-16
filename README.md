@@ -188,6 +188,28 @@ cli -> engine -> scenario -> store -> (mime | threads | providers) -> domain
 * **Tenancy.** Application-scoped (`Scope(tenant, project)` on every repository/engine call;
   out-of-scope resources are `NOT_FOUND`). Row-level security is deferred to Phase 2 with auth.
 
+## Release notes: engine semantics (QA-A1)
+
+Re-grading a run recorded before this change can give a different result:
+
+* **Blocked external attempts count.** A send refused for a recipient outside the simulation
+  (deny mode, prohibited external delivery, SMTP `RCPT TO` answered 550) is an attempt:
+  `no_external_delivery_attempts` / `no_external_recipients` fail on it (older recordings are
+  graded from the EXTERNAL_DELIVERY_BLOCKED action). Both invariants count only the AGENT's
+  attempts; a persona's or the controller's do not. An envelope refusal is a budgeted `send`
+  action (`delivery.external_blocked` event); an SMTP session is closed (421) after 20 of them.
+  The bundled finance answer key is now **version 3** (`no-real-delivery` reworded).
+* **`folder: sent` is provenance, not placement.** Only messages created by a real send count as
+  sent (and only real drafts as drafts); agents can no longer move or copy received mail into
+  Sent or Drafts (PERMISSION_DENIED).
+* **Checks off with nothing decided is INCONCLUSIVE.** When a key has mandatory grading
+  assertions and none of them was decided (all NOT_APPLICABLE), invariants alone no longer make
+  the run PASSED and accuracy is blank. Invariant-only keys are graded as before.
+* A reply or forward drafted first (Graph createReply/createForward, Gmail drafts with
+  In-Reply-To) is sent as ONE `reply` / `forward` (ANSWERED, `send_reply` triggers, policies).
+* Persona replies are stamped at their due virtual time; one advance may record several
+  `advance` actions (one per stop).
+
 ## Known limitations / deliberate deviations
 
 * Databases created before migration 0004 must be recreated: earlier scenario versions still

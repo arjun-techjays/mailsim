@@ -66,6 +66,8 @@ EVALUATOR = "evaluator"
 # Budget rule (user decision): only WRITES consume the agent action budget. Reads and polling
 # are free but still recorded as actions (efficiency metrics).
 READ_OPERATIONS = frozenset({"read", "search"})
+PRESENT_CHUNK = 500  # ids per IN list in present_messages
+MAX_ADVANCE_SECONDS = 10 * 365 * 86400  # longest single clock advance
 
 
 def counts_against_budget(operation: str) -> bool:
@@ -90,7 +92,7 @@ class Ctx:
         return self._names
 
     def named(self, addr: Address) -> Address:
-        name = addr.name or self.persona_names().get(addr.email)
+        name = addr.name or self.persona_names().get(addr.email.lower())
         return Address(email=addr.email, name=name) if name else addr
 
     @property
@@ -133,6 +135,15 @@ class DraftContent:
     # what the draft answers: {"kind": "reply" | "forward", "message_id": <original>}; sending
     # it is then that operation (spec: a reply drafted then sent is a reply)
     origin: dict[str, str] | None = None
+
+
+@dataclass(frozen=True)
+class DraftThreading:
+    """Replacement threading for update_draft: headers plus the message answered (or None)."""
+
+    in_reply_to: str | None = None
+    references: tuple[str, ...] = ()
+    reply_to: str | None = None
 
 
 @dataclass
@@ -305,22 +316,28 @@ class SimEngine:
 
     def record_external_blocked(self, scope: Scope, run_id: str, mailbox_id: str,
                                 recipients: list[str], *, actor: str = AGENT) -> None:  # fmt: skip
-        """Record a send attempt that an interface refused before it reached a command (SMTP
-        `RCPT TO` outside the simulation): an EXTERNAL_DELIVERY_BLOCKED `send` action plus its
-        `delivery.external_blocked` evidence event. Nothing is delivered; no budget is used."""
-        exc = ExternalDeliveryBlocked(
-            "recipient(s) outside the simulated environment; external delivery is not permitted",
-            details={"recipients": [r.strip().lower() for r in recipients]},
+        """A send attempt an interface refused at the envelope (SMTP `RCPT TO` outside the
+        simulation), recorded exactly like a blocked REST send: the normal command guard
+        (RUNNING run, `send` permission, own mailbox, budget), then an EXTERNAL_DELIVERY_BLOCKED
+        `send` action that counts against the budget, with its `delivery.external_blocked`
+        evidence event. Nothing is delivered. Always raises the refusal it recorded."""
+        rcpts = [r.strip().lower() for r in recipients]
+
+        def fn(c: Ctx) -> None:
+            raise ExternalDeliveryBlocked(
+                "recipient(s) outside the simulated environment; external delivery is not "
+                "permitted", details={"recipients": rcpts},
+            )  # fmt: skip
+
+        self._command(scope, run_id, actor, "send", {"to": rcpts, "stage": "envelope"}, fn,
+                      mailbox_id=mailbox_id)  # fmt: skip
+
+    @staticmethod
+    def _permitted(ctx: Ctx, operation: str) -> bool:
+        agent = ctx.config["agent"]
+        return operation not in agent["prohibited"] and (
+            not agent["allowed"] or operation in agent["allowed"]
         )
-        with self._sf() as s:
-            run = get_run(s, scope, run_id)
-            mb = s.get(m.Mailbox, (mailbox_id, run.id))
-            if mb is None or (
-                actor == AGENT and mb.owner_id != run.config["agent"]["mailbox_owner"]
-            ):
-                raise NotFound(f"mailbox {mailbox_id} not found")
-        self._record_denied(scope, run_id, actor, "send", {"to": exc.details["recipients"],
-                                                           "stage": "envelope"}, exc)  # fmt: skip
 
     def _guard(
         self, ctx: Ctx, actor: str, operation: str, mailbox_id: str | None, require_running: bool
@@ -331,9 +348,7 @@ class SimEngine:
         if actor != AGENT:
             return
         agent = ctx.config["agent"]
-        if operation in agent["prohibited"] or (
-            agent["allowed"] and operation not in agent["allowed"]
-        ):
+        if not self._permitted(ctx, operation):
             raise PermissionDenied(f"operation {operation!r} is not permitted for the agent")
         if mailbox_id is not None:
             mb = ctx.session.get(m.Mailbox, (mailbox_id, run.id))
@@ -991,7 +1006,7 @@ class SimEngine:
                              lambda c: self._advance(c, seconds, stop_at))  # fmt: skip
 
     def _advance(self, c: Ctx, seconds: float, stop_at: datetime | None = None) -> dict[str, Any]:
-        if not math.isfinite(seconds) or seconds < 0 or seconds > 10 * 365 * 86400:
+        if not math.isfinite(seconds) or seconds < 0 or seconds > MAX_ADVANCE_SECONDS:
             raise InvalidRequest("seconds must be a finite, non-negative duration")
         start = c.run.start_time
         assert start is not None
@@ -1361,19 +1376,10 @@ class SimEngine:
         )
 
         def fn(c: Ctx) -> dict[str, Any]:
-            origin_id = reply_to if reply_to is not None else forward_of
-            if origin_id is not None:
-                orig = self._message(c, mailbox_id, origin_id)
-                if orig.is_draft:
-                    raise InvalidRequest(f"message {origin_id} is a draft; it cannot be answered")
-                content.origin = {"kind": "reply" if reply_to is not None else "forward",
-                                  "message_id": orig.id}  # fmt: skip
-                if reply_to is not None and content.in_reply_to is None:
-                    content.in_reply_to = orig.message_id_header
-                    content.references = content.references or [*orig.references,
-                                                                 orig.message_id_header]  # fmt: skip
-                if forward_of is not None:
-                    content.attachments = self._blob_attachments(c, orig.id)
+            if reply_to is not None:
+                self._answer(c, mailbox_id, content, reply_to, "reply")
+            elif forward_of is not None:
+                self._answer(c, mailbox_id, content, forward_of, "forward")
             draft_id = c.gen.next("drf")
             return {"message_id": self._insert_draft(c, mailbox_id, content, draft_id, actor),
                     "draft_id": draft_id}  # fmt: skip
@@ -1382,6 +1388,19 @@ class SimEngine:
         if reply_to is not None or forward_of is not None:
             input_["reply_to" if reply_to is not None else "forward_of"] = reply_to or forward_of
         return self._command(scope, run_id, actor, "draft", input_, fn, mailbox_id=mailbox_id)
+
+    def _answer(self, c: Ctx, mailbox_id: str, content: DraftContent, origin_id: str,
+                kind: str) -> None:  # fmt: skip
+        """Make `content` a reply / forward draft of `origin_id` (a non-draft of the mailbox)."""
+        orig = self._message(c, mailbox_id, origin_id)
+        if orig.is_draft:
+            raise InvalidRequest(f"message {origin_id} is a draft; it cannot be answered")
+        content.origin = {"kind": kind, "message_id": orig.id}
+        if kind == "reply" and content.in_reply_to is None:
+            content.in_reply_to = orig.message_id_header
+            content.references = content.references or [*orig.references, orig.message_id_header]
+        if kind == "forward":
+            content.attachments = self._blob_attachments(c, orig.id)
 
     def move(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str, folder: str,
              *, actor: str = AGENT) -> None:  # fmt: skip
@@ -1529,9 +1548,12 @@ class SimEngine:
     def update_draft(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str, *,
                      to: list[str], subject: str, text: str = "", cc: list[str] | None = None,
                      bcc: list[str] | None = None, html: str | None = None,
-                     keep_attachments: bool = True, actor: str = AGENT) -> dict[str, Any]:  # fmt: skip
+                     keep_attachments: bool = True, threading: DraftThreading | None = None,
+                     actor: str = AGENT) -> dict[str, Any]:  # fmt: skip
         """Replace a draft's content. The draft id is stable; the message id changes (as in
-        Gmail). Reply headers (and by default attachments) carry over, so threading holds."""
+        Gmail). By default reply headers, the reply/forward origin (and attachments) carry
+        over, so threading holds; `threading` replaces them instead (a client that rewrites
+        the whole message, e.g. Gmail drafts.update with new In-Reply-To / References)."""
 
         def fn(c: Ctx) -> dict[str, Any]:
             old = self._draft(c, mailbox_id, message_id)
@@ -1548,6 +1570,12 @@ class SimEngine:
                 self._blob_attachments(c, old.id) if keep_attachments else [],
                 old.provider_ids.get("origin"),
             )
+            if threading is not None:
+                content.in_reply_to = threading.in_reply_to
+                content.references = list(threading.references)
+                content.origin = None
+                if threading.reply_to is not None:
+                    self._answer(c, mailbox_id, content, threading.reply_to, "reply")
             self._emit_delete(c, old, actor, "draft")
             return {"message_id": self._insert_draft(c, mailbox_id, content, draft_id, actor),
                     "draft_id": draft_id}  # fmt: skip
@@ -1561,8 +1589,11 @@ class SimEngine:
                          draft: m.Message | None) -> tuple[str, m.Message | None]:  # fmt: skip
         """`send`, or `reply` / `forward` when the draft answers a message still in the
         mailbox (then also that original)."""
-        origin = (draft.provider_ids.get("origin") if draft is not None and draft.is_draft
-                  else None)  # fmt: skip
+        origin = (
+            draft.provider_ids.get("origin")
+            if draft is not None and draft.is_draft and draft.mailbox_id == mailbox_id
+            else None
+        )  # fmt: skip (never reveals anything about another mailbox)
         if not isinstance(origin, dict) or origin.get("kind") not in ("reply", "forward"):
             return "send", None
         orig = session.get(m.Message, (str(origin.get("message_id")), run_id))
@@ -1576,11 +1607,14 @@ class SimEngine:
 
         A draft that answers a message (create_draft reply_to / forward_of) is sent as ONE
         `reply` / `forward` operation: permission, budget, triggers and policies see that
-        operation, and a reply marks the original ANSWERED, exactly like the direct command."""
+        operation, and a reply marks the original ANSWERED, exactly like the direct command.
+        A reply draft that carries attachments additionally needs `send` or `forward`
+        permission (a reply alone never transmits files)."""
         with self._sf() as s:  # decide the operation the guard checks (re-verified under lock)
             run = get_run(s, scope, run_id)
-            op, _ = self._draft_operation(s, run.id, mailbox_id,
-                                          s.get(m.Message, (message_id, run.id)))  # fmt: skip
+            op, first = self._draft_operation(s, run.id, mailbox_id,
+                                              s.get(m.Message, (message_id, run.id)))  # fmt: skip
+            orig_id = first.id if first is not None else None
 
         def fn(c: Ctx) -> dict[str, Any]:
             d = self._draft(c, mailbox_id, message_id)
@@ -1600,6 +1634,14 @@ class SimEngine:
                 list(d.references),
             )
             atts = self._blob_attachments(c, d.id)
+            if (
+                op == "reply"
+                and atts
+                and actor == AGENT
+                and not (self._permitted(c, "send") or self._permitted(c, "forward"))
+            ):
+                raise PermissionDenied("a reply carrying attachments also needs the 'send' or "
+                                       "'forward' operation, which is not permitted")  # fmt: skip
             self._emit_delete(c, d, actor, op)
             result = self._send(c, mailbox_id, to, cc, bcc, subject, text, html, irt,
                                 refs or None, actor, op, attachments=atts)  # fmt: skip
@@ -1609,8 +1651,8 @@ class SimEngine:
             return result
 
         input_: dict[str, Any] = {"draft_message_id": message_id}
-        if op != "send":
-            input_["draft_of"] = op
+        if op != "send":  # like the direct reply / forward: the answered message's id
+            input_.update(message_id=orig_id, draft_of=op)
         return self._command(scope, run_id, actor, op, input_, fn, mailbox_id=mailbox_id)
 
     def copy(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str, folder: str, *,
@@ -2031,15 +2073,17 @@ class SimEngine:
 
         def fn(c: Ctx) -> dict[str, CanonicalMessage]:
             self._mailbox(c, mailbox_id)
-            if not wanted:
-                return {}
-            rows = c.session.execute(
-                select(m.Message).where(m.Message.run_id == c.run.id, m.Message.mailbox_id == mailbox_id,
-                                        m.Message.id.in_(wanted))
-            ).scalars().all()  # fmt: skip
-            found = {r.id: self._canonical(c, r) for r in rows}
+            found: dict[str, CanonicalMessage] = {}
+            for at in range(0, len(wanted), PRESENT_CHUNK):  # bounded IN lists
+                rows = c.session.execute(
+                    select(m.Message).where(m.Message.run_id == c.run.id, m.Message.mailbox_id == mailbox_id,
+                                            m.Message.id.in_(wanted[at:at + PRESENT_CHUNK]))
+                ).scalars().all()  # fmt: skip
+                found.update((r.id, self._canonical(c, r)) for r in rows)
             return {i: found[i] for i in wanted if i in found}
 
+        if not wanted:
+            return {}  # nothing to look up: no read is recorded
         return self._read(
             scope, run_id, actor, "read", {"message_ids": len(wanted)}, fn, mailbox_id
         )
@@ -2170,4 +2214,14 @@ class SimEngine:
                              require_running=actor == AGENT, mailbox_id=mailbox_id)  # fmt: skip
 
 
-__all__ = ["AGENT", "CONTROLLER", "EVALUATOR", "SIMULATOR", "ReplayResult", "SimEngine", "TERMINAL"]
+__all__ = [
+    "AGENT",
+    "CONTROLLER",
+    "EVALUATOR",
+    "MAX_ADVANCE_SECONDS",
+    "SIMULATOR",
+    "DraftThreading",
+    "ReplayResult",
+    "SimEngine",
+    "TERMINAL",
+]
