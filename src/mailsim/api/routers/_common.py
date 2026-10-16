@@ -7,7 +7,7 @@ store services directly, always scoped to the principal's tenant + project.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from fastapi import Request
 from sqlalchemy import select
@@ -17,6 +17,7 @@ from mailsim.api import schemas as s
 from mailsim.auth.principal import Principal
 from mailsim.domain.errors import NotFound, PermissionDenied, UnsupportedOperation
 from mailsim.engine.facades import AgentMailbox, Controller, EvaluatorView, facade_for
+from mailsim.personas.runtime import PersonaRuntime
 from mailsim.store import models as m
 from mailsim.store import repos
 from mailsim.store.blob import BlobStore
@@ -77,16 +78,15 @@ def inspector(request: Request, principal: Principal) -> Controller | EvaluatorV
     return _facade(request, principal, Controller | EvaluatorView)  # type: ignore[arg-type]
 
 
-def run_personas(request: Request, ctl: Controller, run_id: str) -> int:
-    """Run one persona-runtime step after the clock moved (single scheduler loop per run).
+def persona_runtime(request: Request, ctl: Controller) -> PersonaRuntime | None:
+    """The app's persona runtime for this controller (single scheduler loop per run), used by
+    `personas.runtime.advance_clock` to answer persona replies at their due times.
 
     The runtime is optional (`app.state.persona_runtime_factory`); without it personas stay
     silent. Replies are recorded via `Controller.persona_reply`, so replay never calls a model.
     """
     factory = getattr(request.app.state, "persona_runtime_factory", None)
-    if factory is None:
-        return 0
-    return len(factory(ctl).step(run_id))
+    return None if factory is None else cast("PersonaRuntime", factory(ctl))
 
 
 def run_out(request: Request, principal: Principal, run_id: str) -> s.RunOut:

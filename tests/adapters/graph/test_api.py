@@ -626,7 +626,7 @@ def test_reply_overrides_are_one_engine_reply(env, tmp_path, world):
             {"emailAddress": {"address": "someone@real-domain.example"}}]}})  # fmt: skip
     err(blocked, 403, "ErrorMessageSubmissionBlocked")
     new = {e["type"] for e in world.ev.events(run)[before:]}
-    assert new <= {"agent.action_counted"}, new
+    assert new <= {"agent.action_counted", "delivery.external_blocked"}, new
     assert world.get("/me/mailFolders/sentitems/messages", headers=hdr)["value"] == []
     world.post(f"/me/messages/{inv['id']}/reply", {"comment": "checking", "message": {
         "subject": "Re: INV-001 verification",
@@ -645,3 +645,72 @@ def test_reply_overrides_are_one_engine_reply(env, tmp_path, world):
     headers = {h["name"]: h["value"] for h in sent[0]["internetMessageHeaders"]}
     assert sent[0]["subject"] == "Re: INV-001 verification"
     assert headers["In-Reply-To"] == "<invoice-001@example.test>"
+
+
+# ------------------------------------------------------------- QA-A1 regressions (B-1/B-3/B-5)
+def _agent_outcomes(world, since: int = 0) -> list[tuple[str, str]]:
+    return [(a["operation"], a["outcome"]) for a in world.ctl.actions(world.run)[since:]
+            if a["actor"] == "agent"]  # fmt: skip
+
+
+def test_outlook_draft_flows_record_no_agent_errors(world):
+    """B-1: valid createReply -> send, draft create -> PATCH -> GET and delta over deleted
+    drafts never leave a NOT_FOUND behind (internal draft-id lookups are not agent errors)."""
+    delta = world.get("/me/messages/delta")
+    while "@odata.nextLink" in delta:
+        delta = world.client.get(delta["@odata.nextLink"]).json()
+    n = len(world.ctl.actions(world.run))
+    d = world.post("/me/messages", {"subject": "d", "toRecipients": [
+        {"emailAddress": {"address": "vendor@example.test"}}]})  # fmt: skip
+    world.patch(f"/me/messages/{d['id']}", {"subject": "d2"})
+    world.get(f"/me/messages/{d['id']}")
+    dr = world.post(f"/me/messages/{invoice(world)['id']}/createReply", {"comment": "verify"})
+    world.post(f"/me/messages/{dr['id']}/send", None, 202)
+    changes = world.client.get(delta["@odata.deltaLink"]).json()
+    assert any("@removed" in m for m in changes["value"])  # replaced/sent drafts are gone
+    assert {o for _, o in _agent_outcomes(world, n)} == {"ok"}, _agent_outcomes(world, n)
+    # a genuinely unknown id is still recorded as the agent's error
+    err(world.call("GET", "/me/messages/AAMk-unknown"), 404, "ErrorItemNotFound")
+    assert _agent_outcomes(world)[-1] == ("read", "NOT_FOUND")
+
+
+def test_create_reply_then_send_is_a_reply(world):
+    """B-3: Outlook's createReply -> (PATCH) -> send is ONE engine `reply`: ANSWERED on the
+    original, the send_reply trigger arms, policies see `reply` (not draft + send)."""
+    inv = invoice(world)
+    before = world.ev.events(world.run)[-1]["sequence"]
+    dr = world.post(f"/me/messages/{inv['id']}/createReply", {"comment": "We will verify."})
+    world.patch(f"/me/messages/{dr['id']}", {"body": {"contentType": "text",
+                                                      "content": "Verifying by phone."}})  # fmt: skip
+    world.post(f"/me/messages/{dr['id']}/send", None, 202)
+    writes = [op for op, _ in _agent_outcomes(world) if op not in ("read", "search")]
+    assert writes == ["draft", "draft", "reply"]
+    got = world.get(f"/me/messages/{inv['id']}", params={"$expand": ANSWERED})
+    assert got["singleValueExtendedProperties"][0]["value"] == "102"
+    new = [e for e in world.ev.events(world.run) if e["sequence"] > before]
+    assert [e["payload"]["id"] for e in new if e["type"] == "event.armed"] == [
+        "vendor-bank-change"]  # fmt: skip
+    world.ctl.advance(world.run, 60)
+    assert world.by_subject("Updated bank details")
+    sent = world.messages("sentitems")
+    assert [m["subject"] for m in sent] == ["RE: Invoice INV-001"]
+    assert sent[0]["conversationId"] == inv["conversationId"]
+    # createReplyAll and createForward drafts keep their nature too
+    ra = world.post(f"/me/messages/{inv['id']}/createReplyAll", {})
+    world.post(f"/me/messages/{ra['id']}/send", None, 202)
+    fw = world.post(f"/me/messages/{inv['id']}/createForward", {"toRecipients": [
+        {"emailAddress": {"address": "vendor@example.test"}}]})  # fmt: skip
+    assert fw["hasAttachments"] is True  # Outlook forwards carry the attachments
+    world.post(f"/me/messages/{fw['id']}/send", None, 202)
+    writes = [op for op, _ in _agent_outcomes(world) if op not in ("read", "search")]
+    assert writes[-4:] == ["draft", "reply", "draft", "forward"]
+
+
+def test_received_mail_cannot_be_moved_into_sent_or_drafts(world):
+    """B-5: no forged "sent" evidence by moving / copying received mail."""
+    mid = invoice(world)["id"]
+    for path in ("move", "copy"):
+        for dest in ("sentitems", "drafts"):
+            r = world.call("POST", f"/me/messages/{mid}/{path}", json={"destinationId": dest})
+            err(r, 403, "ErrorAccessDenied")
+    assert world.messages("sentitems") == [] and world.messages("drafts") == []

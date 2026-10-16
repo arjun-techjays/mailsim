@@ -15,7 +15,7 @@ import copy
 import functools
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 import mcp_types as types
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
@@ -29,6 +29,7 @@ from mailsim.domain.models import CanonicalMessage
 from mailsim.domain.states import TERMINAL
 from mailsim.engine.facades import AgentMailbox, Controller, EvaluatorView
 from mailsim.engine.pagination import MAX_PAGE_SIZE, check_page_size
+from mailsim.personas.runtime import PersonaRuntime, advance_clock, tick_clock
 
 JSON = dict[str, Any]
 ROLE_FACADE: dict[Role, type[Any]] = {
@@ -198,10 +199,9 @@ def _folder_name(mb: AgentMailbox, folder: str) -> str:
     raise NotFound(f"folder {folder!r} not found")
 
 
-def _personas(deps: Deps, ctl: Controller, run_id: str) -> int:
-    if deps.persona_runtime_factory is None:
-        return 0
-    return len(deps.persona_runtime_factory(ctl).step(run_id))
+def _runtime(deps: Deps, ctl: Controller) -> PersonaRuntime | None:
+    factory = deps.persona_runtime_factory
+    return None if factory is None else cast("PersonaRuntime", factory(ctl))
 
 
 def _revoke_agent_keys(deps: Deps, view: Controller | EvaluatorView, run_id: str) -> None:
@@ -293,13 +293,12 @@ def inject_incoming_email(ctl: Controller, a: InjectArgs, _: Deps) -> JSON:
 
 
 def advance_simulation(ctl: Controller, a: AdvanceArgs, deps: Deps) -> JSON:
-    result = ctl.advance(a.run_id, a.seconds)
-    return {**result, "persona_replies": _personas(deps, ctl, a.run_id)}
+    # persona replies are answered at their due times on the way (`advance_clock`)
+    return advance_clock(ctl, _runtime(deps, ctl), a.run_id, a.seconds)
 
 
 def trigger_scheduled_event(ctl: Controller, a: RunArgs, deps: Deps) -> JSON:
-    result = ctl.tick(a.run_id)
-    return {**result, "persona_replies": _personas(deps, ctl, a.run_id)}
+    return tick_clock(ctl, _runtime(deps, ctl), a.run_id)
 
 
 def reset_run(ctl: Controller, a: RunArgs, _: Deps) -> JSON:

@@ -42,7 +42,7 @@ from mailsim.domain.errors import (
     UnsupportedOperation,
 )
 from mailsim.domain.models import Address, CanonicalMessage
-from mailsim.engine.facades import AgentMailbox
+from mailsim.engine.facades import AgentMailbox, DraftThreading
 from mailsim.engine.pagination import decode_cursor, encode_cursor
 from mailsim.mime.build import build_mime
 from mailsim.mime.parse import ParsedMessage, parse_mime
@@ -444,19 +444,28 @@ class GmailService:
         return {"id": gmail_draft_id(msg), "message": body}
 
     def create_draft(self, raw: bytes, thread_id: str | None) -> CanonicalMessage:
+        """A draft whose In-Reply-To (or References) names a message of the mailbox answers it
+        (as in `send`): drafts.send then is ONE engine `reply`, not a plain `send`."""
         parsed, content = self._draft_content(raw)
         self._check_thread(thread_id)
+        orig = self._reply_target(parsed)
         out = self.mb.create_draft(**content, in_reply_to=parsed.in_reply_to,
-                                   references=parsed.references or None)  # fmt: skip
+                                   references=parsed.references or None,
+                                   reply_to=orig.id if orig is not None else None)  # fmt: skip
         self._changed()
         return self.mb.get_message(out["message_id"])
 
     def update_draft(self, gdid: str, raw: bytes) -> CanonicalMessage:
         """Replace the draft's content; the draft id stays, the message id changes (as in
-        Gmail). Reply headers carry over from the original draft."""
+        Gmail). The new message's In-Reply-To / References decide its threading and which
+        message it answers, as in drafts.create."""
         current = self.draft(gdid)
-        _, content = self._draft_content(raw)
-        out = self.mb.update_draft(current.id, **content, keep_attachments=False)
+        parsed, content = self._draft_content(raw)
+        orig = self._reply_target(parsed)
+        threading = DraftThreading(parsed.in_reply_to, tuple(parsed.references),
+                                   orig.id if orig is not None else None)  # fmt: skip
+        out = self.mb.update_draft(current.id, **content, keep_attachments=False,
+                                   threading=threading)  # fmt: skip
         self._changed()
         return self.mb.get_message(out["message_id"])
 
@@ -573,12 +582,6 @@ class GmailService:
 
     # ------------------------------------------------------------------------- history
 
-    def _current(self, message_id: str) -> CanonicalMessage | None:
-        try:
-            return self.mb.get_message(message_id)
-        except NotFound:
-            return None
-
     def history(self, start: str | None, max_results: int | None, token: str | None,
                 label_id: str | None, history_types: list[str]) -> dict[str, Any]:  # fmt: skip
         since = history_number(start, "startHistoryId is required (a non-negative integer)")
@@ -594,9 +597,9 @@ class GmailService:
             raise NotFound("Requested entity was not found: startHistoryId predates a run reset; "
                            "perform a full sync")  # fmt: skip
         changes = [c for c in feed["changes"] if c.get("message_id")]
-        current = {
-            mid: self._current(mid) for mid in dict.fromkeys(str(c["message_id"]) for c in changes)
-        }
+        ids = list(dict.fromkeys(str(c["message_id"]) for c in changes))
+        present = self.mb.present_messages(ids)  # deleted ones are absent, not agent errors
+        current: dict[str, CanonicalMessage | None] = {mid: present.get(mid) for mid in ids}
         wanted = set(history_types)
         records = []
         for change in changes:

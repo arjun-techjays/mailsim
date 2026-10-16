@@ -98,6 +98,39 @@ def test_partial_recipient_rejection(proto):
     assert len(vendor_inbox(proto)) == 1
     types = {e["type"] for e in proto.ev.events(proto.run)}
     assert not types & {"delivery.external_attempt", "delivery.sunk"}
+    # QA B-2: the refused RCPT is still an attempt: audited, never delivered
+    blocked = [e for e in proto.ev.events(proto.run) if e["type"] == "delivery.external_blocked"]
+    assert [e["payload"]["recipients"] for e in blocked] == [["boss@real-company.example"]]
+    assert ("agent", "send", "EXTERNAL_DELIVERY_BLOCKED") in proto.actions()
+
+
+def test_refused_recipients_are_capped_per_session(proto):
+    from mailsim.protocols.smtp import MAX_REFUSED_RECIPIENTS
+
+    s = proto.smtp()
+    s.mail(AGENT)
+    for i in range(MAX_REFUSED_RECIPIENTS):
+        assert s.rcpt(f"x{i}@real-company.example")[0] == 550
+    assert s.rcpt(VENDOR)[0] == 250  # internal recipients are unaffected until the cap
+    code, text = s.rcpt("one-more@real-company.example")
+    assert code == 421 and b"too many refused" in text
+    with pytest.raises(smtplib.SMTPServerDisconnected):
+        s.noop()
+    blocked = [a for a in proto.actions() if a[2] == "EXTERNAL_DELIVERY_BLOCKED"]
+    assert len(blocked) == MAX_REFUSED_RECIPIENTS + 1  # each refusal is an audited attempt
+
+
+def test_blocked_recipient_audit_failure_keeps_the_550(proto, monkeypatch):
+    from mailsim.engine.facades import AgentMailbox
+
+    def broken(self, recipients):
+        raise RuntimeError("audit store down")
+
+    monkeypatch.setattr(AgentMailbox, "record_external_blocked", broken)
+    s = proto.smtp()
+    s.mail(AGENT)
+    code, text = s.rcpt("boss@real-company.example")
+    assert code == 550 and b"EXTERNAL_DELIVERY_BLOCKED" in text
 
 
 def test_all_recipients_rejected(proto):

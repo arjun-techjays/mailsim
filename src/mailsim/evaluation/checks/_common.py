@@ -98,6 +98,12 @@ class RunIndex:
         self.epoch_start = resets[-1] if resets else 0
         self.occurrences = [self._occurrence(i, a) for i, a in enumerate(actions, 1)]
         self.agent_created: set[str] = set()
+        # provenance of "sent": ids created by a real send (send/reply/forward/send_draft or a
+        # persona's send). A message merely placed in Sent is not sent mail.
+        self.sent_ids: set[str] = {
+            e["payload"]["message"]["id"] for e in events
+            if e["type"] == "message.sent" and isinstance(e["payload"].get("message"), dict)
+        }  # fmt: skip
         for e in events:
             if e["actor"] != AGENT or "message" not in e["payload"]:
                 continue
@@ -334,8 +340,14 @@ def select_messages(
     agent_mailbox_id: str,
     agent_created: set[str],
     agent_labels: set[tuple[str, str]] | None = None,
+    sent_ids: set[str] | None = None,
 ) -> Selection:
-    """Apply a MessageWhere to a state snapshot (all conditions AND-ed)."""
+    """Apply a MessageWhere to a state snapshot (all conditions AND-ed).
+
+    With `sent_ids` (RunIndex.sent_ids), `folder: sent` selects by PROVENANCE, not placement:
+    only messages created by an actual send count, and `folder: drafts` only real drafts.
+    Anything else found there was put there (forged evidence) and is excluded like
+    agent-created mail, unless the key sets `include_agent_created`."""
     if where.mailbox is None:
         mailbox_id: str | None = agent_mailbox_id
     else:
@@ -385,6 +397,14 @@ def select_messages(
                 continue
         if not where.include_agent_created and msg["id"] in agent_created:
             excluded.append(msg["id"])
+            continue
+        if not where.include_agent_created and sent_ids is not None and (
+            (where.folder is not None and where.folder.casefold() == "sent"
+             and msg["id"] not in sent_ids)
+            or (where.folder is not None and where.folder.casefold() == "drafts"
+                and not msg.get("is_draft"))
+        ):  # fmt: skip
+            excluded.append(msg["id"])  # placed in Sent/Drafts, never sent/drafted
             continue
         if (
             where.label is not None

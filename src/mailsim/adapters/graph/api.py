@@ -199,13 +199,10 @@ def all_messages(mb: AgentMailbox, folder: str | None) -> list[CanonicalMessage]
 
 
 def resolve_message(ctx: Ctx, message_ref: str) -> str:
-    """Graph message (or draft) id -> internal id, only inside this mailbox."""
+    """Graph message (or draft) id -> internal id, only inside this mailbox. One engine read
+    tries both kinds, so a valid draft id never leaves a recorded NOT_FOUND behind."""
     try:
-        return ctx.mb.resolve_external_id("graph", "message", message_ref)
-    except NotFound:
-        pass
-    try:
-        return ctx.mb.resolve_external_id("graph", "draft", message_ref)
+        return ctx.mb.resolve_external_id("graph", ("message", "draft"), message_ref)
     except NotFound:
         raise NotFound(ITEM_NOT_FOUND, details={"id": message_ref}) from None
 
@@ -343,6 +340,8 @@ class Draft:
     html: str | None = None
     in_reply_to: str | None = None
     references: list[str] = field(default_factory=list)
+    reply_to: str | None = None  # internal id of the message a createReply draft answers
+    forward_of: str | None = None  # ... or a createForward draft forwards
 
     def apply(self, payload: Mapping[str, Any]) -> Draft:
         """Overlay the Graph message properties present in `payload`."""
@@ -367,7 +366,8 @@ class Draft:
     def create(self, mb: AgentMailbox) -> str:
         out = mb.create_draft(to=self.to, subject=self.subject, text=self.text, cc=self.cc,
                               bcc=self.bcc, html=self.html, in_reply_to=self.in_reply_to,
-                              references=self.references or None)  # fmt: skip
+                              references=self.references or None, reply_to=self.reply_to,
+                              forward_of=self.forward_of)  # fmt: skip
         return str(out["message_id"])
 
 
@@ -419,14 +419,15 @@ def reply_draft(ctx: Ctx, orig: CanonicalMessage, *, reply_all: bool, comment: s
         cc = [a.email for a in orig.cc if a.email.casefold() != me]
     to = [a for a in dict.fromkeys(to) if a.casefold() != me] or [orig.from_.email]
     return Draft(to, cc, [], _prefixed("RE:", orig.subject, ("re:",)), comment, None,
-                 orig.message_id_header, [*orig.references, orig.message_id_header])  # fmt: skip
+                 orig.message_id_header, [*orig.references, orig.message_id_header],
+                 reply_to=orig.id)  # fmt: skip
 
 
 def forward_draft(orig: CanonicalMessage, to: list[str], comment: str) -> Draft:
     quoted = (f"{comment}\n\n---------- Forwarded message ----------\nFrom: {orig.from_.email}\n"
               f"Subject: {orig.subject}\n\n{orig.body_text or ''}")  # fmt: skip
     return Draft(to, [], [], _prefixed("FW:", orig.subject, ("fw:", "fwd:")), quoted, None,
-                 None, [*orig.references, orig.message_id_header])  # fmt: skip
+                 None, [*orig.references, orig.message_id_header], forward_of=orig.id)  # fmt: skip
 
 
 # ---------------------------------------------------------------------------- user
@@ -585,12 +586,10 @@ def _delta(ctx: Ctx, folder: FolderRef | None) -> JSONResponse:
         raise SyncStateGone("The sync state is no longer valid (the run was reset); "
                             "restart the sync without a token.")  # fmt: skip
     ids = list(dict.fromkeys(c["message_id"] for c in feed["changes"] if c["message_id"]))
+    present = ctx.mb.present_messages(ids)  # deleted ones are absent, not agent errors
     items = []
     for internal in ids:
-        try:
-            m: CanonicalMessage | None = ctx.mb.get_message(internal)
-        except NotFound:
-            m = None
+        m = present.get(internal)
         if m is None or (folder is not None and res.folder_key(m.folder) != folder.key):
             items.append({"@odata.type": "#microsoft.graph.message", "id": graph_id(internal),
                           "@removed": {"reason": "deleted"}})  # fmt: skip
@@ -775,7 +774,8 @@ def send_mail(ctx: Context, payload: Payload = None) -> Response:
 
 @route("POST", "/messages/{message_id}/send", 202)
 def send_draft(message_id: str, ctx: Context) -> Response:
-    """Draft -> sent: the draft leaves Drafts and a copy lands in Sent Items."""
+    """Draft -> sent: the draft leaves Drafts and a copy lands in Sent Items. A createReply /
+    createReplyAll / createForward draft is sent as the engine's `reply` / `forward`."""
     ctx.mb.send_draft(resolve_message(ctx, message_id))
     return accepted()
 

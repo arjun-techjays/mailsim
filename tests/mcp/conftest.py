@@ -56,6 +56,9 @@ class StubPersonas:
     def step(self, run_id: str) -> list[dict[str, Any]]:
         return [{"run_id": run_id}, {"run_id": run_id}]
 
+    def due_times(self, run_id: str) -> list[Any]:
+        return []  # nothing scheduled: one advance, one step
+
 
 class PassingJudge:
     def judge(self, *, requirement: str, rubric: str, agent_texts: list[str]) -> dict[str, Any]:

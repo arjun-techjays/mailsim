@@ -143,13 +143,13 @@ def test_answer_keys_are_metadata_only_and_evaluator_listed(api):
     api.publish()
     out = api.call("POST", f"/v1/scenarios/{KEY}/answer-keys", json={"source": ANSWER_KEY},
                    expect=201).json()  # fmt: skip
-    assert out["version"] == 2 and out["source"] == "file" and out["scenario_versions"] == [1]
+    assert out["version"] == 3 and out["source"] == "file" and out["scenario_versions"] == [1]
     doc = yaml.safe_load(ANSWER_KEY)
     again = api.call("POST", f"/v1/scenarios/{KEY}/answer-keys", json={"document": doc},
                      expect=201).json()  # fmt: skip
     assert again["id"] == out["id"]
     listed = api.call("GET", f"/v1/scenarios/{KEY}/answer-keys", "evaluator", expect=200)
-    assert [(k["version"], k["source"]) for k in listed.json()] == [(1, "inline"), (2, "file")]
+    assert [(k["version"], k["source"]) for k in listed.json()] == [(1, "inline"), (3, "file")]
     secrets = [a["requirement"] for a in doc["answer_key"]["assertions"]]
     for text in (json.dumps(out), listed.text):
         assert "assertions" not in text and not [x for x in secrets if x in text]

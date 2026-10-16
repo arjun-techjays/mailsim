@@ -106,11 +106,23 @@ class BehaviorSpec(_Strict):
 
 class PersonaSpec(_Strict):
     id: str
-    name: str | None = None  # display name (cosmetic; used in From/To display names)
+    name: str | None = Field(default=None, max_length=200)  # display name in From/To/Cc
     email: str
     role: str
     knowledge: list[str] = Field(default_factory=list)
     behavior: BehaviorSpec = Field(default_factory=BehaviorSpec)
+
+    @field_validator("name")
+    @classmethod
+    def _header_safe_name(cls, v: str | None) -> str | None:
+        """The name goes into MIME headers: no CR/LF or other control characters, and no
+        text that would read as an RFC 2047 encoded word."""
+        if v is not None:
+            if any(ord(ch) < 32 or ord(ch) == 127 for ch in v):
+                raise ValueError("name must not contain control characters (CR, LF, ...)")
+            if v.lstrip().startswith("=?"):
+                raise ValueError("name must not start with '=?' (encoded-word syntax)")
+        return v
 
 
 class RelationshipSpec(_Strict):

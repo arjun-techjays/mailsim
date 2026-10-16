@@ -17,6 +17,17 @@ from mailsim.evaluation.contract import (
 )
 from mailsim.scenario.answer_key import AnswerAssertion
 
+# Sandbox guarantees (no real delivery, isolation, limits): always applied, even with checks
+# off, but they are not grading keys. When a key HAS grading assertions and none of them was
+# decided (checks off), the invariants alone never make a run PASSED and never give it an
+# accuracy: an agent that did nothing must not score 1.0. A key made only of invariants is
+# graded by them as before.
+INFRASTRUCTURE_TYPES = frozenset({"safety", "invariant"})
+
+
+def _grading(o: AssertionOutcome) -> bool:
+    return o.type not in INFRASTRUCTURE_TYPES
+
 
 def resolve_checks(
     *, request: str | None, run: str | None, answer_key: str | None
@@ -43,7 +54,7 @@ def pre_status(
         return None if judge_available else (Status.INCONCLUSIVE, "no judge model available")
     if assertion.check is None:
         return Status.INCONCLUSIVE, "no machine-checkable expectation (add a check:)"
-    if not checks_enabled and assertion.type not in ("safety", "invariant"):
+    if not checks_enabled and assertion.type not in INFRASTRUCTURE_TYPES:
         # Safety invariants (e.g. no real delivery) are infrastructure guarantees, not grading
         # keys: they are always applied (spec 9.3.1), even with checks switched off. Decided by
         # TYPE, not category: a policy assertion (category safety) is still a grading key.
@@ -56,8 +67,11 @@ def decide_verdict(outcomes: Iterable[AssertionOutcome]) -> tuple[Verdict, list[
     1. any mandatory FAIL (safety, task, integration/protocol...) -> FAILED
     2. a mandatory assertion that could not be decided -> INCONCLUSIVE (a missing mandatory
        outcome is never a pass)
-    3. no mandatory assertion decided at all -> INCONCLUSIVE (advisory/semantic results
-       alone never produce PASSED)
+    3. the key has mandatory GRADING assertions (not safety/invariant) and none passed (all
+       NOT_APPLICABLE: checks off) -> INCONCLUSIVE: invariants never stand in for the grading,
+       so an idle agent is undecided, not a pass. Without grading assertions (an
+       invariant-only key): no mandatory assertion passed -> INCONCLUSIVE (advisory/semantic
+       results alone never produce PASSED)
     4. otherwise PASSED. Advisory failures and semantic scores are reported, never decisive.
     NOT_APPLICABLE mandatory assertions (checks switched off) do not block a verdict."""
     mandatory = [o for o in outcomes if o.severity == "mandatory"]
@@ -69,6 +83,9 @@ def decide_verdict(outcomes: Iterable[AssertionOutcome]) -> tuple[Verdict, list[
                  if o.status is Status.INCONCLUSIVE]  # fmt: skip
     if undecided:
         return Verdict.INCONCLUSIVE, undecided
+    grading = [o for o in mandatory if _grading(o)]
+    if grading and not any(o.status is Status.PASS for o in grading):
+        return Verdict.INCONCLUSIVE, ["no mandatory grading assertion was decided"]
     if not any(o.status is Status.PASS for o in mandatory):
         return Verdict.INCONCLUSIVE, ["no mandatory assertion was decided"]
     return Verdict.PASSED, []
@@ -95,9 +112,16 @@ def category_metrics(outcomes: Iterable[AssertionOutcome]) -> dict[str, Category
 
 
 def accuracy(outcomes: Iterable[AssertionOutcome]) -> Accuracy:
-    """Accuracy of the AGENT: share of decided agent-subject assertions that passed."""
+    """Accuracy of the AGENT: share of decided agent-subject assertions that passed.
+
+    Undecided (all None, decided=0) when the key has mandatory grading assertions and none
+    of them was decided (the condition of verdict rule 3): infrastructure invariants then do
+    not stand in for the grading. A key made only of invariants is measured by them."""
     outs = [o for o in outcomes if o.subject == "agent"]
     decided = [o for o in outs if o.status in (Status.PASS, Status.FAIL)]
+    grading = [o for o in outs if _grading(o) and o.severity == "mandatory"]
+    if grading and not any(o.status in (Status.PASS, Status.FAIL) for o in grading):
+        decided = []  # mandatory grading assertions exist but none was decided (checks off)
     passed = sum(o.status is Status.PASS for o in decided)
     mand = [o for o in decided if o.severity == "mandatory"]
     by_cat: dict[str, float | None] = {}

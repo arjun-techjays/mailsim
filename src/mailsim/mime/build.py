@@ -6,14 +6,15 @@ import hashlib
 from datetime import datetime
 from email import policy
 from email.message import EmailMessage
-from email.utils import format_datetime
+from email.utils import format_datetime, formataddr
 
 from mailsim.domain.models import Address
 from mailsim.mime.parse import ParsedAttachment
 
 
 def _fmt(addr: Address) -> str:
-    return f"{addr.name} <{addr.email}>" if addr.name else addr.email
+    # display names are quoted / RFC 2047-encoded as needed ("Lee, Ann" <a@x>)
+    return formataddr((addr.name, addr.email)) if addr.name else addr.email
 
 
 def build_mime(
