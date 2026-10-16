@@ -16,7 +16,13 @@ from sqlalchemy.orm import Session
 
 from mailsim.api import authoring
 from mailsim.api import schemas as s
-from mailsim.api.auth import issue_key, project_keys, revoke_agent_keys, revoke_scoped_key
+from mailsim.api.auth import (
+    count_live_agent_keys,
+    issue_key,
+    project_keys,
+    revoke_agent_keys,
+    revoke_scoped_key,
+)
 from mailsim.api.deps import Authenticated, Controller, Evaluator, Inspector, not_implemented
 from mailsim.api.errors import ErrorEnvelope
 from mailsim.api.idempotency import idempotent
@@ -256,6 +262,9 @@ def _revoke_agent_keys(request: Request, principal: Principal, run_id: str) -> N
         revoke_agent_keys(session, principal.tenant_id, principal.project_id, run_id)
 
 
+MAX_LIVE_AGENT_KEYS = 16  # per run; minting more answers 409 until one is revoked
+
+
 def _agent_credential(request: Request, principal: Principal, run_id: str) -> s.AgentCredential:
     """Issue an agent key bound to the run and the scenario's agent mailbox. Earlier agent keys
     of the run stay valid: revoking one is explicit (`DELETE /v1/keys/{key_id}`)."""
@@ -272,6 +281,11 @@ def _agent_credential(request: Request, principal: Principal, run_id: str) -> s.
     address = next(p["email"] for p in body["personas"] if p["id"] == persona).lower()
     mailbox_id = ctl.mailbox_id_for(run_id, persona)
     with sessions(request).begin() as session:
+        live = count_live_agent_keys(session, principal.tenant_id, principal.project_id, run_id)
+        if live >= MAX_LIVE_AGENT_KEYS:
+            raise Conflict(f"run already has {live} live agent keys (at most "
+                           f"{MAX_LIVE_AGENT_KEYS}); revoke one with DELETE /v1/keys/{{key_id}}",
+                           details={"live_agent_keys": live, "max": MAX_LIVE_AGENT_KEYS})  # fmt: skip
         key = issue_key(session, tenant_id=principal.tenant_id, project_id=principal.project_id,
                         role=Role.AGENT, run_id=run_id, mailbox_id=mailbox_id,
                         label=f"agent for {run_id}")  # fmt: skip
@@ -311,7 +325,8 @@ def create_agent_credential(
 ) -> s.AgentCredential:
     """Issue an additional agent key for a run (e.g. after a lost or redacted response, or one
     key per interface). Earlier agent keys are NOT revoked: revoke one explicitly with
-    `DELETE /v1/keys/{key_id}`. Cancelling or completing the run revokes all of them."""
+    `DELETE /v1/keys/{key_id}`. Cancelling or completing the run revokes all of them. At most
+    16 live agent keys per run: beyond that, 409 CONFLICT until one is revoked."""
     return _agent_credential(request, principal, run_id)
 
 
