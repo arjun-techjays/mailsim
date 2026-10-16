@@ -3748,7 +3748,7 @@
   },
   "info": {
     "description": "Mail API.",
-    "title": "mailsim",
+    "title": "Mail API",
     "version": "1.0.0-wave0"
   },
   "openapi": "3.1.0",

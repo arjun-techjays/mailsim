@@ -12,12 +12,12 @@ export default defineConfig({
   retries: 0,
   reporter: [['list']],
   timeout: 60_000,
-  use: { baseURL: `http://localhost:${PORT}`, trace: 'retain-on-failure' },
+  use: { baseURL: `http://127.0.0.1:${PORT}`, trace: 'retain-on-failure' },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: API
     ? {
         command: `npx vite --mode development --port ${PORT} --strictPort`,
-        url: `http://localhost:${PORT}`,
+        url: `http://127.0.0.1:${PORT}`,
         reuseExistingServer: false,
         timeout: 60_000,
         env: { MAILSIM_API_URL: API },
