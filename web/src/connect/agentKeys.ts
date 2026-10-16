@@ -17,6 +17,7 @@ export interface HeldKey {
 
 /** AgentCredential.key_id where the server provides it (optional in the contract). */
 export function credentialKeyId(cred: object): string | null {
+  // SCHEMA-CAST: remove once schema.gen.ts (integration) has AgentCredential.key_id.
   const id = (cred as { key_id?: unknown }).key_id;
   return typeof id === 'string' && id ? id : null;
 }
