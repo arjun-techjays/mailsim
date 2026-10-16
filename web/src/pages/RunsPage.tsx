@@ -77,6 +77,14 @@ function RunList() {
               <tr key={r.id}>
                 <th scope="row">
                   <Link to={runHref(r.id)}>{r.id}</Link>
+                  {r.replay_of && (
+                    <>
+                      {' '}
+                      <span className="badge" data-testid="replay-badge">
+                        Replay of {r.replay_of}
+                      </span>
+                    </>
+                  )}
                 </th>
                 <td>
                   <Badge value={r.status} />

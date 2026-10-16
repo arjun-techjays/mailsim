@@ -14,7 +14,7 @@ import {
   uniqueId,
 } from './model';
 import { itemsOf, kindOf, labelFor, properties, pruneEmptyOptional, refName, requiredKeys, resolve, unwrap } from './schema';
-import { byPath, clientIssues, fromServer, leakedFields, mergeIssues, normalizePath } from './validation';
+import { byPath, clientIssues, fromServer, isSourcePath, leakedFields, mergeIssues, normalizePath, yamlProblems } from './validation';
 
 const meta = AUTHORING_META;
 
@@ -175,6 +175,13 @@ describe('validation mapping', () => {
     ]);
     expect(issues[4]?.message).toContain('assertion 2');
     expect(mergeIssues([{ path: 'a', message: 'm' }], [{ path: 'a', message: 'm' }, { path: 'b', message: 'n' }])).toHaveLength(2);
+    // UI-1: a YAML parse error is one problem, however many endpoints report it.
+    expect(['', '<source>', '<root>', 'line 3'].every(isSourcePath)).toBe(true);
+    expect(isSourcePath('assertions.0')).toBe(false);
+    const parse = { path: 'line 2', message: 'bad' };
+    const server = [{ path: '<source>', message: 'bad' }, { path: '', message: 'not a mapping' }, { path: 'version', message: 'v' }];
+    expect(yamlProblems(parse, server)).toEqual([parse, { path: 'version', message: 'v' }]);
+    expect(yamlProblems(null, server)).toBe(server);
   });
 });
 

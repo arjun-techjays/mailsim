@@ -192,12 +192,13 @@ describe('Connect your agent', () => {
     expect(JSON.stringify({ ...sessionStorage })).not.toContain(MOCK_KEYS.agent);
   });
 
-  it('mint: confirmation, key shown once and revealed, earlier key revoked', async () => {
+  it('mint: confirmation, key shown once and revealed; earlier keys stay valid until revoked explicitly', async () => {
     const { user } = await openConnect();
     const mintButton = screen.getByRole('button', { name: 'Mint a new agent key' });
     await user.click(mintButton);
     const dialog = screen.getByRole('alertdialog', { name: 'Mint a new agent key?' });
-    expect(dialog).toHaveTextContent('revokes this run’s other agent keys (key_mk_agent)');
+    expect(dialog).toHaveTextContent('The run’s existing agent key (key_mk_agent) keeps working; you can revoke it afterwards.');
+    expect(dialog).not.toHaveTextContent('revokes');
     expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus();
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('alertdialog')).toBeNull();
@@ -210,11 +211,34 @@ describe('Connect your agent', () => {
     expect(screen.getByTestId('agent-key-value')).toHaveTextContent('msk_000000000001_mockMintedAgentKeyForTests0001abcdef');
     const keys = screen.getByTestId('agent-keys');
     await within(keys).findByRole('rowheader', { name: 'key_minted_0001' });
-    const oldRow = within(keys).getByRole('rowheader', { name: 'key_mk_agent' }).closest('tr') as HTMLElement;
-    expect(oldRow).toHaveTextContent('revoked');
+    const row = (id: string) => within(keys).getByRole('rowheader', { name: id }).closest('tr') as HTMLElement;
+    expect(row('key_mk_agent')).toHaveTextContent('active');
+    expect(mockDb.keys[MOCK_KEYS.agent]).toBeDefined();
+    expect(within(row('key_minted_0001')).getByTestId('held-marker')).toHaveTextContent('held in this tab');
+
+    // revoking the others is a separate, confirmed action
+    const notice = screen.getByTestId('minted-notice');
+    await waitFor(() => expect(notice).toHaveTextContent('The run’s other agent key still works until you revoke it.'));
+    await user.click(within(notice).getByRole('button', { name: 'Revoke the other key' }));
+    const confirm = screen.getByRole('alertdialog', { name: 'Revoke key_mk_agent?' });
+    await user.click(within(confirm).getByRole('button', { name: 'Revoke' }));
+    await waitFor(() => expect(row('key_mk_agent')).toHaveTextContent('revoked'));
     expect(mockDb.keys[MOCK_KEYS.agent]).toBeUndefined();
-    const newRow = within(keys).getByRole('rowheader', { name: 'key_minted_0001' }).closest('tr') as HTMLElement;
-    expect(within(newRow).getByTestId('held-marker')).toHaveTextContent('held in this tab');
+    expect(row('key_minted_0001')).toHaveTextContent('active');
+    expect(screen.getByTestId('agent-key-value')).toBeInTheDocument(); // the new key stays held
+    expect(screen.queryByRole('button', { name: /Revoke the other/ })).toBeNull();
+  });
+
+  it('mint with several other keys and with none', async () => {
+    mockDb.keys.mk_agent_second = { role: 'agent', project: 'prj_main', runId: 'run_demo', mailboxId: 'mbx_finance' };
+    const { user } = await openConnect();
+    await user.click(screen.getByRole('button', { name: 'Mint a new agent key' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent(/existing agent keys \(.+, .+\) keep working; you can revoke them afterwards/);
+    await user.click(screen.getByRole('button', { name: 'Mint key' }));
+    const notice = await screen.findByTestId('minted-notice');
+    await waitFor(() => expect(notice).toHaveTextContent('The run’s 2 other agent keys still work until you revoke them.'));
+    await user.click(within(notice).getByRole('button', { name: 'Revoke the other 2 keys' }));
+    expect(screen.getByRole('alertdialog', { name: 'Revoke 2 agent keys?' })).toBeInTheDocument();
   });
 
   it('revoking the held key forgets it even when another key stays active; revoking another keeps it', async () => {

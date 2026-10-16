@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { loadRecentRuns } from '../auth/storage';
-import { server } from '../test/server';
+import { mockDb, server } from '../test/server';
 import { renderApp, sessionFor } from '../test/utils';
 
 const rows = (testId: string) => within(screen.getByTestId(testId)).getAllByRole('row').slice(1);
@@ -104,7 +104,10 @@ describe('Run detail', () => {
     expect(screen.getByTestId('highlighted-action')).toHaveTextContent('modify_labels');
     expect(screen.getByTestId('highlighted-action')).toHaveFocus();
     expect(rows('actions-table')[2]).toHaveTextContent('#3–#4');
-    expect(rows('actions-table')[3]).toHaveTextContent('#7–#7');
+    expect(rows('actions-table')[0]).toHaveTextContent(/#1(?!–)/);
+    expect(rows('actions-table')[3]).toHaveTextContent('#7');
+    expect(rows('actions-table')[3]).not.toHaveTextContent('#7–#7');
+
     expect(screen.queryByTestId('unmatched-action')).toBeNull();
     await user.click(screen.getByRole('link', { name: 'Artifacts' }));
     expect(await screen.findByTestId('artifacts-table')).toHaveTextContent('trace/run_demo.jsonl');
@@ -133,7 +136,7 @@ describe('Run detail', () => {
     expect(await screen.findByText(/Could not load artifacts/)).toBeInTheDocument();
   });
 
-  it('evaluator: no controls, evaluations link; replay_of link and unknown tab', async () => {
+  it('evaluator: no controls; a replay run is badged and not offered for evaluation', async () => {
     server.use(
       http.get('*/v1/runs/:id', () =>
         HttpResponse.json({
@@ -149,9 +152,49 @@ describe('Run detail', () => {
     );
     renderApp('/runs/run_x?tab=bogus', sessionFor('evaluator'));
     expect(await screen.findByText(/require a controller key/)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Evaluations' })).toHaveAttribute('href', '/runs/run_x/evaluations');
-    expect(screen.getByRole('link', { name: 'run_demo' })).toBeInTheDocument();
+    expect(screen.getByTestId('replay-badge')).toHaveTextContent('Replay of run_demo');
+    expect(screen.getByTestId('replay-notice')).toHaveTextContent('Replays are not evaluated');
+    expect(within(screen.getByTestId('replay-notice')).getByRole('link', { name: 'run_demo' })).toHaveAttribute('href', '/runs/run_demo');
+    expect(screen.queryByRole('link', { name: 'Evaluations' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Evaluate and read results' })).toBeNull();
+    expect(screen.getAllByRole('link', { name: 'run_demo' }).length).toBeGreaterThan(0);
     expect(screen.queryByRole('heading', { name: 'Run controls' })).toBeNull();
+  });
+
+  it('a run marked kind "replay" without replay_of, and a normal run, for an evaluator', async () => {
+    server.use(
+      http.get('*/v1/runs/:id', ({ params }) =>
+        HttpResponse.json({
+          id: String(params.id),
+          status: 'PASSED',
+          epoch: 1,
+          virtual_time: null,
+          agent_actions: 0,
+          replay_of: null,
+          ...(params.id === 'run_k' ? { kind: 'replay' } : {}),
+        }),
+      ),
+    );
+    const { unmount } = renderApp('/runs/run_k', sessionFor('evaluator'));
+    expect(await screen.findByTestId('replay-badge')).toHaveTextContent(/^Replay$/);
+    expect(screen.getByTestId('replay-notice')).toHaveTextContent(/^This run is a replay: /);
+    unmount();
+    renderApp('/runs/run_n', sessionFor('evaluator'));
+    expect(await screen.findByRole('link', { name: 'Evaluations' })).toHaveAttribute('href', '/runs/run_n/evaluations');
+    expect(screen.queryByTestId('replay-badge')).toBeNull();
+  });
+
+  it('UI-7: an action that produced no events shows "none", never a backwards range', async () => {
+    const demo = mockDb.runs.run_demo!;
+    demo.actions.push({ id: 9, actor: 'controller', operation: 'start', input: {}, result: {}, outcome: 'CONFLICT', virtual_time: null, seq_start: 18, seq_end: 17 });
+    demo.actions.push({ id: 10, actor: 'controller', operation: 'noop', input: {}, result: {}, outcome: 'ok', virtual_time: null, seq_start: null, seq_end: null });
+    renderApp('/runs/run_demo?tab=actions', sessionFor('evaluator'));
+    await screen.findByTestId('actions-table');
+    const conflict = rows('actions-table')[4] as HTMLElement;
+    expect(conflict).toHaveTextContent('CONFLICT');
+    expect(conflict).toHaveTextContent('none');
+    expect(conflict).not.toHaveTextContent('#18');
+    expect(rows('actions-table')[5]).toHaveTextContent('noopok——');
   });
 
   it('run errors: 500 and 403 for agents', async () => {

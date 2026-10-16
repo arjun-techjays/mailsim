@@ -2,7 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import type { EvaluationReport } from '../api/types';
 import { buildReport } from '../mocks/db';
-import { server } from '../test/server';
+import { mockDb, server } from '../test/server';
 import { renderApp, sessionFor } from '../test/utils';
 
 describe('Evaluation page', () => {
@@ -166,5 +166,56 @@ describe('Evaluation page', () => {
     expect(screen.getByTestId('role-gate')).toHaveTextContent('connected as controller');
     expect(seen.filter((u) => !u.endsWith('/v1/system/status'))).toEqual([]); // header status pill only
     server.events.removeAllListeners();
+  });
+
+  describe('slow evaluate (UI-9) and replays', () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      server.events.removeAllListeners();
+    });
+
+    it('a timed-out evaluation is retried with the same key and not duplicated', async () => {
+      vi.stubEnv('VITE_LONG_REQUEST_TIMEOUT_MS', '300');
+      mockDb.runs.run_demo!.run.agent_build = 'slow';
+      const keys: (string | null)[] = [];
+      server.events.on('request:start', ({ request }) => {
+        if (request.method === 'POST' && request.url.endsWith('/evaluations')) keys.push(request.headers.get('idempotency-key'));
+      });
+      const { user, router } = renderApp('/runs/run_demo/evaluations', sessionFor('evaluator'));
+      await screen.findByTestId('evaluation-report');
+      await user.click(screen.getByRole('button', { name: 'Run evaluation' }));
+      expect(await screen.findByText(/can take a minute/)).toBeInTheDocument();
+      const notice = await screen.findByTestId('unconfirmed');
+      expect(notice).toHaveTextContent('The evaluation was not confirmed');
+      // the list was refreshed: the stored evaluation already shows up
+      await waitFor(() => expect(within(screen.getByTestId('evaluations-table')).getAllByRole('row')).toHaveLength(3));
+      await user.click(within(notice).getByRole('button', { name: 'Check again' }));
+      await waitFor(() => expect(router.state.location.search).toBe('?evaluation=eval_2'));
+      expect(keys).toHaveLength(2);
+      expect(keys[1]).toBe(keys[0]);
+      expect(mockDb.runs.run_demo!.evaluations).toHaveLength(2); // stored once
+      expect(screen.queryByTestId('unconfirmed')).toBeNull();
+    });
+
+    it('a replay run is not offered for evaluation', async () => {
+      mockDb.runs.run_demo!.run.replay_of = 'run_orig';
+      renderApp('/runs/run_demo/evaluations', sessionFor('evaluator'));
+      const note = await screen.findByTestId('replay-not-evaluated');
+      expect(note).toHaveTextContent('This run is a replay of run_orig');
+      expect(within(note).getByRole('link', { name: 'Evaluate the original run' })).toHaveAttribute('href', '/runs/run_orig/evaluations');
+      expect(screen.queryByRole('button', { name: 'Run evaluation' })).toBeNull();
+    });
+
+    it('a kind-only replay has no original link', async () => {
+      server.use(
+        http.get('*/v1/runs/:id', () =>
+          HttpResponse.json({ id: 'run_demo', status: 'PASSED', epoch: 1, virtual_time: null, agent_actions: 0, replay_of: null, kind: 'replay' }),
+        ),
+      );
+      renderApp('/runs/run_demo/evaluations', sessionFor('evaluator'));
+      const note = await screen.findByTestId('replay-not-evaluated');
+      expect(note).toHaveTextContent(/^This run is a replay: /);
+      expect(within(note).queryByRole('link')).toBeNull();
+    });
   });
 });

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { ReportFormat } from '../api/types';
 import { useApi } from '../auth/session';
+import { saveBlob } from '../components/download';
 import { ErrorDisplay } from '../components/ErrorDisplay';
 
 const FORMATS: { format: ReportFormat; label: string; ext: string }[] = [
@@ -11,7 +12,8 @@ const FORMATS: { format: ReportFormat; label: string; ext: string }[] = [
 
 /**
  * The report export needs the bearer key, so it cannot be a plain link: fetch it, then hand the
- * browser a short-lived Blob URL to save (no navigation, nothing persisted).
+ * browser a short-lived Blob URL to save (no navigation, nothing persisted). The file is named
+ * as the server says (Content-Disposition), else `<run>-<evaluation>.<ext>`.
  */
 export function ReportDownloads({ runId, evaluationId }: { runId: string; evaluationId: string }) {
   const api = useApi();
@@ -24,14 +26,10 @@ export function ReportDownloads({ runId, evaluationId }: { runId: string; evalua
     setError(null);
     setDone('');
     try {
-      const { text, contentType } = await api.report(runId, evaluationId, format);
-      const url = URL.createObjectURL(new Blob([text], { type: contentType }));
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${runId}-${evaluationId}.${ext}`;
-      a.click();
-      URL.revokeObjectURL(url);
-      setDone(`Downloaded ${a.download}`);
+      const { text, contentType, filename } = await api.report(runId, evaluationId, format);
+      const name = filename ?? `${runId}-${evaluationId}.${ext}`;
+      saveBlob(new Blob([text], { type: contentType }), name);
+      setDone(`Downloaded ${name}`);
     } catch (e) {
       setError(e);
     } finally {

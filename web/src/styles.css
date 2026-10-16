@@ -534,6 +534,11 @@ fieldset {
 .badge-step-unknown {
   color: var(--muted);
 }
+.badge-replay {
+  color: var(--link);
+  font-size: 0.5em;
+  vertical-align: middle;
+}
 
 /* ---- mailbox inspector ------------------------------------------------------------------- */
 .inspector {

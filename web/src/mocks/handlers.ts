@@ -5,6 +5,9 @@
 //   GET /v1/scenarios?q=boom  -> 500 INTERNAL envelope
 //   GET /v1/scenarios?q=slow  -> never responds (client timeout)
 //   GET /v1/runs/run_boom     -> 500 INTERNAL envelope
+//   POST /v1/scenarios/{key}/runs with agent_build "slow", and POST /v1/runs/{id}/evaluations of
+//   such a run: the work is done but the first attempt of an Idempotency-Key never answers;
+//   a retry with the same key replays the stored response (agent keys redacted), like the server.
 import { delay, http, HttpResponse, type HttpResponseResolver } from 'msw';
 import type {
   BuildComparison,
@@ -58,6 +61,34 @@ export function createHandlers(db: MockDb = createMockDb()) {
   };
   const ok = (body: unknown, status = 200) =>
     HttpResponse.json(body as Record<string, unknown>, { status, headers: { 'x-request-id': rid() } });
+
+  // Idempotency-Key replay (api/idempotency.py): a finished key answers its stored response with
+  // `Idempotency-Replayed: true` and one-time secrets redacted; a key still running answers 409.
+  const idem = new Map<string, { done: boolean; status: number; body: unknown }>();
+  const REDACT = new Set(['api_key']);
+  const redact = (v: unknown): unknown =>
+    Array.isArray(v)
+      ? v.map(redact)
+      : v && typeof v === 'object'
+        ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, REDACT.has(k) ? '<redacted: shown once>' : redact(x)]))
+        : v;
+  const replayed = (request: Request, who: KeyInfo): Response | null => {
+    const key = request.headers.get('idempotency-key');
+    const seen = key ? idem.get(`${who.project}:${key}`) : undefined;
+    if (!seen) return null;
+    if (!seen.done) return fail(409, 'CONFLICT', 'a request with this Idempotency-Key is in progress', { idempotency_key: key });
+    return HttpResponse.json(redact(seen.body) as Record<string, unknown>, {
+      status: seen.status,
+      headers: { 'x-request-id': rid(), 'Idempotency-Replayed': 'true' },
+    });
+  };
+  /** Stores the response for the request's key; `slow` keeps the first attempt hanging. */
+  const remember = async (request: Request, who: KeyInfo, body: unknown, status: number, slow: boolean): Promise<Response> => {
+    const key = request.headers.get('idempotency-key');
+    if (key) idem.set(`${who.project}:${key}`, { done: true, status, body });
+    if (slow) await delay('infinite');
+    return ok(body, status);
+  };
 
   const auth = (request: Request, guard: Guard): KeyInfo | Response => {
     const header = request.headers.get('authorization') ?? '';
@@ -206,7 +237,8 @@ export function createHandlers(db: MockDb = createMockDb()) {
       const status = url.searchParams.get('status');
       const items = Object.values(db.runs)
         .map((r) => r.run)
-        .filter((r) => (!scenarioKey || r.scenario_key === scenarioKey) && (!status || r.status === status))
+        // Replays are left out of run lists by default (they verify determinism, nothing to grade).
+        .filter((r) => !r.replay_of && (!scenarioKey || r.scenario_key === scenarioKey) && (!status || r.status === status))
         .reverse();
       const page: RunPage = { items, next_cursor: null };
       return ok(page);
@@ -245,6 +277,8 @@ export function createHandlers(db: MockDb = createMockDb()) {
       if (who instanceof Response) return who;
       const s = (db.scenarios[who.project] ?? []).find((x) => x.key === params.key);
       if (!s) return fail(404, 'NOT_FOUND', `scenario ${String(params.key)} not found`);
+      const again = replayed(request, who);
+      if (again) return again;
       const body = (await request.json()) as RunCreate;
       if (body.scenario_version != null && !s.versions.includes(body.scenario_version)) {
         return fail(400, 'INVALID_REQUEST', 'unknown scenario version', { scenario_version: body.scenario_version });
@@ -265,7 +299,7 @@ export function createHandlers(db: MockDb = createMockDb()) {
           { api_key: agentKey, mailbox_id: 'mbx_finance', mailbox_address: 'finance@acme.test', run_id: id },
         ],
       };
-      return ok(created, 201);
+      return remember(request, who, created, 201, body.agent_build === 'slow');
     }),
     http.get('*/v1/scenarios/:key/accuracy', ({ request, params }) => {
       const who = auth(request, 'evaluator');
@@ -304,7 +338,22 @@ export function createHandlers(db: MockDb = createMockDb()) {
     http.post(
       '*/v1/runs/:runId/start',
       runRoute('controller', (r) => {
-        if (r.run.status !== 'READY') return fail(409, 'CONFLICT', `cannot start a ${r.run.status} run`);
+        if (r.run.status !== 'READY') {
+          // Like the server: the rejected call is recorded as an action that produced no events
+          // (seq_start is the next free sequence, seq_end the last used one).
+          r.actions.push({
+            id: Math.max(0, ...r.actions.map((a) => a.id ?? 0)) + 1,
+            actor: 'controller',
+            operation: 'start',
+            input: {},
+            result: {},
+            outcome: 'CONFLICT',
+            virtual_time: isoAt(r.virtualSeconds),
+            seq_start: r.events.length + 1,
+            seq_end: r.events.length,
+          });
+          return fail(409, 'CONFLICT', `cannot start a ${r.run.status} run`);
+        }
         r.run.status = 'RUNNING';
         event(r, 'run.started', 'controller', 'run.start', {});
         return ok(r.run);
@@ -335,8 +384,10 @@ export function createHandlers(db: MockDb = createMockDb()) {
     http.post(
       '*/v1/runs/:runId/replay',
       runRoute('controller', (r) => {
+        const replayId = `${r.run.id}_replay`;
+        db.runs[replayId] = { ...structuredClone(r), run: { ...structuredClone(r.run), id: replayId, replay_of: r.run.id } };
         const out: ReplayOut = {
-          replay_run_id: `${r.run.id}_replay`,
+          replay_run_id: replayId,
           matches: true,
           original_hash: 'sha256:5e1f00d',
           replay_hash: 'sha256:5e1f00d',
@@ -344,6 +395,26 @@ export function createHandlers(db: MockDb = createMockDb()) {
           missing_blobs: [],
         };
         return ok(out);
+      }),
+    ),
+    // Operator attachment download (QA-A2 contract): bytes + Content-Disposition, nosniff, sandbox CSP.
+    http.get(
+      '*/v1/runs/:runId/mailboxes/:mailboxId/messages/:messageId/attachments/:attachmentId',
+      runRoute('inspector', (r, _req, params) => {
+        const m = r.messages.find((x) => x.id === params.messageId && x.mailbox_id === params.mailboxId);
+        const a = m?.attachments?.find((x) => x.id === params.attachmentId);
+        if (!m || !a) return fail(404, 'NOT_FOUND', 'attachment not found');
+        const bytes = new TextEncoder().encode(`%PDF-1.4 mock attachment ${a.id}\n<script>alert(1)</script>\n`);
+        return new HttpResponse(bytes, {
+          headers: {
+            'content-type': a.mime_type,
+            'content-disposition': `attachment; filename="${a.filename.replace(/[^\x20-\x7e]|"/g, '_')}"; filename*=UTF-8''${encodeURIComponent(a.filename)}`,
+            'x-content-type-options': 'nosniff',
+            'content-security-policy': 'sandbox',
+            'cache-control': 'private, no-store',
+            'x-request-id': rid(),
+          },
+        });
       }),
     ),
     http.get(
@@ -442,11 +513,16 @@ export function createHandlers(db: MockDb = createMockDb()) {
         if (errors.length > 0 || !m) return fail(400, 'INVALID_REQUEST', 'request validation failed', { errors });
         db.counters.msg += 1;
         const id = `msg_inj_${db.counters.msg}`;
+        // Threading like the server: a reply joins its parent's thread.
+        const parent = m.in_reply_to ? r.messages.find((x) => x.message_id_header === m.in_reply_to && x.mailbox_id === mb.id) : undefined;
         r.messages.push({
           ...(r.messages[0] as CanonicalMessage),
           id,
+          message_id_header: `<${id}@sim.test>`,
+          in_reply_to: m.in_reply_to ?? null,
+          references: m.references ?? [],
           mailbox_id: mb.id,
-          thread_id: `thr_inj_${db.counters.msg}`,
+          thread_id: parent?.thread_id ?? `thr_inj_${db.counters.msg}`,
           folder: 'inbox',
           from: { email: m.from, name: null },
           to: m.to.map((email) => ({ email, name: null })),
@@ -471,7 +547,9 @@ export function createHandlers(db: MockDb = createMockDb()) {
     http.get('*/v1/runs/:runId/evaluations', runRoute('evaluator', (r) => ok(r.evaluations))),
     http.post(
       '*/v1/runs/:runId/evaluations',
-      runRoute('evaluator', async (r, request) => {
+      runRoute('evaluator', async (r, request, _params, who) => {
+        const again = replayed(request, who);
+        if (again) return again;
         const body = (await request.json()) as EvaluationRequest;
         const version = body.answer_key_version ?? 2;
         if (![1, 2].includes(version)) {
@@ -485,7 +563,7 @@ export function createHandlers(db: MockDb = createMockDb()) {
         report.created_at = isoAt(3600 + db.counters.eval);
         r.evaluations.push(report);
         if (body.complete_run !== false && r.run.status === 'RUNNING') r.run.status = report.verdict;
-        return ok(report, 201);
+        return remember(request, who, report, 201, r.run.agent_build === 'slow');
       }),
     ),
     http.get(
@@ -501,14 +579,20 @@ export function createHandlers(db: MockDb = createMockDb()) {
         const report = r.evaluations.find((e) => e.evaluation_id === params.evaluationId);
         if (!report) return fail(404, 'NOT_FOUND', 'evaluation not found');
         const format = new URL(request.url).searchParams.get('format') ?? 'json';
+        // Like the server: a Content-Disposition names the file (JSON left without one so the
+        // dashboard's fallback name stays exercised).
+        const stem = `${report.scenario_key ?? 'report'}-${String(params.runId)}-${report.evaluation_id}`;
         if (format === 'junit') {
           return new HttpResponse(`<testsuite name="${report.scenario_key}" tests="${report.outcomes.length}"/>`, {
-            headers: { 'content-type': 'application/xml' },
+            headers: {
+              'content-type': 'application/xml',
+              'content-disposition': `attachment; filename="${stem}.xml"; filename*=UTF-8''${encodeURIComponent(stem)}.xml`,
+            },
           });
         }
         if (format === 'markdown') {
           return new HttpResponse(`# ${report.evaluation_id}\n\nVerdict: ${report.verdict}\n`, {
-            headers: { 'content-type': 'text/markdown; charset=utf-8' },
+            headers: { 'content-type': 'text/markdown; charset=utf-8', 'content-disposition': `attachment; filename="${stem}.md"` },
           });
         }
         return ok(report);

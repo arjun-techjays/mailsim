@@ -169,17 +169,35 @@ describe('Answer-key editor', () => {
     await user.clear(yaml);
     await user.click(yaml);
     await user.paste('answer_key: [oops');
+    await settle();
+    // Live validation alone: one problem, reported on the YAML text with the server's message.
+    expect(status()).toHaveTextContent(/^1 problem to fix\.$/);
+    const problems = screen.getByRole('list', { name: 'Problems' });
+    expect(within(problems).getAllByRole('listitem')).toHaveLength(1);
+    expect(problems).toHaveTextContent(/^YAML text: .+/);
     await user.click(screen.getByRole('button', { name: 'Form' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent(/line 1/);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/^Line 1: /);
     expect(yaml).toHaveAttribute('aria-invalid', 'true');
     await settle();
-    expect(status()).toHaveTextContent('problem');
+    // The conversion error and the live finding are the same problem: counted once, with the line.
+    expect(status()).toHaveTextContent(/^1 problem to fix\.$/);
+    expect(within(screen.getByRole('list', { name: 'Problems' })).getAllByRole('listitem')).toHaveLength(1);
+    expect(screen.getByRole('list', { name: 'Problems' })).toHaveTextContent(/^YAML line 1: /);
+    expect(screen.getByTestId('validation-announcer')).toHaveTextContent('1 problem to fix.');
+    // Publishing is blocked with one problem.
+    await user.click(screen.getByRole('button', { name: /Publish answer key/ }));
+    expect(await screen.findByText('Fix the problems listed under Validation before publishing.')).toBeInTheDocument();
+    // Editing makes the conversion error stale.
+    await user.type(yaml, ' ');
+    expect(yaml).not.toHaveAttribute('aria-invalid');
 
     await user.clear(yaml);
     await user.click(yaml);
     await user.paste('- just a list');
     await user.click(screen.getByRole('button', { name: 'Form' }));
-    expect(await screen.findByText(/the document must be a mapping/)).toBeInTheDocument();
+    await waitFor(() => expect(document.getElementById('ak-yaml-err')).toHaveTextContent(/^the document must be a mapping$/));
+    await settle();
+    expect(status()).toHaveTextContent(/^1 problem to fix\.$/);
 
     await user.clear(yaml);
     await user.click(yaml);
@@ -315,9 +333,10 @@ describe('Answer-key editor edge cases', () => {
     await user.click(screen.getByRole('button', { name: 'YAML' }));
     await screen.findByLabelText('Answer key as YAML');
     await user.click(screen.getByRole('button', { name: 'Form' }));
-    expect(await screen.findByText('The YAML could not be read.')).toBeInTheDocument();
-    const problems = await screen.findByRole('list', { name: 'Problems' }, { timeout: 3000 }).catch(() => null);
-    expect(problems).toBeNull();
+    expect(await screen.findByRole('alert')).toHaveTextContent('The YAML could not be read.');
+    const problems = await screen.findByRole('list', { name: 'Problems' });
+    expect(problems).toHaveTextContent(/^Whole answer key: The YAML could not be read\.$/);
+    expect(status()).toHaveTextContent(/^1 problem to fix/);
     unmount();
 
     server.use(http.get('*/v1/scenarios/:key/answer-keys', () => fail(500)));
@@ -346,6 +365,9 @@ describe('Answer-key editor edge cases', () => {
     document.body.innerHTML = '';
     expect(() => focusPath('')).not.toThrow();
     expect(describePath('', [])).toBe('Whole answer key');
+    expect(describePath('<root>', [])).toBe('Whole answer key');
+    expect(describePath('<source>', [])).toBe('YAML text');
+    expect(describePath('line 7', [])).toBe('YAML line 7');
     expect(describePath('version', [])).toBe('version');
     expect(describePath('scenario_versions.0', [])).toBe('scenario_versions › 0');
     expect(describePath('assertions.0', [])).toBe('Assertion 1');

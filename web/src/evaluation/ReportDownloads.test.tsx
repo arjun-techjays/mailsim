@@ -27,12 +27,14 @@ describe('Report downloads', () => {
     await screen.findByTestId('evaluation-report');
 
     await user.click(screen.getByRole('button', { name: 'Download JUnit XML' }));
-    await waitFor(() => expect(screen.getByTestId('report-download-status')).toHaveTextContent('Downloaded run_demo-eval_1.xml'));
+    await waitFor(() =>
+      expect(screen.getByTestId('report-download-status')).toHaveTextContent('Downloaded finance.invoice-bank-change-run_demo-eval_1.xml'),
+    );
     expect(created[0]?.type).toBe('application/xml');
     expect(await readBlob(created[0])).toContain('<testsuite');
 
     await user.click(screen.getByRole('button', { name: 'Download Markdown' }));
-    await waitFor(() => expect(screen.getByTestId('report-download-status')).toHaveTextContent('run_demo-eval_1.md'));
+    await waitFor(() => expect(screen.getByTestId('report-download-status')).toHaveTextContent('finance.invoice-bank-change-run_demo-eval_1.md'));
     await user.click(screen.getByRole('button', { name: 'Download JSON' }));
     await waitFor(() => expect(screen.getByTestId('report-download-status')).toHaveTextContent('run_demo-eval_1.json'));
     expect(await readBlob(created[2])).toContain('"evaluation_id":"eval_1"');

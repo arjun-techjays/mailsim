@@ -15,6 +15,7 @@ test.describe('scenario builder', () => {
     await page.getByRole('link', { name: 'New scenario' }).click();
     await expect(page.getByTestId('page-intro')).toContainText('Build a scenario step by step');
     await page.getByRole('button', { name: /Blank scenario/ }).click();
+    await expect(page.getByRole('heading', { level: 2, name: 'Basics' })).toBeFocused();
 
     // A blank scenario is not valid yet: live validation lists what is missing.
     await expect(b.status()).toHaveText(/problems to fix/);
@@ -178,6 +179,8 @@ test.describe('scenario builder', () => {
   test('warns before leaving with unsaved changes and restores the draft', async ({ page }) => {
     await page.goto('/scenarios/new');
     await page.getByRole('button', { name: /Finance example/ }).click();
+    // UI-2: keyboard focus continues in the builder, not on <body>
+    await expect(page.getByRole('heading', { level: 2, name: 'Basics' })).toBeFocused();
     await page.getByLabel('Title').fill('Draft that must survive');
     await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Runs' }).click();
     const dialog = page.getByRole('dialog', { name: 'Leave without saving?' });

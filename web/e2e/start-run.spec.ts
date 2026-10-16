@@ -42,3 +42,55 @@ test('start run shows the agent credential exactly once', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Start a run' })).toBeVisible();
   await expect(page.getByTestId('agent-credentials')).toHaveCount(0);
 });
+
+test('a slow create and a slow evaluation are recovered without duplicates (UI-8/UI-9)', async ({ page }) => {
+  // Mock fault: build "slow" does the work but never answers the first attempt of a key
+  // (VITE_LONG_REQUEST_TIMEOUT_MS=4000 in mock mode).
+  await new ConnectPage(page).connectAs(KEYS.controller, 'controller');
+  const keys: string[] = [];
+  page.on('request', (r) => {
+    if (r.method() === 'POST' && /\/v1\/scenarios\/[^/]+\/runs$|\/evaluations$/.test(new URL(r.url()).pathname)) {
+      keys.push(r.headers()['idempotency-key'] ?? '');
+    }
+  });
+  await page.goto('/scenarios/finance.invoice-bank-change/start');
+  await expect(page.getByLabel('Agent build id')).toBeVisible();
+  await page.getByLabel('Agent build id').fill('slow');
+  await page.getByRole('button', { name: 'Create run' }).click();
+  await expect(page.getByText(/seeding its mailboxes/)).toBeVisible();
+  const notice = page.getByTestId('unconfirmed');
+  await expect(notice).toContainText('The run was not confirmed', { timeout: 10_000 });
+  await expectAccessible(page, 'unconfirmed create');
+  await notice.getByRole('button', { name: 'Check again' }).click();
+  const recovered = page.getByTestId('run-recovered');
+  await expect(recovered).toContainText(/Run run_\d+ was created/);
+  await expect(page.getByTestId('agent-credentials')).toHaveCount(0);
+  expect(keys).toHaveLength(2);
+  expect(keys[1]).toBe(keys[0]);
+  await recovered.getByRole('button', { name: 'Mint a new agent key' }).click();
+  await expect(page.getByTestId('agent-api-key')).toHaveValue(/^msk_/);
+
+  // exactly one run with that build
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Runs' }).click();
+  const slowRows = page.getByTestId('runs-table').getByRole('row').filter({ hasText: 'slow' });
+  await expect(slowRows).toHaveCount(1);
+  const runId = (await slowRows.getByRole('link').first().textContent()) as string;
+
+  // evaluate it as the evaluator (client-side reconnect keeps the mock state)
+  await page.getByRole('button', { name: 'Disconnect' }).click();
+  await page.getByLabel('API key').fill(KEYS.evaluator);
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(page.getByTestId('detected-role')).toHaveText('evaluator');
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Runs' }).click();
+  await page.getByRole('link', { name: runId, exact: true }).click();
+  await page.getByRole('link', { name: 'Evaluations', exact: true }).click();
+  await page.getByRole('button', { name: 'Run evaluation' }).click();
+  const evalNotice = page.getByTestId('unconfirmed');
+  await expect(evalNotice).toContainText('The evaluation was not confirmed', { timeout: 10_000 });
+  await evalNotice.getByRole('button', { name: 'Check again' }).click();
+  await expect(page.getByTestId('evaluation-report')).toBeVisible();
+  await expect(page.getByTestId('evaluations-table').locator('tbody tr')).toHaveCount(1);
+  expect(keys).toHaveLength(4);
+  expect(keys[3]).toBe(keys[2]);
+  expect(keys[2]).not.toBe(keys[0]);
+});

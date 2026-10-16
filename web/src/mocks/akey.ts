@@ -11,7 +11,7 @@ import type {
 } from '../api/types';
 import { AUTHORING_META } from './authoring';
 import { FINANCE_MAILBOX, newMockRun, SCENARIO_KEY, type KeyInfo, type MockDb, type MockRun } from './db';
-import { parseYaml, YamlError } from './yaml';
+import { parseYaml } from './yaml';
 
 type Guard = 'controller' | 'evaluator' | 'inspector' | 'agent';
 type Doc = Record<string, unknown>;
@@ -195,8 +195,9 @@ export function createAkeyHandlers(db: MockDb, h: AkeyHelpers): HttpHandler[] {
       try {
         return { doc: parseYaml(body.source), error: null };
       } catch (e) {
-        const line = e instanceof YamlError ? e.line : 0;
-        return { doc: null, error: issue(`line ${line}`, (e as Error).message) };
+        // Like the server: validate/publish report unparseable text at `<source>` (only the
+        // YAML-to-JSON tool knows the line).
+        return { doc: null, error: issue('<source>', (e as Error).message) };
       }
     }
     return { doc: body.document ?? null, error: null };

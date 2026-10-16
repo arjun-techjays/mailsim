@@ -2,7 +2,7 @@
 // time (presets or custom) or run one scheduler tick, then say what happened — scheduled
 // events that fired, persona replies and every message that was delivered — and refresh views.
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import type { ClockResult, RunOut } from '../api/types';
 import { useApi } from '../auth/session';
@@ -97,6 +97,12 @@ export function RunToolbar({ run }: { run: RunOut }) {
     onMutate: () => setOutcome(null),
     onSuccess: (o) => setOutcome(o),
   });
+
+  // A new run state makes an earlier clock error stale (e.g. RUN_NOT_ACTIVE before a start).
+  const { reset: clearError } = mutation;
+  useEffect(() => {
+    clearError();
+  }, [run.status, run.epoch, clearError]);
 
   const onCustom = (e: FormEvent) => {
     e.preventDefault();

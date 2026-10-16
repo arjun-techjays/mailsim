@@ -14,7 +14,7 @@ import { ComposeInject } from './ComposeInject';
 import { ReadingPane } from './ReadingPane';
 import type { ParsedSnapshot } from './snapshot';
 import { isUnread, mailboxTitle, useRunMailboxes, type BrowserMailbox } from './useRunMailboxes';
-import { subjectOf } from './mailFormat';
+import { chronological, newestFirst, subjectOf } from './mailFormat';
 import { VirtualTime } from './VirtualTime';
 import './browser.css';
 
@@ -30,12 +30,10 @@ function findListed(qc: QueryClient, runId: string, id: string): CanonicalMessag
   return undefined;
 }
 
-const when = (m: CanonicalMessage) => m.received_at ?? m.created_at;
-
 /** The selected message's thread in its mailbox, oldest first (always contains the message). */
 function threadOf(all: CanonicalMessage[], selected: CanonicalMessage): CanonicalMessage[] {
   const others = all.filter((m) => m.mailbox_id === selected.mailbox_id && m.thread_id === selected.thread_id && m.id !== selected.id);
-  return [...others, selected].sort((a, b) => when(a).localeCompare(when(b)));
+  return chronological([...others, selected]);
 }
 
 export interface BrowserSelection {
@@ -123,6 +121,8 @@ function MessageList({
   if (list.isLoading) return <Loading label="Loading messages…" />;
   if (list.error && list.items.length === 0) return <ErrorDisplay error={list.error} title="Could not load messages" />;
   if (list.items.length === 0) return <Empty>No messages in this folder.</Empty>;
+  // Same-time messages (a reply and its parent) in a stable, thread-aware order.
+  const items = newestFirst(list.items);
   return (
     <>
       <table data-testid="message-list" className="mb-list">
@@ -140,7 +140,7 @@ function MessageList({
           </tr>
         </thead>
         <tbody>
-          {list.items.map((m) => {
+          {items.map((m) => {
             const unread = isUnread(m);
             const flagged = (m.flags ?? []).includes('FLAGGED');
             const attachments = (m.attachments ?? []).length;
@@ -207,6 +207,7 @@ export function MailboxBrowser({
   selection: BrowserSelection;
   onChange: (next: BrowserSelection) => void;
 }) {
+  const api = useApi();
   const controller = hasRole(useRole(), ['controller']);
   const { mailboxes, error: listError } = useRunMailboxes(run, snapshot);
   const [userSelected, setUserSelected] = useState(false);
@@ -268,7 +269,13 @@ export function MailboxBrowser({
             {mailboxTitle(mailbox)} · {folder ? folder.name : 'All folders'}
           </h3>
           {controller && (
-            <button type="button" onClick={() => setComposing(true)} aria-expanded={composing}>
+            <button
+              type="button"
+              onClick={() => setComposing(true)}
+              aria-expanded={composing}
+              disabled={run.status !== 'RUNNING'}
+              aria-describedby={run.status !== 'RUNNING' ? 'mb-inject-off' : undefined}
+            >
               Inject email here
             </button>
           )}
@@ -276,6 +283,9 @@ export function MailboxBrowser({
         <p className="hint mb-who">
           {mailbox.isAgent ? 'This is the mailbox the agent under test works in.' : `A persona mailbox (${mailbox.email}).`}{' '}
           Reading here is not an agent action: nothing is recorded and no triggers fire.
+          {controller && run.status !== 'RUNNING' && (
+            <span id="mb-inject-off"> Injecting mail needs a RUNNING run; this run is {run.status}.</span>
+          )}
         </p>
         <MessageList
           key={`${mailbox.id}:${folderId ?? ''}`}
@@ -292,9 +302,7 @@ export function MailboxBrowser({
             runId={run.id}
             mailbox={mailbox}
             mailboxes={mailboxes}
-            replyCandidates={snapshot.messages
-              .filter((m) => m.mailbox_id === mailbox.id)
-              .sort((a, b) => (b.received_at ?? b.created_at).localeCompare(a.received_at ?? a.created_at))}
+            replyCandidates={newestFirst(snapshot.messages.filter((m) => m.mailbox_id === mailbox.id))}
             onClose={() => setComposing(false)}
             onOpenMessage={select}
           />
@@ -305,6 +313,7 @@ export function MailboxBrowser({
             focusOnLoad={userSelected}
             onOpen={select}
             rawMimeHref={(ref) => runLinks.artifact(run.id, ref)}
+            downloadAttachment={(msg, a) => api.attachment(run.id, msg.mailbox_id, msg.id, a.id)}
           />
         ) : messageParam && (stateFetching || !refreshed.current.has(messageParam)) ? (
           <Loading label="Loading message…" />

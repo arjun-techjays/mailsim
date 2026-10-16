@@ -76,8 +76,18 @@ test.describe('run detail navigation', () => {
     await expect(rows).toHaveCount(4);
     await expectAccessible(page, 'event trace');
 
+    // UI-7: another client's rejected start is recorded without events: "none", never "#121–#120".
+    const status = await page.evaluate(async () => {
+      const res = await fetch('/v1/runs/run_demo/start', { method: 'POST', headers: { Authorization: 'Bearer mk_controller' } });
+      return res.status;
+    });
+    expect(status).toBe(409);
     await run.tab('Actions');
-    await expect(page.getByTestId('actions-table').locator('tbody tr')).toHaveCount(4);
+    const actions = page.getByTestId('actions-table');
+    await expect(actions.locator('tbody tr')).toHaveCount(5);
+    await expect(actions.getByRole('row', { name: /CONFLICT/ })).toContainText('none');
+    await expect(actions).not.toContainText('#121');
+    await expect(actions.getByRole('row', { name: /reply/ })).toContainText('#3–#4');
   });
 
   test('empty trace for a run without events', async ({ page }) => {

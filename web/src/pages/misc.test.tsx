@@ -5,6 +5,24 @@ import { server } from '../test/server';
 import { renderApp, sessionFor } from '../test/utils';
 
 describe('Runs page', () => {
+  it('marks replay runs when a list includes them', async () => {
+    server.use(
+      http.get('*/v1/runs', () =>
+        HttpResponse.json({
+          items: [
+            { id: 'run_r', status: 'PASSED', epoch: 1, virtual_time: null, agent_actions: 0, replay_of: 'run_o' },
+            { id: 'run_o', status: 'PASSED', epoch: 1, virtual_time: null, agent_actions: 0, replay_of: null },
+          ],
+          next_cursor: null,
+        }),
+      ),
+    );
+    renderApp('/runs', sessionFor('evaluator'));
+    const table = await screen.findByTestId('runs-table');
+    expect(within(table).getAllByTestId('replay-badge')).toHaveLength(1);
+    expect(within(table).getByRole('row', { name: /run_r/ })).toHaveTextContent('Replay of run_o');
+  });
+
   it('lists runs from GET /v1/runs', async () => {
     renderApp('/runs', sessionFor('evaluator'));
     const table = await screen.findByTestId('runs-table');

@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { CanonicalMessage } from '../api/types';
+import type { AttachmentRef, CanonicalMessage } from '../api/types';
+import { saveBlob } from '../components/download';
+import { ErrorDisplay } from '../components/ErrorDisplay';
 import { address, addresses, bytes } from '../components/format';
 import { SafeEmailBody } from '../components/SafeEmailBody';
 import { snippet, subjectOf } from './mailFormat';
@@ -64,7 +66,51 @@ function Headers({ m, rawMimeHref }: { m: CanonicalMessage; rawMimeHref?: (ref: 
   );
 }
 
-function Attachments({ m }: { m: CanonicalMessage }) {
+/** Fetches one attachment's bytes (with the operator key) for a download. */
+export type AttachmentLoader = (m: CanonicalMessage, a: AttachmentRef) => Promise<{ blob: Blob; filename: string | null }>;
+
+function AttachmentItem({ m, a, load }: { m: CanonicalMessage; a: AttachmentRef; load?: AttachmentLoader }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const [done, setDone] = useState('');
+  const name = a.filename || '(unnamed)';
+  const download = async (loader: AttachmentLoader) => {
+    setBusy(true);
+    setError(null);
+    setDone('');
+    try {
+      const { blob, filename } = await loader(m, a);
+      const saveAs = filename ?? (a.filename || `attachment-${a.id}`);
+      // Saved as opaque bytes: never rendered or opened in the page (strict CSP stays intact).
+      saveBlob(new Blob([blob], { type: 'application/octet-stream' }), saveAs);
+      setDone(`Downloaded ${saveAs}`);
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <li>
+      <span className="mb-att-name">{name}</span>{' '}
+      <span className="muted">
+        {a.mime_type} · {bytes(a.size)}
+        {a.inline ? ' · inline' : ''}
+      </span>{' '}
+      {load && (
+        <button type="button" className="link" disabled={busy} aria-label={`Download ${name}`} onClick={() => void download(load)}>
+          {busy ? 'Downloading…' : 'Download'}
+        </button>
+      )}
+      <span role="status" className="muted" data-testid={`attachment-status-${a.id}`}>
+        {done}
+      </span>
+      {error != null && <ErrorDisplay error={error} title={`Could not download ${name}`} />}
+    </li>
+  );
+}
+
+function Attachments({ m, load }: { m: CanonicalMessage; load?: AttachmentLoader }) {
   const list = m.attachments ?? [];
   if (list.length === 0) return null;
   return (
@@ -74,15 +120,10 @@ function Attachments({ m }: { m: CanonicalMessage }) {
       </h4>
       <ul data-testid="attachments">
         {list.map((a) => (
-          <li key={a.id}>
-            <span className="mb-att-name">{a.filename || '(unnamed)'}</span>{' '}
-            <span className="muted">
-              {a.mime_type} · {bytes(a.size)}
-              {a.inline ? ' · inline' : ''}
-            </span>
-          </li>
+          <AttachmentItem key={a.id} m={m} a={a} load={load} />
         ))}
       </ul>
+      {load && <p className="hint">Downloads save the file as sent; the dashboard never opens attachments itself.</p>}
     </section>
   );
 }
@@ -117,12 +158,14 @@ export function ReadingPane({
   focusOnLoad,
   onOpen,
   rawMimeHref,
+  downloadAttachment,
 }: {
   message: CanonicalMessage;
   thread: CanonicalMessage[];
   focusOnLoad: boolean;
   onOpen: (id: string) => void;
   rawMimeHref?: (ref: string) => string;
+  downloadAttachment?: AttachmentLoader;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const [showHeaders, setShowHeaders] = useState(false);
@@ -156,7 +199,7 @@ export function ReadingPane({
         {showHeaders ? 'Hide headers' : 'Show headers'}
       </button>
       <div id="mb-headers">{showHeaders && <Headers m={m} rawMimeHref={rawMimeHref} />}</div>
-      <Attachments m={m} />
+      <Attachments m={m} load={downloadAttachment} />
       <SafeEmailBody key={m.id} text={m.body_text} html={m.body_html} />
       <section aria-labelledby="thr-h" className="mb-thread">
         <h4 id="thr-h">Thread ({thread.length} message{thread.length === 1 ? '' : 's'})</h4>

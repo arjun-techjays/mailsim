@@ -2,7 +2,8 @@
 //   GET  /v1/system/status, GET /v1/runs/{id}/connection, POST /v1/runs/{id}/connection-tests,
 //   POST /v1/runs/{id}/agent-credentials, DELETE /v1/keys/{key_id}.
 // Mirrors src/mailsim/api/routers/ux.py + control.py: operator-side only (controller key or the
-// local no-auth operator); minting a key revokes the run's earlier agent keys.
+// local no-auth operator); minting a key leaves the run's earlier agent keys valid (revocation is
+// explicit: DELETE /v1/keys/{id}).
 //
 // Fault injection for UI tests: `setMockListeners(db, {imap: false})` takes a listener down.
 import { http, HttpResponse } from 'msw';
@@ -241,13 +242,10 @@ export function createConnectHandlers(db: MockDb) {
       const n = s.minted.toString().padStart(4, '0');
       const secret = `msk_00000000${n}_mockMintedAgentKeyForTests${n}abcdef`;
       const mbx = r.mailboxes[0] as MockMailbox;
-      for (const m of s.meta.filter((x) => x.runId === r.run.id && !x.revoked)) {
-        m.revoked = true;
-        delete db.keys[m.secret];
-      }
       db.keys[secret] = { role: 'agent', project: who.project, runId: r.run.id, mailboxId: mbx.id };
       s.meta.push({ secret, runId: r.run.id, key_id: `key_minted_${n}`, prefix: prefixOf(secret), created_at: isoAt(600 + s.minted), revoked: false });
-      const cred: AgentCredential = { api_key: secret, mailbox_id: mbx.id, mailbox_address: mbx.email, run_id: r.run.id };
+      // QA-A2: the credential names its key id (optional in the contract) for explicit revocation.
+      const cred = { api_key: secret, mailbox_id: mbx.id, mailbox_address: mbx.email, run_id: r.run.id, key_id: `key_minted_${n}` } as AgentCredential;
       return ok(cred, 201);
     }),
 

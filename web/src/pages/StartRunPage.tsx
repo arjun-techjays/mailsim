@@ -1,15 +1,18 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import type { RunCreate, RunCreated } from '../api/types';
+import { isRedacted } from '../api/client';
+import type { RunCreate, RunCreated, RunOut } from '../api/types';
 import { useApi } from '../auth/session';
 import { rememberRun } from '../auth/storage';
 import { CopyButton } from '../components/CopyButton';
 import { PageIntro } from '../components/PageIntro';
-import { keyPrefix, useAgentKeys } from '../connect/agentKeys';
+import { credentialKeyId, keyPrefix, useAgentKeys } from '../connect/agentKeys';
 import { WhatIsThis } from '../guide/Concepts';
 import { ErrorDisplay } from '../components/ErrorDisplay';
 import { Loading } from '../components/Status';
+import { UnconfirmedNotice } from '../components/UnconfirmedNotice';
+import { isUnconfirmed, useActionKey } from '../hooks/useActionKey';
 import { usePageTitle } from '../hooks/usePageTitle';
 
 /**
@@ -64,6 +67,40 @@ function CredentialPanel({ created, onDismiss }: { created: RunCreated; onDismis
   );
 }
 
+/**
+ * A run recovered by retrying an unconfirmed create: the server replayed its response with the
+ * agent key redacted (secrets are never stored for replays), so offer a fresh key instead.
+ */
+function RecoveredRun({ run, onMinted }: { run: RunOut; onMinted: (created: RunCreated) => void }) {
+  const api = useApi();
+  const mint = useMutation({
+    mutationFn: () => api.mintAgentKey(run.id),
+    gcTime: 0,
+    onSuccess: (cred) => {
+      onMinted({ run, agent_credentials: [cred] });
+      mint.reset(); // the secret lives in the credential panel and key store only
+    },
+  });
+  const runHref = `/runs/${encodeURIComponent(run.id)}`;
+  return (
+    <section aria-labelledby="recovered-h" className="card warning" data-testid="run-recovered">
+      <h2 id="recovered-h">Run {run.id} was created</h2>
+      <p role="status">
+        Its agent key was in the response that never reached this tab, and the API shows a key only once. Mint a new
+        agent key for this run; keys issued earlier keep working until you revoke them on its Connect page.
+      </p>
+      <div className="row">
+        <button type="button" className="primary" disabled={mint.isPending} onClick={() => mint.mutate()}>
+          {mint.isPending ? 'Minting…' : 'Mint a new agent key'}
+        </button>
+        <Link to={`${runHref}/connect`}>Connect your agent</Link>
+        <Link to={runHref}>Go to run {run.id}</Link>
+      </div>
+      {mint.isError && <ErrorDisplay error={mint.error} title="Could not mint an agent key" />}
+    </section>
+  );
+}
+
 export function StartRunPage() {
   const { key = '' } = useParams();
   usePageTitle(`Start run · ${key}`);
@@ -75,37 +112,53 @@ export function StartRunPage() {
   const [start, setStart] = useState(true);
   const [created, setCreated] = useState<RunCreated | null>(null);
   const [dismissedRun, setDismissedRun] = useState<string | null>(null);
+  const [recovered, setRecovered] = useState<RunOut | null>(null);
   const agentKeys = useAgentKeys();
+  const action = useActionKey();
+  const lastBody = useRef<RunCreate | null>(null);
+
+  const show = (data: RunCreated) => {
+    setCreated(data);
+    const cred = data.agent_credentials[0];
+    if (cred) {
+      agentKeys.set(data.run.id, {
+        apiKey: cred.api_key,
+        prefix: keyPrefix(cred.api_key),
+        mailboxAddress: cred.mailbox_address,
+        mailboxId: cred.mailbox_id,
+        keyId: credentialKeyId(cred),
+      });
+    }
+  };
 
   const mutation = useMutation({
-    mutationFn: (body: RunCreate) => api.createRun(key, body),
+    mutationFn: (body: RunCreate) => api.createRun(key, body, { idempotencyKey: action.keyFor(body) }),
     gcTime: 0,
     onSuccess: (data) => {
-      setCreated(data);
+      action.done();
       rememberRun({ id: data.run.id, scenarioKey: key });
-      const cred = data.agent_credentials[0];
-      if (cred) {
-        agentKeys.set(data.run.id, {
-          apiKey: cred.api_key,
-          prefix: keyPrefix(cred.api_key),
-          mailboxAddress: cred.mailbox_address,
-          mailboxId: cred.mailbox_id,
-        });
-      }
+      if (data.agent_credentials.some((c) => isRedacted(c.api_key))) setRecovered(data.run);
+      else show(data);
     },
   });
 
+  const submit = (body: RunCreate) => {
+    lastBody.current = body;
+    setCreated(null);
+    setRecovered(null);
+    setDismissedRun(null);
+    mutation.mutate(body);
+  };
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
-    setCreated(null);
-    setDismissedRun(null);
-    mutation.mutate({
+    submit({
       scenario_version: version ? Number(version) : null,
       checks: checks || null,
       agent_build: build.trim() || null,
       start,
     });
   };
+  const unconfirmed = mutation.isError && isUnconfirmed(mutation.error);
 
   return (
     <>
@@ -179,9 +232,31 @@ export function StartRunPage() {
           <button type="submit" disabled={mutation.isPending}>
             {mutation.isPending ? 'Creating…' : 'Create run'}
           </button>
+          {mutation.isPending && (
+            <p className="hint" role="status">
+              Creating the run and seeding its mailboxes; large scenarios can take a minute.
+            </p>
+          )}
         </form>
       )}
-      {mutation.isError && <ErrorDisplay error={mutation.error} title="Could not create run" />}
+      {unconfirmed ? (
+        <UnconfirmedNotice
+          error={mutation.error}
+          what="run"
+          onRetry={() => submit(lastBody.current as RunCreate)}
+        />
+      ) : (
+        mutation.isError && <ErrorDisplay error={mutation.error} title="Could not create run" />
+      )}
+      {recovered && (
+        <RecoveredRun
+          run={recovered}
+          onMinted={(data) => {
+            setRecovered(null);
+            show(data);
+          }}
+        />
+      )}
       {created && (
         <CredentialPanel
           created={created}

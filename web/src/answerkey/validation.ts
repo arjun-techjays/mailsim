@@ -26,6 +26,24 @@ export function fromServer(list: ValidationIssue[]): Issue[] {
   });
 }
 
+/**
+ * Whether a server path points at the YAML/JSON text as a whole rather than a field: `<source>`
+ * (does not parse), `line N` (parse error with a position), `<root>` or the document root.
+ */
+export function isSourcePath(path: string): boolean {
+  return path === '' || path === '<source>' || path === '<root>' || /^line \d+$/.test(path);
+}
+
+/**
+ * Problems of YAML mode. When the text cannot be applied (`yamlIssue` from the YAML-to-JSON
+ * conversion, which knows the line), the server's document-level findings are the same problem
+ * reported again, so they are counted once.
+ */
+export function yamlProblems(yamlIssue: Issue | null, server: Issue[]): Issue[] {
+  if (!yamlIssue) return server;
+  return [yamlIssue, ...server.filter((i) => !isSourcePath(i.path))];
+}
+
 /** Instant checks that need no round trip (the server stays authoritative). */
 export function clientIssues(d: KeyDraft): Issue[] {
   const out: Issue[] = [];

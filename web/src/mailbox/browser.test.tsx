@@ -12,6 +12,84 @@ const fail = (status: number, code = 'INTERNAL') =>
 const rows = () => within(screen.getByTestId('message-list')).getAllByRole('row').slice(1);
 
 describe('Mailbox browser', () => {
+  it('UI-5: a same-time reply is listed after its parent in the thread and above it in the list', async () => {
+    const demo = mockDb.runs.run_demo!;
+    const parent = demo.messages.find((m) => m.id === 'msg_invoice_1')!;
+    // id sorts before the parent's, timestamp identical: only ancestry can order them
+    demo.messages.push({
+      ...parent,
+      id: 'aaa_quick_reply',
+      message_id_header: '<aaa_quick_reply@sim.test>',
+      subject: 'Re: Invoice 4471 (same second)',
+      in_reply_to: parent.message_id_header,
+      references: [parent.message_id_header],
+      attachments: [],
+    });
+    const { user } = renderApp('/runs/run_demo?tab=mailboxes&message=msg_invoice_1', sessionFor('controller'));
+    const view = await screen.findByTestId('message-view');
+    const items = within(within(view).getByTestId('thread')).getAllByRole('listitem');
+    expect(items[0]).toHaveTextContent('this message'); // the parent (opened) comes first
+    expect(items[1]).toHaveTextContent('Re: Invoice 4471 (same second)');
+    await user.click(await screen.findByRole('button', { name: 'Load more messages' }));
+    await screen.findByText(/26 message\(s\) loaded, newest first/);
+    const subjects = rows().map((r) => r.textContent ?? '');
+    const iReply = subjects.findIndex((t) => t.includes('(same second)'));
+    const iParent = subjects.findIndex((t) => t.includes('Invoice 4471') && !t.includes('Re:'));
+    expect(iReply).toBeGreaterThanOrEqual(0);
+    expect(iReply).toBeLessThan(iParent); // newest first: the reply sits above its parent
+  });
+
+  it('UI-5: attachments download with the operator key via a revoked object URL, never rendered', async () => {
+    const saved: Blob[] = [];
+    URL.createObjectURL = vi.fn((b: Blob) => {
+      saved.push(b);
+      return 'blob:att';
+    });
+    URL.revokeObjectURL = vi.fn();
+    const anchors: HTMLAnchorElement[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      anchors.push(this);
+    });
+    const seen: { url: string; auth: string | null }[] = [];
+    server.events.on('request:start', ({ request }) => {
+      if (request.url.includes('/attachments/')) seen.push({ url: new URL(request.url).pathname, auth: request.headers.get('authorization') });
+    });
+    const { user } = renderApp('/runs/run_demo?tab=mailboxes&message=msg_invoice_1', sessionFor('evaluator'));
+    const view = await screen.findByTestId('message-view');
+    await user.click(within(view).getByRole('button', { name: 'Download invoice-4471.pdf' }));
+    await waitFor(() => expect(screen.getByTestId('attachment-status-att_1')).toHaveTextContent('Downloaded invoice-4471.pdf'));
+    expect(seen).toEqual([{ url: '/v1/runs/run_demo/mailboxes/mbx_finance/messages/msg_invoice_1/attachments/att_1', auth: 'Bearer mk_evaluator' }]);
+    expect(saved[0]?.type).toBe('application/octet-stream');
+    expect(anchors[0]?.download).toBe('invoice-4471.pdf');
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:att');
+    expect(view.querySelector('iframe[src^="blob:"], object, embed')).toBeNull();
+    server.events.removeAllListeners();
+
+    // no Content-Disposition: the listed filename; failures are reported per attachment
+    server.use(http.get('*/v1/runs/:id/mailboxes/:mb/messages/:m/attachments/:a', () => new HttpResponse(new Uint8Array([1]))));
+    await user.click(within(view).getByRole('button', { name: 'Download invoice-4471.pdf' }));
+    await waitFor(() => expect(anchors[1]?.download).toBe('invoice-4471.pdf'));
+    server.use(http.get('*/v1/runs/:id/mailboxes/:mb/messages/:m/attachments/:a', () => fail(404, 'NOT_FOUND')));
+    await user.click(within(view).getByRole('button', { name: 'Download invoice-4471.pdf' }));
+    expect(await within(view).findByTestId('api-error')).toHaveTextContent('Could not download invoice-4471.pdf: NOT_FOUND (HTTP 404)');
+  });
+
+  it('UI-5: an unnamed attachment without a server filename is saved as attachment-<id>', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:u');
+    URL.revokeObjectURL = vi.fn();
+    const anchors: HTMLAnchorElement[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      anchors.push(this);
+    });
+    const invoice = mockDb.runs.run_demo!.messages.find((m) => m.id === 'msg_invoice_1')!;
+    invoice.attachments = [{ ...invoice.attachments![0]!, id: 'att_x', filename: '' }];
+    server.use(http.get('*/v1/runs/:id/mailboxes/:mb/messages/:m/attachments/:a', () => new HttpResponse(new Uint8Array([1]))));
+    const { user } = renderApp('/runs/run_demo?tab=mailboxes&message=msg_invoice_1', sessionFor('controller'));
+    const view = await screen.findByTestId('message-view');
+    await user.click(within(view).getByRole('button', { name: 'Download (unnamed)' }));
+    await waitFor(() => expect(anchors[0]?.download).toBe('attachment-att_x'));
+  });
+
   it('lists every mailbox with the agent marked, folders with counts, paging, folders and the reading pane', async () => {
     const { user, router } = renderApp('/runs/run_demo?tab=mailboxes', sessionFor('controller'));
     expect(await screen.findByText('20 message(s) loaded, more available, newest first')).toBeInTheDocument();

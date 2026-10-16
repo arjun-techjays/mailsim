@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import type { EvaluationRequest } from '../api/types';
 import { useApi } from '../auth/session';
@@ -9,9 +9,12 @@ import { PageIntro } from '../components/PageIntro';
 import { WhatIsThis } from '../guide/Concepts';
 import { pct } from '../components/format';
 import { Badge, Empty, Loading } from '../components/Status';
+import { UnconfirmedNotice } from '../components/UnconfirmedNotice';
+import { isUnconfirmed, useActionKey } from '../hooks/useActionKey';
 import { EvaluationReportView } from '../evaluation/ReportView';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { runKeys } from '../run/keys';
+import { replayOf } from '../run/runState';
 
 function TriggerForm({ runId, scenarioKey, onCreated }: { runId: string; scenarioKey: string | null; onCreated: (id: string) => void }) {
   const api = useApi();
@@ -24,16 +27,27 @@ function TriggerForm({ runId, scenarioKey, onCreated }: { runId: string; scenari
   const [version, setVersion] = useState('');
   const [checks, setChecks] = useState<'' | 'on' | 'off'>('');
   const [complete, setComplete] = useState(true);
+  const action = useActionKey();
+  const lastBody = useRef<EvaluationRequest | null>(null);
   const mutation = useMutation({
-    mutationFn: (body: EvaluationRequest) => api.evaluate(runId, body),
+    mutationFn: (body: EvaluationRequest) => api.evaluate(runId, body, { idempotencyKey: action.keyFor(body) }),
     onSuccess: (report) => {
+      action.done();
       onCreated(report.evaluation_id);
       void qc.invalidateQueries({ queryKey: runKeys.all(runId) });
     },
+    onError: (e) => {
+      // It may have been stored anyway: refresh the list so a finished evaluation shows up.
+      if (isUnconfirmed(e)) void qc.invalidateQueries({ queryKey: runKeys.evaluations(runId) });
+    },
   });
+  const submit = (body: EvaluationRequest) => {
+    lastBody.current = body;
+    mutation.mutate(body);
+  };
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
-    mutation.mutate({
+    submit({
       answer_key_version: version ? Number(version) : null,
       checks: checks || null,
       complete_run: complete,
@@ -78,8 +92,21 @@ function TriggerForm({ runId, scenarioKey, onCreated }: { runId: string; scenari
         <button type="submit" disabled={mutation.isPending}>
           {mutation.isPending ? 'Evaluating…' : 'Run evaluation'}
         </button>
+        {mutation.isPending && (
+          <p className="hint" role="status">
+            Grading the run; assertions judged by an LLM can take a minute.
+          </p>
+        )}
       </form>
-      {mutation.isError && <ErrorDisplay error={mutation.error} title="Evaluation failed" />}
+      {mutation.isError && isUnconfirmed(mutation.error) ? (
+        <UnconfirmedNotice
+          error={mutation.error}
+          what="evaluation"
+          onRetry={() => submit(lastBody.current as EvaluationRequest)}
+        />
+      ) : (
+        mutation.isError && <ErrorDisplay error={mutation.error} title="Evaluation failed" />
+      )}
     </section>
   );
 }
@@ -96,11 +123,19 @@ function EvaluationContent({ runId }: { runId: string }) {
   return (
     <>
       {run.isError && <ErrorDisplay error={run.error} title="Could not load run" />}
-      <TriggerForm
-        runId={runId}
-        scenarioKey={run.data?.scenario_key ?? null}
-        onCreated={(id) => setParams({ evaluation: id })}
-      />
+      {run.data && replayOf(run.data) !== false ? (
+        <p className="notice" data-testid="replay-not-evaluated">
+          This run is a replay{run.data.replay_of ? ` of ${run.data.replay_of}` : ''}: it only checks that the recorded
+          events rebuild the same state, so it is not evaluated.{' '}
+          {run.data.replay_of && <Link to={`/runs/${encodeURIComponent(run.data.replay_of)}/evaluations`}>Evaluate the original run</Link>}
+        </p>
+      ) : (
+        <TriggerForm
+          runId={runId}
+          scenarioKey={run.data?.scenario_key ?? null}
+          onCreated={(id) => setParams({ evaluation: id })}
+        />
+      )}
       <section aria-labelledby="evals-h">
         <h2 id="evals-h">Evaluations</h2>
         {evals.isPending ? (
