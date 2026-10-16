@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from mailsim.importers import names as N
 from mailsim.importers.classify import GENERAL, classify
 from mailsim.importers.clean import clean_body, is_garbled, split_chain
@@ -204,21 +206,47 @@ def test_scanner_flags_address_fragments():
 
 def test_phone_forms_ids_and_zips_are_replaced_and_scanned():
     p = _pseudo(LOTUS_CHAIN)
+    phones = [
+        "0044 207 78 36777", "011 44 20 7783 4040", "020 7783 6655", "555/321-4567",
+        "44-201-555-0000", "(713) 853-1234", "+44 (0)20 7783 6655", "853-1234", "12-3456",
+        "1-2345", "x34567",
+    ]  # made-up numbers in the corpus' formats  # fmt: skip
     raw = (
-        "Call 555/321-4567 or 555/321-4568, London 44-201-555-0000, ext 12-3456 or 1-2345.\n"
-        "Employee P00123456 / AB12345678 / member EG123456.\n100 Main St, Riverton, Texas 77002-1234; TX 77010.\n"
+        "Call " + ", ".join(phones) + ".\n"
+        "Employee P00123456 / AB12345678 / member EG123456.\n"
+        "100 Main St, Riverton, Texas 77002-1234; TX 77010.\n"
     )
     t = p.apply(raw).text
-    for real in ("321-4567", "321-4568", "44-201-555-0000", "12-3456", "1-2345", "P00123456",
-                 "AB12345678", "EG123456", "77002", "77010"):  # fmt: skip
+    for real in [*phones, "P00123456", "AB12345678", "EG123456", "77002", "77010"]:
         assert real not in t, real
     assert "CV-" in t and "79999" in t
     s = Scanner()
-    kinds = {f.kind for f in s.scan_text(raw)}
-    assert {"phone", "personnel-id", "zip"} <= kinds
+    found = [f for f in s.scan_text(raw) if f.kind == "phone"]
+    assert len(found) >= len(phones) - 1  # the ext. forms may merge with a neighbour
+    assert {f.kind for f in s.scan_text(raw)} >= {"phone", "personnel-id", "zip"}
     assert s.scan_text(t) == []
-    assert {f.kind for f in s.scan_text("EPMI and ENE desks")} == {"enron-acronym"}
+    assert {f.kind for f in s.scan_text("EPMI and EOPS desks")} == {"enron-acronym"}
     assert "EPMI" not in p.apply("the EPMI desk").text
+
+
+def test_generic_phone_rule_keeps_ordinary_numbers():
+    p = _pseudo(LOTUS_CHAIN)
+    keep = (
+        "$1,234,567.89 and 1,250,000 and 164.95 and 12.5% and 1234567.89; published as of "
+        "10/24/2025 at 10:30; 2001-03-04; on 8/20/01 -0400; 2000-2001; 2024 2025 2026; "
+        "Q1 2025 150 MW; volume 6,500 5,700 dth; IP 192.0.2.4"
+    )
+    assert p.apply(keep).text == keep.replace("192.0.2.4", p.apply("192.0.2.4").text)
+    assert [f for f in Scanner().scan_text(keep) if f.kind == "phone"] == []
+
+
+def test_deal_and_contract_numbers_are_hashed():
+    p = _pseudo(LOTUS_CHAIN)
+    t = p.apply("deals 478198 and 478199; K#36621; contract # 51046156; meter 985097").text
+    for n in ("478198", "478199", "36621", "51046156", "985097"):
+        assert n not in t
+    assert re.search(r"deals \d{6} and \d{6}; K#\d{5}; contract # \d{8}; meter \d{6}", t)
+    assert t == p.apply("deals 478198 and 478199; K#36621; contract # 51046156; meter 985097").text
 
 
 def test_mangled_names_and_unknown_organisations():
@@ -261,3 +289,25 @@ def test_hashed_denylist(monkeypatch):
     assert "Quorvexa" not in t and "{{q:" in t
     assert [f.kind for f in Scanner().scan_text("asking Quorvexa today")] == ["denylisted-name"]
     assert "Quorvexa" in unknown_proper_nouns("asking Quorvexa", p.reg)
+
+
+def test_registered_surname_after_a_first_name_is_replaced_even_if_allowed():
+    p = _pseudo(LOTUS_CHAIN + "Wendell Texas/HOU/ECT@ECT\n")
+    t = p.apply("Regards, Marta Texas, Accounts Payable. We ship to Texas.").text
+    assert "Marta Texas" not in t and t.endswith("We ship to Texas.")
+
+
+def test_introductions_passcodes_and_deal_lists():
+    p = _pseudo(LOTUS_CHAIN)
+    t = p.apply(
+        "Hi, this is Qa Vel. My name is Xorbin. PassCode: 4593761. Deals 481620/481621."
+    ).text
+    for raw in ("Qa Vel", "Xorbin", "4593761", "481620", "481621"):
+        assert raw not in t, raw
+    assert "PassCode: " in t and re.search(r"Deals \d{6}/\d{6}\.", t)
+    assert p.apply("I am Sorry about that.").text == "I am Sorry about that."
+
+
+def test_introductions_do_not_eat_ordinary_words():
+    p = _pseudo(LOTUS_CHAIN + "the great news. " * 3)
+    assert p.apply("This is Great news. I am Glad.").text == "This is Great news. I am Glad."

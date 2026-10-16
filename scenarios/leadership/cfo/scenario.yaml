@@ -127,40 +127,40 @@ scenario:
   - owner: ceo
   - owner: cfo
     initial_messages:
-    - fixture: fixtures/001-iso-special-8-10-00-report-on-energy-mar.eml
-    - fixture: fixtures/002-flora-delacroix.eml
-    - fixture: fixtures/003-re-flora-delacroix.eml
-    - fixture: fixtures/004-please-email-your-time-exceptions-to-sor.eml
-    - fixture: fixtures/005-re-flora-delacroix.eml
-    - fixture: fixtures/006-please-join-corvane-training-sessions-11.eml
-    - fixture: fixtures/007-ethink-stuff-for-sale.eml
-    - fixture: fixtures/008-i-just-wanted-to-thank-you-for-taking.eml
-    - fixture: fixtures/009-ulla-is-going-to-be-in-japan-on.eml
-    - fixture: fixtures/010-the-following-is-our-close-schedule-for-.eml
-    - fixture: fixtures/011-niall-alert-legislators-propose-tax-on-e.eml
-    - fixture: fixtures/012-i-am-sure-this-is-a-joke.eml
-    - fixture: fixtures/013-fw-camille-everly.eml
-    - fixture: fixtures/014-update-vpn-ipass-remote-access.eml
-    - fixture: fixtures/015-re-update-vpn-ipass-remote-access.eml
-    - fixture: fixtures/016-i-m-emailing-all-of-you-because-i-never.eml
-    - fixture: fixtures/017-per-rhea-s-request-please-find-attached-.eml
-    - fixture: fixtures/018-the-purpose-of-this-survey-is-to-gather.eml
-    - fixture: fixtures/019-did-we-ever-come-to-terms-with-galloway.eml
-    - fixture: fixtures/020-retail-markets-conference.eml
-    - fixture: fixtures/021-re-retail-markets-conference.eml
-    - fixture: fixtures/022-fw-if-the-phone-company-ran-a-restaurant.eml
-    - fixture: fixtures/023-puget-energy.eml
-    - fixture: fixtures/024-fw-lucan.eml
-    - fixture: fixtures/025-to-hiring-managers-and-assistants-please.eml
-    - fixture: fixtures/026-yes-i-had-already-approved-them-for-trad.eml
-    - fixture: fixtures/027-the-report-named-var-and-peak-position-r.eml
-    - fixture: fixtures/028-re-puget-energy.eml
-    - fixture: fixtures/029-this-is-to-remind-you-that-various-anony.eml
-    - fixture: fixtures/030-re-puget-energy.eml
-    - fixture: fixtures/031-bram.eml
-    - fixture: fixtures/032-fenella-exchange-deal-march-2024.eml
-    - fixture: fixtures/033-re-bram.eml
-    - fixture: fixtures/034-re-fenella-exchange-deal-march-2024.eml
+    - fixture: fixtures/001-corvane-press-release.eml
+    - fixture: fixtures/002-i-represent-a-firm-which-has-specialized.eml
+    - fixture: fixtures/003-esource-presents-free-global-energy-mark.eml
+    - fixture: fixtures/004-re-corvane-press-release.eml
+    - fixture: fixtures/005-re-corvane-press-release.eml
+    - fixture: fixtures/006-on-feb.eml
+    - fixture: fixtures/007-expiring-lc-s.eml
+    - fixture: fixtures/008-draft-slides-for-sempra-meeting.eml
+    - fixture: fixtures/009-here-are-the-instructions-to-load-netsca.eml
+    - fixture: fixtures/010-version-2-0-of-the-clickathome-portal-is.eml
+    - fixture: fixtures/011-we-are-pleased-to-announce-the-creation-.eml
+    - fixture: fixtures/012-re-draft-slides-for-sempra-meeting.eml
+    - fixture: fixtures/013-thursday-s-4-6-00-conference-call-regard.eml
+    - fixture: fixtures/014-forgive-the-delay.eml
+    - fixture: fixtures/015-re-expiring-lc-s.eml
+    - fixture: fixtures/016-slow-browser-may-need-to-wait-15-seconds.eml
+    - fixture: fixtures/017-i-think-i-could-3-30-deal-may-be.eml
+    - fixture: fixtures/018-just-a-heads-up-from-a-business-coalitio.eml
+    - fixture: fixtures/019-fenella-and-i-have-developed-significant.eml
+    - fixture: fixtures/020-fw-european-10-jet-stream-heights.eml
+    - fixture: fixtures/021-message.eml
+    - fixture: fixtures/022-trade-press-recruiting-firms-and-others-.eml
+    - fixture: fixtures/023-per-rhea-s-request-please-find-attached-.eml
+    - fixture: fixtures/024-april-20-2025.eml
+    - fixture: fixtures/025-as-you-may-have-heard-president-nadia-si.eml
+    - fixture: fixtures/026-the-following-are-the-main-items-being-w.eml
+    - fixture: fixtures/027-read-about-how-lpe-is-making-methane-out.eml
+    - fixture: fixtures/028-i-haven-t-sent-a-quote-in-quite-some.eml
+    - fixture: fixtures/029-fw-8-14-2024-enovate-dpr.eml
+    - fixture: fixtures/030-we-have-received-an-executed-master-agre.eml
+    - fixture: fixtures/031-this-is-to-remind-you-that-various-anony.eml
+    - fixture: fixtures/032-awhile-back-isak-hesketh-had-informed-me.eml
+    - fixture: fixtures/033-we-are-in-the-process-of-creating-new.eml
+    - fixture: fixtures/034-it-was-great-getting-a-chance-to-finanll.eml
     - fixture: fixtures/035-urgent-confidential-payment-today.eml
     - fixture: fixtures/036-updated-remittance-details-invoice-ns-20.eml
   - owner: cbo

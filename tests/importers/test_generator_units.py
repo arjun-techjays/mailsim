@@ -80,7 +80,7 @@ def test_unbindable_pii_and_fallbacks():
         ),  # fmt: skip
         # fine: no sign-off -> the sender's first name is appended; subject from the body
         rec("r5", seg()),
-        rec("r6", seg(), topic="general"),
+        rec("r6", seg(body=BODY + " also the forecast."), topic="general"),
     ]
     gen = _gen(records, volume=2)
     sc = gen.generate_role("coo")
@@ -145,3 +145,14 @@ def test_pseudonyms_never_collide_within_a_scenario():
     names = [r.identity(f"p:{i}").name for i in range(400)]
     assert len(set(names)) == len(names) and "Helena Marsh" not in names
     assert r.identity("p:3") is r.identity("p:3")
+
+
+def test_directory_listings_are_rejected():
+    listing = "{{p:1:n}} 1 34299 4120J 3971\n{{p:2:n}} 2 36403 4120G 3972"
+    sc = _gen([rec("r9", seg(body=f"{BODY}\n{listing}"))], volume=1).generate_role("coo")
+    assert sc.messages == 0
+
+
+def test_identical_bodies_are_used_once():
+    sc = _gen([rec("r1", seg()), rec("r2", seg())], volume=2).generate_role("coo")
+    assert sc.messages == 1 and sc.skipped.get("duplicate") == 1

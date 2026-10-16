@@ -1,0 +1,24 @@
+Message-ID: <98e45b9d9abc10ac3f49@corvane.example.test>
+Date: Wed, 14 Oct 2026 18:43:00 +0000
+From: Natalie Okafor <natalie.okafor@corvane.example.test>
+To: Helena Marsh <helena.marsh@corvane.example.test>
+Subject: Attached is a forwards detail model in Excel...
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+MIME-Version: 1.0
+
+Attached is a forwards detail model in Excel format that will allow you to
+view and manipulate new deals for a particular date. You will need to enter
+the Post I.D. for the date you wish to view (see below) in cell B4 in the
+worksheet titled "Run Query" and then click the "Fetch Detail" macro button.
+The deals can then be viewed in the "Results" worksheet.
+
+ Post I.D. Date
+ 261429 5/17/2024
+ 858244 5/25/2024
+ 343931 5/31/2024
+
+Please call me at x5599 with any questions you have. I will have the
+options shortly.
+
+Natalie Okafor

@@ -154,6 +154,20 @@ against the CEO pack and checks that the results agree.
        (`77002`, and `77xxx` after `TX`/`Texas`) becomes `79999`.
      * Entity acronyms (EPMI, ENE, EOTT, …) map to fictional ones. The scanner flags any that
        survive.
+     * Phone numbers use one generic rule: any run of digit groups separated only by space,
+       `.`, `-`, `/` or parentheses, with an optional `+`/`00`/`011` prefix and 7+ digits in
+       total, unless it is a date (with an optional timezone), a year range, an IP address, a
+       decimal number or the fictional `555-01xx` form. A run separated only by single spaces
+       needs 3+ groups, so table figures like `2025 150` survive. Short extensions
+       (`x1234`, `87-7454`) are handled separately.
+     * Deal, contract, confirmation and ticket numbers (`deal 478198`, `K#36621`) and bare
+       6-digit numbers are replaced by same-length seeded hashes. Amounts with commas or
+       decimals are left alone.
+     * `names.HASHED_DENY` lists real names that the rules cannot catch. It stores only
+       `sha256(lower-cased token)`. This is an **unsalted** hash: it keeps the names out of
+       casual reading of the repository, but anyone with a candidate list can recover them by
+       hashing. Matching capitalised tokens are pseudonymized, and the scanner flags them as
+       `denylisted-name`.
 5. **Classification** (`classify`). A transparent weighted keyword rule set is applied to the
    subject and body. It covers board, legal, finance, deals, hr, vendor, scheduling, ops,
    personal, newsletter/noise and `general`. Every record stores its scores and matched
@@ -197,6 +211,7 @@ against the CEO pack and checks that the results agree.
       where the name is neither an ordinary word nor a listed public organisation
       (`names.PUBLIC_ORGS`: large utilities, exchanges, regulators, banks);
     * no copyrighted or syndicated text (newswire, newspapers, copyright lines);
+    * no simulator-revealing words (`scenario`, `simulation`, `sandbox`) in a body;
     * no leftover header blocks or quoted header fields (`Subject:`, `cc:`) inside a body;
     * at most 4 segments, with each body ≤2,500 characters;
     * none of the sensitive words (health, family events, credentials, terminations, …).

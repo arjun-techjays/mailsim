@@ -20,7 +20,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mailsim.importers import names as N
-from mailsim.importers.pseudonymize import ALNUM_ID, IPV4, PHONE, SSN, ZIP_HQ, denylisted
+from mailsim.importers.pseudonymize import (
+    ALNUM_ID,
+    IPV4,
+    PHONE_RUN,
+    PHONE_SHORT,
+    SSN,
+    ZIP_HQ,
+    denylisted,
+    is_phone,
+)
 
 _ENRON = re.compile(r"enron", re.IGNORECASE)
 _LOTUS = re.compile(
@@ -105,7 +114,10 @@ class Scanner:
                 hit("real-surname", m.group(0))
         for m in _LOTUS.finditer(line):
             hit("lotus-notes", m.group(0))
-        for m in PHONE.finditer(line):
+        for m in PHONE_RUN.finditer(line):
+            if is_phone(m.group(0)):
+                hit("phone", m.group(0))
+        for m in PHONE_SHORT.finditer(line):
             if not _FAKE_PHONE.search(m.group(0)):
                 hit("phone", m.group(0))
         for m in SSN.finditer(line):

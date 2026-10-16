@@ -17,55 +17,7 @@
   },
   "fixtures": [
     {
-      "fixture": "fixtures/001-i-show-you-still-have-the-following-imba.eml",
-      "topic": "finance",
-      "thread": 11,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/002-here-is-a-breakout-of-total-wholesale-po.eml",
-      "topic": "finance",
-      "thread": 6,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/003-owen-as-we-discussed-billing-will-need.eml",
-      "topic": "finance",
-      "thread": 10,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/004-sorry-i-didn-t-get-back-to-you-last.eml",
-      "topic": "scheduling",
-      "thread": 17,
-      "suggested_labels": [
-        "Calendar"
-      ]
-    },
-    {
-      "fixture": "fixtures/005-welcome-to-emeric.eml",
-      "topic": "newsletter",
-      "thread": 23,
-      "suggested_labels": [
-        "Newsletters"
-      ]
-    },
-    {
-      "fixture": "fixtures/006-fw-noemi-tax-mitigation.eml",
-      "topic": "finance",
-      "thread": 4,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/007-through-a-special-arrangement-with-skipp.eml",
+      "fixture": "fixtures/001-last-monday-i-sent-the-vp-s-an-e-mail.eml",
       "topic": "newsletter",
       "thread": 22,
       "suggested_labels": [
@@ -73,23 +25,7 @@
       ]
     },
     {
-      "fixture": "fixtures/008-have-you-ever-sent-a-credit-worksheet-fo.eml",
-      "topic": "finance",
-      "thread": 7,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/009-pilot-2-participants.eml",
-      "topic": "vendor",
-      "thread": 15,
-      "suggested_labels": [
-        "Vendors"
-      ]
-    },
-    {
-      "fixture": "fixtures/010-the-ces-var-for-today-is-11-1-million.eml",
+      "fixture": "fixtures/002-i-would-like-to-set-up-a-brief.eml",
       "topic": "finance",
       "thread": 0,
       "suggested_labels": [
@@ -97,7 +33,15 @@
       ]
     },
     {
-      "fixture": "fixtures/011-graham-can-you-send-the-following-to-eve.eml",
+      "fixture": "fixtures/003-just-wanted-to-let-you-know-that-i.eml",
+      "topic": "finance",
+      "thread": 5,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/004-attached-please-find-the-interview-packe.eml",
       "topic": "hr",
       "thread": 20,
       "suggested_labels": [
@@ -105,7 +49,39 @@
       ]
     },
     {
-      "fixture": "fixtures/012-fw-elodie-ormsby-corvane-example-test.eml",
+      "fixture": "fixtures/005-owen-i-can-not-even-imagine-all-the.eml",
+      "topic": "finance",
+      "thread": 7,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/006-per-our-conversation-following-is-a-form.eml",
+      "topic": "finance",
+      "thread": 11,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/007-cnw-global-messaging-would-like-to-apolo.eml",
+      "topic": "scheduling",
+      "thread": 17,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/008-graham-can-you-send-the-following-to-eve.eml",
+      "topic": "hr",
+      "thread": 21,
+      "suggested_labels": [
+        "People"
+      ]
+    },
+    {
+      "fixture": "fixtures/009-fw-elodie-ormsby-corvane-example-test.eml",
       "topic": "finance",
       "thread": 1,
       "suggested_labels": [
@@ -113,47 +89,15 @@
       ]
     },
     {
-      "fixture": "fixtures/013-esource-presents-free-global-energy-mark.eml",
-      "topic": "vendor",
-      "thread": 13,
-      "suggested_labels": [
-        "Vendors"
-      ]
-    },
-    {
-      "fixture": "fixtures/014-the-meeting-tomorrow-at-2-00-pm-to-discu.eml",
+      "fixture": "fixtures/010-thank-you-to-everyone-who-participated-i.eml",
       "topic": "finance",
-      "thread": 8,
+      "thread": 10,
       "suggested_labels": [
         "Finance"
       ]
     },
     {
-      "fixture": "fixtures/015-dorian-afb-commodity-procurement-require.eml",
-      "topic": "vendor",
-      "thread": 14,
-      "suggested_labels": [
-        "Vendors"
-      ]
-    },
-    {
-      "fixture": "fixtures/016-fw-dorian-afb-commodity-procurement-requ.eml",
-      "topic": "vendor",
-      "thread": 14,
-      "suggested_labels": [
-        "Vendors"
-      ]
-    },
-    {
-      "fixture": "fixtures/017-fehr-option-agreement.eml",
-      "topic": "finance",
-      "thread": 5,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/018-updated-communication-on-what-s-happenin.eml",
+      "fixture": "fixtures/011-fw-pl1-operations-vng-asset-management.eml",
       "topic": "scheduling",
       "thread": 18,
       "suggested_labels": [
@@ -161,15 +105,55 @@
       ]
     },
     {
-      "fixture": "fixtures/019-re-fehr-option-agreement.eml",
+      "fixture": "fixtures/012-can-you-please-print-me-20-color-copies.eml",
+      "topic": "newsletter",
+      "thread": 23,
+      "suggested_labels": [
+        "Newsletters"
+      ]
+    },
+    {
+      "fixture": "fixtures/013-at-the-request-of-orrin-jessop-attached-.eml",
       "topic": "finance",
-      "thread": 5,
+      "thread": 8,
       "suggested_labels": [
         "Finance"
       ]
     },
     {
-      "fixture": "fixtures/020-fw-leadership-development-pilot.eml",
+      "fixture": "fixtures/014-copper-and-aluminum-warehouse-insurance.eml",
+      "topic": "vendor",
+      "thread": 15,
+      "suggested_labels": [
+        "Vendors"
+      ]
+    },
+    {
+      "fixture": "fixtures/015-re-copper-and-aluminum-warehouse-insuran.eml",
+      "topic": "vendor",
+      "thread": 15,
+      "suggested_labels": [
+        "Vendors"
+      ]
+    },
+    {
+      "fixture": "fixtures/016-please-take-a-moment-to-click-on-the.eml",
+      "topic": "vendor",
+      "thread": 14,
+      "suggested_labels": [
+        "Vendors"
+      ]
+    },
+    {
+      "fixture": "fixtures/017-the-invoices-are-being-paid-by-us-now-ma.eml",
+      "topic": "finance",
+      "thread": 6,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/018-updated-communication-on-what-s-happenin.eml",
       "topic": "scheduling",
       "thread": 16,
       "suggested_labels": [
@@ -177,7 +161,7 @@
       ]
     },
     {
-      "fixture": "fixtures/021-fw-ctr-credit-responses-1-5.eml",
+      "fixture": "fixtures/019-here-is-the-corvane-forecast-for-next-we.eml",
       "topic": "finance",
       "thread": 2,
       "suggested_labels": [
@@ -185,23 +169,15 @@
       ]
     },
     {
-      "fixture": "fixtures/022-you-re-scheduled-to-meet-w-beatrix-on-we.eml",
-      "topic": "scheduling",
-      "thread": 19,
-      "suggested_labels": [
-        "Calendar"
-      ]
-    },
-    {
-      "fixture": "fixtures/023-attached-please-find-the-cpmi-power-cred.eml",
+      "fixture": "fixtures/020-in-monday-s-executive-committee-meeting-.eml",
       "topic": "finance",
-      "thread": 3,
+      "thread": 4,
       "suggested_labels": [
         "Finance"
       ]
     },
     {
-      "fixture": "fixtures/024-attached-is-a-newly-revised-credit-watch.eml",
+      "fixture": "fixtures/021-cash-vi-confirmation.eml",
       "topic": "finance",
       "thread": 9,
       "suggested_labels": [
@@ -209,19 +185,43 @@
       ]
     },
     {
-      "fixture": "fixtures/025-this-is-a-copy-of-your-message-sent.eml",
+      "fixture": "fixtures/022-re-cash-vi-confirmation.eml",
+      "topic": "finance",
+      "thread": 9,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/023-you-are-correct-for-us-core-procurement-.eml",
       "topic": "vendor",
-      "thread": 12,
+      "thread": 13,
       "suggested_labels": [
         "Vendors"
       ]
     },
     {
-      "fixture": "fixtures/026-i-understand-that-mira-jardine-has-been-.eml",
-      "topic": "hr",
-      "thread": 21,
+      "fixture": "fixtures/024-this-week-s-kian-hartwell-presentation-w.eml",
+      "topic": "scheduling",
+      "thread": 19,
       "suggested_labels": [
-        "People"
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/025-the-payment-status-has-changed-on-the-fo.eml",
+      "topic": "finance",
+      "thread": 3,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/026-yes-i-believe-so-but-the-software-is.eml",
+      "topic": "vendor",
+      "thread": 12,
+      "suggested_labels": [
+        "Vendors"
       ]
     },
     {

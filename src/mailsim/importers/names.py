@@ -141,6 +141,7 @@ ENTITY_MAP: dict[str, str] = {
     "ECC": "CCC",
     "EGEP": "CGEP",
     "EESI": "CESI",
+    "EOPS": "CVOPS",
     "ENAC": "CNAC",
 }
 
@@ -164,6 +165,7 @@ ENRON_ACRONYMS: frozenset[str] = frozenset(
         "EGEP",
         "EESI",
         "ENAC",
+        "EOPS",
     ]
 )
 

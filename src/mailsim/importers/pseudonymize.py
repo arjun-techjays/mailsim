@@ -60,15 +60,56 @@ _SIGNOFF_WORDS = re.compile(
     r"[,!.]?\s*-*\s*$",
     re.IGNORECASE,
 )
-PHONE = re.compile(
-    r"\b\d{2,3}-\d{2,3}-\d{3}-\d{4}\b"  # international without "+", e.g. 44-207-783-4040
-    r"|(?<![\w-])(?:\+?1[\s.-]?)?\(?\b\d{3}\)?[\s./-]\d{3}[\s.-]\d{4}\b"
-    r"|(?<![\w-])\+\d{1,3}[\s.(]+\d[\d\s().-]{6,}\d"
-    r"|(?<![\w/.-])\b\d{3}-\d{4}\b(?![\w/-])"
-    r"|\b(?:ext\.?|x)\s?\d{4,5}\b"
-    r"|\b(?:ext\.?|x)\s?\d[-.]\d{4}\b"
-    r"|(?<![\w/.$-])\d{1,2}-\d{4}\b(?![\w/-])",
+# Phone numbers: one generic rule (any run of digit groups separated only by space . - / or
+# parentheses, optional +/00/011 prefix, 7+ digits in total, see `is_phone`) plus short
+# extensions (x1234, ext. 3-1234, 87-7454).
+PHONE_RUN = re.compile(
+    r"(?<![\w.,$/:#-])(?:\+\s?)?\(?\d{1,5}\)?"
+    r"(?:(?:[ .\-/]|\)\s?|\s?\(|\s-\s?|-\s)\(?\d{1,5}\)?){1,6}"
+    r"(?![\w:]|[.,]\d)"
+)
+PHONE_SHORT = re.compile(
+    r"\b(?:ext\.?|x)\s?\d{4,5}\b|\b(?:ext\.?|x)\s?\d[-.]\d{4}\b"
+    r"|(?<![\w/.$,-])\d{1,2}-\d{4}\b(?![\w/-])",
     re.IGNORECASE,
+)
+_DATE_RUN = re.compile(
+    r"\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}(?:\s[-+]\d{4})?|\d{4}[/.-]\d{1,2}[/.-]\d{1,2}"
+    r"|(?:19|20)\d\d(?:\s?[-/]\s?(?:19|20)\d\d)+|(?:(?:19|20)\d\d\s)+(?:19|20)\d\d"
+)
+_FAKE_PHONE_RUN = re.compile(r"(?:\(555\) |555[-/ ])?555-01\d\d")
+
+
+def is_phone(run: str) -> bool:
+    """A digit-group run (from PHONE_RUN) that is a phone number: 7+ digits, not a date,
+    year range, IP address, decimal number or the fictional 555-01xx form. A run separated by
+    single spaces only needs 3+ groups (so "2025 150" in a table is not a phone)."""
+    text = run.strip()
+    if len(re.sub(r"\D", "", text)) < 7:
+        return False
+    if _DATE_RUN.fullmatch(text) or _FAKE_PHONE_RUN.fullmatch(text):
+        return False
+    if re.fullmatch(r"\d{3}-\d{2}-\d{4}|\d{5}-\d{4}", text):
+        return False  # SSN and ZIP+4 shapes: scrubbed and scanned by their own rules
+    if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", text) or re.fullmatch(r"\d+\.\d{1,2}", text):
+        return False
+    groups = re.findall(r"\d+", text)
+    seps = re.findall(r"[^\d]+", text.lstrip("+("))
+    return not (all(sep == " " for sep in seps) and len(groups) < 3)
+
+
+DEAL_NO = re.compile(
+    r"(?i)\b((?:deals?|contracts?|confirm(?:ation)?s?|tickets?|K)\s*(?:#|no\.?|number)?\s*:?\s*)"
+    r"(\d{5,8})\b"
+)
+BARE_ID6 = re.compile(r"(?<![\w$.,/#:-])\d{6}(?![\w/-]|[.,]\d)")
+ID6_LIST = re.compile(r"\b\d{6}(?:\s?/\s?\d{6})+\b")  # 481620/481621
+PASSCODE = re.compile(
+    r"(?i)\b((?:pass\s?code|access\s?code|pin|password|conf(?:erence)?\s?id)\s*[:#]?\s*)(\d{3,})"
+)
+# "This is Li Sun", "my name is ...": the words after an introduction are a name
+_INTRO = re.compile(
+    rf"(?i:\b(?:this is|my name is|i am|i'm|name:)\s+)({_NAME_RX}(?:\s+{_NAME_RX})?)\b"
 )
 SSN = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
 ALNUM_ID = re.compile(r"\b[A-Z]{1,3}\d{6,}\b")  # personnel / member numbers (P00512345)
@@ -109,6 +150,7 @@ PO_BOX = re.compile(r"\bP\.?\s?O\.?\s+Box\s+\d+", re.IGNORECASE)
 _WORD = re.compile(r"\b[a-z]{2,}\b")
 _CAP_WORD = re.compile(r"\b[A-Z][a-z]+\b")
 _LOWER_GREETING = re.compile(r"(?im)^(\s*(?:hi|hello|dear|hey|thanks|thx)[ ,]+)([a-z]{2,15})\b")
+_AFTER_FIRST = re.compile(r"(\{\{[pq]:\d+:f\}\} )([A-Z][a-z]+)\b")
 _LOWER_SIGNOFF = re.compile(r"(?m)^(\s*-*\s*)([a-z]{2,15})(\.?\s*)$")
 _LOWER_NAME = re.compile(r"(?<![\w'@./-])([a-z]{3,15})(?![\w'@-])")
 IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
@@ -531,6 +573,41 @@ class Pseudonymizer:
         local.add(pid)
         return f"{{{{p:{pid}:n}}}}"
 
+    def _intro(self, m: re.Match[str], local: set[int]) -> str:
+        """An introduced name ("This is Li Sun"): always a person, even short or word-like."""
+        words = m.group(1).split()
+        if any(w in N.PROPER_ALLOW or w in N.CONTEXT_STOP or w in BLOCK for w in words[:1]):
+            return m.group(0)
+        lead = m.group(0)[: m.start(1) - m.start()].lower()
+        if len(words) == 1 and "name" not in lead:
+            word = words[0].lower()
+            if (
+                lead.startswith(("i am", "i'm"))
+                or self.reg.is_word(word)
+                or word in self.reg.lexicon
+            ):
+                return m.group(0)  # "This is Great", "I am Glad": ordinary words
+        if len(words) == 2:
+            pid = self.reg.lookup(words[0], words[1])
+            if pid is None:
+                pid = self.reg.add(words[0], words[1])
+                self.dynamic.add(pid)
+            local.add(pid)
+            repl = f"{{{{p:{pid}:n}}}}"
+        else:
+            repl = f"{{{{q:{self._alloc(self.first_ids, words[0])}:f}}}}"
+        return m.group(0)[: m.start(1) - m.start()] + repl
+
+    def _surname_after_first(self, m: re.Match[str], local: set[int]) -> str:
+        """``<first-name placeholder> Germany``: a registered surname right after a first name is
+        a surname, even when it is also an allowed proper noun (a country, a state)."""
+        tok = m.group(2)
+        pids = self.reg.by_last.get(tok.lower(), [])
+        if not pids:
+            return m.group(0)
+        chosen = next((p for p in pids if p in local), pids[0])
+        return f"{m.group(1)}{{{{p:{chosen}:l}}}}"
+
     def _lower_greeting(self, m: re.Match[str]) -> str:
         name = m.group(2)
         if name.capitalize() not in N.COMMON_FIRST and name not in self.reg.by_first:
@@ -661,6 +738,11 @@ class Pseudonymizer:
             return f"{{{{q:{self._alloc(self.first_ids, tok)}:f}}}}"
         return tok
 
+    def _hash_digits(self, digits: str) -> str:
+        """Deterministic same-length replacement for a deal / contract / reference number."""
+        n = len(digits)
+        return f"{stable_hash(self.seed, 'id', digits) % 10**n:0{n}d}"
+
     def _digits(self, text: str) -> str:
         def phone(m: re.Match[str]) -> str:
             n = stable_hash(self.seed, "tel", m.group(0)) % 100
@@ -677,7 +759,14 @@ class Pseudonymizer:
         )
         text = ZIP_HQ.sub(_fake_zip, text)
         text = PO_BOX.sub("P.O. Box 100", text)
-        text = PHONE.sub(phone, text)
+        text = PHONE_RUN.sub(lambda m: phone(m) if is_phone(m.group(0)) else m.group(0), text)
+        text = PHONE_SHORT.sub(phone, text)
+        text = DEAL_NO.sub(lambda m: m.group(1) + self._hash_digits(m.group(2)), text)
+        text = ID6_LIST.sub(
+            lambda m: re.sub(r"\d{6}", lambda d: self._hash_digits(d.group(0)), m.group(0)), text
+        )
+        text = BARE_ID6.sub(lambda m: self._hash_digits(m.group(0)), text)
+        text = PASSCODE.sub(lambda m: m.group(1) + self._hash_digits(m.group(2)), text)
         text = LONG_DIGITS.sub(
             lambda m: str(stable_hash(self.seed, "num", m.group(0)))[: len(m.group(0))], text
         )
@@ -714,10 +803,12 @@ class Pseudonymizer:
         text = re.sub(r"\bcorvane\.(?:com|net|org)\b", N.COMPANY_DOMAIN, text, flags=re.IGNORECASE)
         text = _LAST_FIRST.sub(lambda m: self._last_first(m, local), text)
         text = _TITLED.sub(lambda m: self._titled(m, local), text)
+        text = _INTRO.sub(lambda m: self._intro(m, local), text)
         text = _FULL.sub(lambda m: self._full(m, local), text)
         text = _LOWER_PAIR.sub(lambda m: self._lower_pair(m, local), text)
         text = _LOWER_NAME.sub(lambda m: self._lower_name(m, local), text)
         text = _SINGLE.sub(lambda m: self._single(m, text, local), text)
+        text = _AFTER_FIRST.sub(lambda m: self._surname_after_first(m, local), text)
         text = _LOWER_GREETING.sub(self._lower_greeting, text)
         text = _LOWER_SIGNOFF.sub(self._lower_signoff, text)
         text = self._digits(text)

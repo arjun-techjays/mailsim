@@ -7,7 +7,7 @@
   },
   "seed": 7,
   "messages": 36,
-  "threads": 28,
+  "threads": 31,
   "topics": {
     "board": 4,
     "deals": 2,
@@ -21,207 +21,55 @@
   },
   "fixtures": [
     {
-      "fixture": "fixtures/001-iso-special-8-10-00-report-on-energy-mar.eml",
-      "topic": "vendor",
-      "thread": 8,
-      "suggested_labels": [
-        "Vendors"
-      ]
-    },
-    {
-      "fixture": "fixtures/002-flora-delacroix.eml",
-      "topic": "vendor",
-      "thread": 9,
-      "suggested_labels": [
-        "Vendors"
-      ]
-    },
-    {
-      "fixture": "fixtures/003-re-flora-delacroix.eml",
-      "topic": "vendor",
-      "thread": 9,
-      "suggested_labels": [
-        "Vendors"
-      ]
-    },
-    {
-      "fixture": "fixtures/004-please-email-your-time-exceptions-to-sor.eml",
+      "fixture": "fixtures/001-corvane-press-release.eml",
       "topic": "finance",
-      "thread": 3,
+      "thread": 2,
       "suggested_labels": [
         "Finance"
       ]
     },
     {
-      "fixture": "fixtures/005-re-flora-delacroix.eml",
+      "fixture": "fixtures/002-i-represent-a-firm-which-has-specialized.eml",
+      "topic": "scheduling",
+      "thread": 16,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/003-esource-presents-free-global-energy-mark.eml",
       "topic": "vendor",
-      "thread": 9,
-      "suggested_labels": [
-        "Vendors"
-      ]
-    },
-    {
-      "fixture": "fixtures/006-please-join-corvane-training-sessions-11.eml",
-      "topic": "legal",
-      "thread": 17,
-      "suggested_labels": [
-        "Legal"
-      ]
-    },
-    {
-      "fixture": "fixtures/007-ethink-stuff-for-sale.eml",
-      "topic": "board",
       "thread": 11,
       "suggested_labels": [
-        "Board"
-      ]
-    },
-    {
-      "fixture": "fixtures/008-i-just-wanted-to-thank-you-for-taking.eml",
-      "topic": "hr",
-      "thread": 21,
-      "suggested_labels": [
-        "People"
-      ]
-    },
-    {
-      "fixture": "fixtures/009-ulla-is-going-to-be-in-japan-on.eml",
-      "topic": "newsletter",
-      "thread": 24,
-      "suggested_labels": [
-        "Newsletters"
-      ]
-    },
-    {
-      "fixture": "fixtures/010-the-following-is-our-close-schedule-for-.eml",
-      "topic": "scheduling",
-      "thread": 14,
-      "suggested_labels": [
-        "Calendar"
-      ]
-    },
-    {
-      "fixture": "fixtures/011-niall-alert-legislators-propose-tax-on-e.eml",
-      "topic": "finance",
-      "thread": 6,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/012-i-am-sure-this-is-a-joke.eml",
-      "topic": "ops",
-      "thread": 19,
-      "suggested_labels": [
-        "Operations"
-      ]
-    },
-    {
-      "fixture": "fixtures/013-fw-camille-everly.eml",
-      "topic": "finance",
-      "thread": 0,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/014-update-vpn-ipass-remote-access.eml",
-      "topic": "scheduling",
-      "thread": 16,
-      "suggested_labels": [
-        "Calendar"
-      ]
-    },
-    {
-      "fixture": "fixtures/015-re-update-vpn-ipass-remote-access.eml",
-      "topic": "scheduling",
-      "thread": 16,
-      "suggested_labels": [
-        "Calendar"
-      ]
-    },
-    {
-      "fixture": "fixtures/016-i-m-emailing-all-of-you-because-i-never.eml",
-      "topic": "ops",
-      "thread": 20,
-      "suggested_labels": [
-        "Operations"
-      ]
-    },
-    {
-      "fixture": "fixtures/017-per-rhea-s-request-please-find-attached-.eml",
-      "topic": "newsletter",
-      "thread": 25,
-      "suggested_labels": [
-        "Newsletters"
-      ]
-    },
-    {
-      "fixture": "fixtures/018-the-purpose-of-this-survey-is-to-gather.eml",
-      "topic": "board",
-      "thread": 13,
-      "suggested_labels": [
-        "Board"
-      ]
-    },
-    {
-      "fixture": "fixtures/019-did-we-ever-come-to-terms-with-galloway.eml",
-      "topic": "legal",
-      "thread": 18,
-      "suggested_labels": [
-        "Legal"
-      ]
-    },
-    {
-      "fixture": "fixtures/020-retail-markets-conference.eml",
-      "topic": "finance",
-      "thread": 2,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/021-re-retail-markets-conference.eml",
-      "topic": "finance",
-      "thread": 2,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/022-fw-if-the-phone-company-ran-a-restaurant.eml",
-      "topic": "vendor",
-      "thread": 7,
-      "suggested_labels": [
         "Vendors"
       ]
     },
     {
-      "fixture": "fixtures/023-puget-energy.eml",
+      "fixture": "fixtures/004-re-corvane-press-release.eml",
       "topic": "finance",
-      "thread": 4,
+      "thread": 2,
       "suggested_labels": [
         "Finance"
       ]
     },
     {
-      "fixture": "fixtures/024-fw-lucan.eml",
+      "fixture": "fixtures/005-re-corvane-press-release.eml",
+      "topic": "finance",
+      "thread": 2,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/006-on-feb.eml",
       "topic": "board",
-      "thread": 12,
+      "thread": 14,
       "suggested_labels": [
         "Board"
       ]
     },
     {
-      "fixture": "fixtures/025-to-hiring-managers-and-assistants-please.eml",
-      "topic": "hr",
-      "thread": 22,
-      "suggested_labels": [
-        "People"
-      ]
-    },
-    {
-      "fixture": "fixtures/026-yes-i-had-already-approved-them-for-trad.eml",
+      "fixture": "fixtures/007-expiring-lc-s.eml",
       "topic": "finance",
       "thread": 5,
       "suggested_labels": [
@@ -229,31 +77,199 @@
       ]
     },
     {
-      "fixture": "fixtures/027-the-report-named-var-and-peak-position-r.eml",
-      "topic": "scheduling",
-      "thread": 15,
-      "suggested_labels": [
-        "Calendar"
-      ]
-    },
-    {
-      "fixture": "fixtures/028-re-puget-energy.eml",
-      "topic": "finance",
-      "thread": 4,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/029-this-is-to-remind-you-that-various-anony.eml",
+      "fixture": "fixtures/008-draft-slides-for-sempra-meeting.eml",
       "topic": "board",
-      "thread": 10,
+      "thread": 15,
       "suggested_labels": [
         "Board"
       ]
     },
     {
-      "fixture": "fixtures/030-re-puget-energy.eml",
+      "fixture": "fixtures/009-here-are-the-instructions-to-load-netsca.eml",
+      "topic": "deals",
+      "thread": 26,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/010-version-2-0-of-the-clickathome-portal-is.eml",
+      "topic": "scheduling",
+      "thread": 18,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/011-we-are-pleased-to-announce-the-creation-.eml",
+      "topic": "finance",
+      "thread": 6,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/012-re-draft-slides-for-sempra-meeting.eml",
+      "topic": "board",
+      "thread": 15,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/013-thursday-s-4-6-00-conference-call-regard.eml",
+      "topic": "scheduling",
+      "thread": 19,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/014-forgive-the-delay.eml",
+      "topic": "finance",
+      "thread": 3,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/015-re-expiring-lc-s.eml",
+      "topic": "finance",
+      "thread": 5,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/016-slow-browser-may-need-to-wait-15-seconds.eml",
+      "topic": "newsletter",
+      "thread": 27,
+      "suggested_labels": [
+        "Newsletters"
+      ]
+    },
+    {
+      "fixture": "fixtures/017-i-think-i-could-3-30-deal-may-be.eml",
+      "topic": "deals",
+      "thread": 25,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/018-just-a-heads-up-from-a-business-coalitio.eml",
+      "topic": "vendor",
+      "thread": 10,
+      "suggested_labels": [
+        "Vendors"
+      ]
+    },
+    {
+      "fixture": "fixtures/019-fenella-and-i-have-developed-significant.eml",
+      "topic": "hr",
+      "thread": 24,
+      "suggested_labels": [
+        "People"
+      ]
+    },
+    {
+      "fixture": "fixtures/020-fw-european-10-jet-stream-heights.eml",
+      "topic": "finance",
+      "thread": 1,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/021-message.eml",
+      "topic": "hr",
+      "thread": 24,
+      "suggested_labels": [
+        "People"
+      ]
+    },
+    {
+      "fixture": "fixtures/022-trade-press-recruiting-firms-and-others-.eml",
+      "topic": "legal",
+      "thread": 20,
+      "suggested_labels": [
+        "Legal"
+      ]
+    },
+    {
+      "fixture": "fixtures/023-per-rhea-s-request-please-find-attached-.eml",
+      "topic": "newsletter",
+      "thread": 28,
+      "suggested_labels": [
+        "Newsletters"
+      ]
+    },
+    {
+      "fixture": "fixtures/024-april-20-2025.eml",
+      "topic": "vendor",
+      "thread": 9,
+      "suggested_labels": [
+        "Vendors"
+      ]
+    },
+    {
+      "fixture": "fixtures/025-as-you-may-have-heard-president-nadia-si.eml",
+      "topic": "finance",
+      "thread": 0,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/026-the-following-are-the-main-items-being-w.eml",
+      "topic": "ops",
+      "thread": 23,
+      "suggested_labels": [
+        "Operations"
+      ]
+    },
+    {
+      "fixture": "fixtures/027-read-about-how-lpe-is-making-methane-out.eml",
+      "topic": "finance",
+      "thread": 7,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/028-i-haven-t-sent-a-quote-in-quite-some.eml",
+      "topic": "vendor",
+      "thread": 8,
+      "suggested_labels": [
+        "Vendors"
+      ]
+    },
+    {
+      "fixture": "fixtures/029-fw-8-14-2024-enovate-dpr.eml",
+      "topic": "ops",
+      "thread": 22,
+      "suggested_labels": [
+        "Operations"
+      ]
+    },
+    {
+      "fixture": "fixtures/030-we-have-received-an-executed-master-agre.eml",
+      "topic": "legal",
+      "thread": 21,
+      "suggested_labels": [
+        "Legal"
+      ]
+    },
+    {
+      "fixture": "fixtures/031-this-is-to-remind-you-that-various-anony.eml",
+      "topic": "board",
+      "thread": 13,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/032-awhile-back-isak-hesketh-had-informed-me.eml",
       "topic": "finance",
       "thread": 4,
       "suggested_labels": [
@@ -261,41 +277,25 @@
       ]
     },
     {
-      "fixture": "fixtures/031-bram.eml",
-      "topic": "finance",
-      "thread": 1,
+      "fixture": "fixtures/033-we-are-in-the-process-of-creating-new.eml",
+      "topic": "vendor",
+      "thread": 12,
       "suggested_labels": [
-        "Finance"
+        "Vendors"
       ]
     },
     {
-      "fixture": "fixtures/032-fenella-exchange-deal-march-2024.eml",
-      "topic": "deals",
-      "thread": 23,
+      "fixture": "fixtures/034-it-was-great-getting-a-chance-to-finanll.eml",
+      "topic": "scheduling",
+      "thread": 17,
       "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/033-re-bram.eml",
-      "topic": "finance",
-      "thread": 1,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/034-re-fenella-exchange-deal-march-2024.eml",
-      "topic": "deals",
-      "thread": 23,
-      "suggested_labels": [
-        "Deals"
+        "Calendar"
       ]
     },
     {
       "fixture": "fixtures/035-urgent-confidential-payment-today.eml",
       "topic": "finance",
-      "thread": 26,
+      "thread": 29,
       "suggested_labels": [
         "Finance"
       ]
@@ -303,7 +303,7 @@
     {
       "fixture": "fixtures/036-updated-remittance-details-invoice-ns-20.eml",
       "topic": "finance",
-      "thread": 27,
+      "thread": 30,
       "suggested_labels": [
         "Finance"
       ]
