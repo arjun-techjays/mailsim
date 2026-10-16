@@ -48,7 +48,7 @@ def _parser() -> argparse.ArgumentParser:
     isub = imp.add_subparsers(dest="import_cmd", required=True)
     en = isub.add_parser("enron", help="sample, clean, pseudonymize and classify Enron bodies")
     en.add_argument("--parquet", type=Path, nargs="+", required=True, help="downloaded shards")
-    en.add_argument("--limit", type=int, default=50_000, help="rows to sample")
+    en.add_argument("--limit", type=_positive, default=50_000, help="rows to sample (>= 1)")
     en.add_argument("--seed", type=int, default=7)
     en.add_argument("--out", type=Path, default=Path("var/enron/corpus.jsonl"))
     en.add_argument("--registry-out", type=Path, default=None,
@@ -69,8 +69,13 @@ def _parser() -> argparse.ArgumentParser:
     ld.add_argument("--roles", default="ceo,cfo,cbo,director_finance")
     ld.add_argument("--volume", default="", help="per-role message counts, e.g. ceo=40,cfo=30")
     ld.add_argument("--start-at", default="2026-10-16T08:00:00Z", help="virtual clock start")
-    ld.add_argument("--days", type=int, default=10, help="days of mail before the clock start")
-    ld.add_argument("--names", type=Path, default=None, help="registry JSON from import enron")
+    ld.add_argument("--days", type=_at_least_two, default=10,
+                    help="days of mail before the clock start (>= 2)")  # fmt: skip
+    names = ld.add_mutually_exclusive_group(required=True)
+    names.add_argument("--names", type=Path, help="registry JSON from import enron (required for "
+                       "the PII guarantee: every rendered message is scanned against it)")  # fmt: skip
+    names.add_argument("--no-names", action="store_true",
+                       help="scan only against the built-in lists (weaker; prints a warning)")  # fmt: skip
 
     for name, help_ in (
         ("run-create", "create+seed a run from a scenario version id"),
@@ -112,6 +117,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise
         _emit({"code": "INVALID_REQUEST", "message": str(exc)}, sys.stderr)
         return 2
+
+
+def _positive(value: str) -> int:
+    n = int(value)
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be >= 1")
+    return n
+
+
+def _at_least_two(value: str) -> int:
+    n = int(value)
+    if n < 2:
+        raise argparse.ArgumentTypeError("must be >= 2")
+    return n
 
 
 def _names(path: Path | None) -> list[str]:
@@ -157,6 +176,10 @@ def _generate(args: argparse.Namespace) -> int:
 
     from mailsim.importers import enron, leadership
 
+    if args.no_names:
+        print("WARNING: --no-names: generated text is scanned against the built-in name lists "
+              "only, not the registry of real names harvested by `sim import enron`. Do not "
+              "commit this output.", file=sys.stderr)  # fmt: skip
     header, records = enron.read_corpus(args.corpus)
     volume: dict[str, int] = {}
     for item in filter(None, (v.strip() for v in args.volume.split(","))):

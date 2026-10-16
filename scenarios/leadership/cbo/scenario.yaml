@@ -115,36 +115,36 @@ scenario:
   - owner: cfo
   - owner: cbo
     initial_messages:
-    - fixture: fixtures/001-per-our-discussions-i-would-like-to-move.eml
-    - fixture: fixtures/002-keira-and-i-spoke-about-point-2-on.eml
-    - fixture: fixtures/003-for-a-long-time-it-had-seemed-to.eml
-    - fixture: fixtures/004-here-is-the-ercot-document-that-lays-out.eml
-    - fixture: fixtures/005-attached-is-a-draft-report-to-the-board.eml
-    - fixture: fixtures/006-legal-conference.eml
-    - fixture: fixtures/007-re-legal-conference.eml
-    - fixture: fixtures/008-fw-ca-development-i-and-ii-notice-of-exe.eml
-    - fixture: fixtures/009-concur-expense-xms-upgrade.eml
-    - fixture: fixtures/010-following-please-find-the-daily-corvanet.eml
-    - fixture: fixtures/011-there-continues-to-be-confusion-concerni.eml
-    - fixture: fixtures/012-please-reserve-a-conference-room-for-the.eml
-    - fixture: fixtures/013-where-are-we-in-the-process-of-gathering.eml
-    - fixture: fixtures/014-i-m-in-zane-this-weekend-want-to-come.eml
-    - fixture: fixtures/015-see-cutter-oil-drafts-you-will-notice-on.eml
-    - fixture: fixtures/016-i-talked-to-keira-penhallow-on-thursday-.eml
-    - fixture: fixtures/017-a-copy-of-greer-ashdown-s-paper-who-make.eml
-    - fixture: fixtures/018-here-s-the-proposal.eml
-    - fixture: fixtures/019-be-cautious-when-doing-a-np-malin-br-eve.eml
-    - fixture: fixtures/020-this-past-week-we-experienced-technical-.eml
-    - fixture: fixtures/021-please-take-note-that-our-usual-cns-gove.eml
-    - fixture: fixtures/022-i-just-set-up-all-the-deal-tickets.eml
-    - fixture: fixtures/023-termination-of-ellery-energy-services-in.eml
-    - fixture: fixtures/024-please-reply-to-confirm-totals.eml
-    - fixture: fixtures/025-online-auction-benefiting-march-of-dimes.eml
+    - fixture: fixtures/001-i-promise-this-is-my-last-e-mail-of.eml
+    - fixture: fixtures/002-for-a-long-time-it-had-seemed-to.eml
+    - fixture: fixtures/003-by-the-way-do-you-need-any-tickets-for.eml
+    - fixture: fixtures/004-fw-employee-referral.eml
+    - fixture: fixtures/005-legal-conference.eml
+    - fixture: fixtures/006-re-legal-conference.eml
+    - fixture: fixtures/007-fw-ca-development-i-and-ii-notice-of-exe.eml
+    - fixture: fixtures/008-fw-corvane-news-release.eml
+    - fixture: fixtures/009-copies-of-the-front-to-back-detail-proce.eml
+    - fixture: fixtures/010-the-attached-memo-summarizes-the-status-.eml
+    - fixture: fixtures/011-th-line-569-training-room-1-8-00-10-00-3.eml
+    - fixture: fixtures/012-the-2000-chairman-s-award.eml
+    - fixture: fixtures/013-felix-received-a-request-from-fpl-s-outs.eml
+    - fixture: fixtures/014-re-th-line-569-training-room-1-8-00-10-0.eml
+    - fixture: fixtures/015-please-reserve-a-conference-room-for-the.eml
+    - fixture: fixtures/016-now-that-you-have-access-to-the-followin.eml
+    - fixture: fixtures/017-december-20-2025.eml
+    - fixture: fixtures/018-i-talked-to-keira-penhallow-on-thursday-.eml
+    - fixture: fixtures/019-here-s-the-proposal.eml
+    - fixture: fixtures/020-fw-elodie-company-rfp.eml
+    - fixture: fixtures/021-this-past-week-we-experienced-technical-.eml
+    - fixture: fixtures/022-termination-of-ellery-energy-services-in.eml
+    - fixture: fixtures/023-online-auction-benefiting-march-of-dimes.eml
+    - fixture: fixtures/024-natsource-checkout.eml
+    - fixture: fixtures/025-re-natsource-checkout.eml
     - fixture: fixtures/026-re-termination-of-ellery-energy-services.eml
-    - fixture: fixtures/027-we-have-made-the-following-modifications.eml
-    - fixture: fixtures/028-this-is-an-automated-email-delivery.eml
-    - fixture: fixtures/029-get-ready.eml
-    - fixture: fixtures/030-parties-to-the-pg-e-gas-oii-settlement.eml
+    - fixture: fixtures/027-re-natsource-checkout.eml
+    - fixture: fixtures/028-re-natsource-checkout.eml
+    - fixture: fixtures/029-attached-is-the-location-of-a-red-rock.eml
+    - fixture: fixtures/030-at-the-board-meeting-on-tuesday-a-copy.eml
     - fixture: fixtures/031-confidential-board-pre-read-project-lark.eml
     - fixture: fixtures/032-larkspur-deck-before-thursday.eml
   - owner: coo

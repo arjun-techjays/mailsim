@@ -4,7 +4,12 @@ Flags, per file and line: any mention of Enron; known Enron people (`names.KNOWN
 distinctive surnames alone, other surnames after a title); optional extra real names (e.g. the
 registry harvested by an import run, kept outside the repository); Lotus Notes addresses and
 routing fragments; phone numbers other than the fictional 555-01xx range; US social security
-number patterns; email addresses and web hosts outside ``.example.test``.
+number patterns; personnel-style IDs (``P00512345``); the former head-office ZIP; Enron entity
+acronyms (EPMI, ENA, ...); email addresses and web hosts outside ``.example.test``.
+
+Real full names are matched with a token-pair set lookup (first + last, an optional middle
+initial in between), so scanning against a registry of tens of thousands of names is linear in
+the text size.
 """
 
 from __future__ import annotations
@@ -15,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mailsim.importers import names as N
-from mailsim.importers.pseudonymize import IPV4, PHONE, SSN
+from mailsim.importers.pseudonymize import ALNUM_ID, IPV4, PHONE, SSN, ZIP_HQ
 
 _ENRON = re.compile(r"enron", re.IGNORECASE)
 _LOTUS = re.compile(
@@ -29,6 +34,7 @@ _HOST = re.compile(
     re.IGNORECASE,
 )
 _FAKE_PHONE = re.compile(r"555-01\d\d|x55\d\d|555-555-01\d\d")
+_WORD = re.compile(r"[A-Za-z][A-Za-z'\-]*\.?")
 _SURNAME_AFTER_TITLE = re.compile(r"\b(?:Mr|Mrs|Ms|Dr)\.? ([A-Z][a-z]+)")
 
 
@@ -50,24 +56,27 @@ def _allowed_domain(domain: str) -> bool:
 
 class Scanner:
     def __init__(self, extra_names: Iterable[str] = ()) -> None:
-        full = {n.lower() for n in N.KNOWN_PEOPLE}
-        full.update(n.lower() for n in extra_names if len(n.split()) >= 2)
-        self.full_names = full
-        last_counts: dict[str, int] = {}
-        for name in full:
-            last = name.split()[-1]
-            last_counts[last] = last_counts.get(last, 0) + 1
+        pairs = set()
+        for name in [*N.KNOWN_PEOPLE, *extra_names]:
+            parts = name.lower().split()
+            if len(parts) >= 2:
+                pairs.add((parts[0], parts[-1]))
+        self.full_names = pairs
         self.surnames = {s.lower() for s in N.DISTINCTIVE_SURNAMES}
-        known_last = {n.split()[-1] for n in (x.lower() for x in N.KNOWN_PEOPLE)}
-        self.titled = known_last
-        self._full_rx = self._compile(sorted(full))
+        self.titled = {n.split()[-1].lower() for n in N.KNOWN_PEOPLE}
 
-    @staticmethod
-    def _compile(names: list[str]) -> re.Pattern[str] | None:
-        if not names:
-            return None  # pragma: no cover - KNOWN_PEOPLE is never empty
-        alts = "|".join(re.escape(n).replace(r"\ ", r"\s+(?:[A-Z]\.?\s+)?") for n in names)
-        return re.compile(rf"\b(?:{alts})\b", re.IGNORECASE)
+    def _names(self, line: str) -> list[str]:
+        toks = [(m.group(0), m.group(0).lower().rstrip(".")) for m in _WORD.finditer(line)]
+        out = []
+        for i, (raw, low) in enumerate(toks):
+            for j in (i + 1, i + 2):
+                if j >= len(toks):
+                    break
+                if j == i + 2 and len(toks[i + 1][1]) != 1:
+                    break  # only a single middle initial may sit in between
+                if (low, toks[j][1]) in self.full_names:
+                    out.append(f"{raw} {toks[j][0]}")
+        return out
 
     def scan_text(self, text: str, path: str = "<text>") -> list[Finding]:
         out: list[Finding] = []
@@ -83,9 +92,8 @@ class Scanner:
 
         for m in _ENRON.finditer(line):
             hit("enron", line[max(0, m.start() - 10) : m.end() + 10])
-        if self._full_rx is not None:
-            for m in self._full_rx.finditer(line):
-                hit("real-name", m.group(0))
+        for name in self._names(line):
+            hit("real-name", name)
         for tok in re.findall(r"\b[A-Za-z][a-z]+\b", line):
             if tok.lower() in self.surnames:
                 hit("real-surname", tok)
@@ -103,6 +111,13 @@ class Scanner:
         for m in _EMAIL.finditer(line):
             if not _allowed_domain(m.group(1)):
                 hit("email-domain", m.group(0))
+        for m in ALNUM_ID.finditer(line):
+            hit("personnel-id", m.group(0))
+        for m in ZIP_HQ.finditer(line):
+            hit("zip", m.group(0))
+        for tok in re.findall(r"\b[A-Z]{3,4}\b", line):
+            if tok in N.ENRON_ACRONYMS:
+                hit("enron-acronym", tok)
         for m in IPV4.finditer(line):
             if not m.group(0).startswith("192.0.2."):
                 hit("ip-address", m.group(0))

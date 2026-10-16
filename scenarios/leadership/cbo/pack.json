@@ -7,7 +7,7 @@
   },
   "seed": 7,
   "messages": 32,
-  "threads": 30,
+  "threads": 26,
   "topics": {
     "board": 4,
     "deals": 12,
@@ -20,239 +20,7 @@
   },
   "fixtures": [
     {
-      "fixture": "fixtures/001-per-our-discussions-i-would-like-to-move.eml",
-      "topic": "ops",
-      "thread": 23,
-      "suggested_labels": [
-        "Operations"
-      ]
-    },
-    {
-      "fixture": "fixtures/002-keira-and-i-spoke-about-point-2-on.eml",
-      "topic": "deals",
-      "thread": 4,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/003-for-a-long-time-it-had-seemed-to.eml",
-      "topic": "finance",
-      "thread": 18,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/004-here-is-the-ercot-document-that-lays-out.eml",
-      "topic": "deals",
-      "thread": 1,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/005-attached-is-a-draft-report-to-the-board.eml",
-      "topic": "board",
-      "thread": 20,
-      "suggested_labels": [
-        "Board"
-      ]
-    },
-    {
-      "fixture": "fixtures/006-legal-conference.eml",
-      "topic": "scheduling",
-      "thread": 16,
-      "suggested_labels": [
-        "Calendar"
-      ]
-    },
-    {
-      "fixture": "fixtures/007-re-legal-conference.eml",
-      "topic": "scheduling",
-      "thread": 16,
-      "suggested_labels": [
-        "Calendar"
-      ]
-    },
-    {
-      "fixture": "fixtures/008-fw-ca-development-i-and-ii-notice-of-exe.eml",
-      "topic": "legal",
-      "thread": 13,
-      "suggested_labels": [
-        "Legal"
-      ]
-    },
-    {
-      "fixture": "fixtures/009-concur-expense-xms-upgrade.eml",
-      "topic": "finance",
-      "thread": 19,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/010-following-please-find-the-daily-corvanet.eml",
-      "topic": "deals",
-      "thread": 0,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/011-there-continues-to-be-confusion-concerni.eml",
-      "topic": "deals",
-      "thread": 10,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/012-please-reserve-a-conference-room-for-the.eml",
-      "topic": "scheduling",
-      "thread": 17,
-      "suggested_labels": [
-        "Calendar"
-      ]
-    },
-    {
-      "fixture": "fixtures/013-where-are-we-in-the-process-of-gathering.eml",
-      "topic": "legal",
-      "thread": 12,
-      "suggested_labels": [
-        "Legal"
-      ]
-    },
-    {
-      "fixture": "fixtures/014-i-m-in-zane-this-weekend-want-to-come.eml",
-      "topic": "personal",
-      "thread": 24,
-      "suggested_labels": [
-        "Personal"
-      ]
-    },
-    {
-      "fixture": "fixtures/015-see-cutter-oil-drafts-you-will-notice-on.eml",
-      "topic": "legal",
-      "thread": 14,
-      "suggested_labels": [
-        "Legal"
-      ]
-    },
-    {
-      "fixture": "fixtures/016-i-talked-to-keira-penhallow-on-thursday-.eml",
-      "topic": "personal",
-      "thread": 25,
-      "suggested_labels": [
-        "Personal"
-      ]
-    },
-    {
-      "fixture": "fixtures/017-a-copy-of-greer-ashdown-s-paper-who-make.eml",
-      "topic": "board",
-      "thread": 21,
-      "suggested_labels": [
-        "Board"
-      ]
-    },
-    {
-      "fixture": "fixtures/018-here-s-the-proposal.eml",
-      "topic": "deals",
-      "thread": 2,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/019-be-cautious-when-doing-a-np-malin-br-eve.eml",
-      "topic": "deals",
-      "thread": 6,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/020-this-past-week-we-experienced-technical-.eml",
-      "topic": "newsletter",
-      "thread": 26,
-      "suggested_labels": [
-        "Newsletters"
-      ]
-    },
-    {
-      "fixture": "fixtures/021-please-take-note-that-our-usual-cns-gove.eml",
-      "topic": "scheduling",
-      "thread": 15,
-      "suggested_labels": [
-        "Calendar"
-      ]
-    },
-    {
-      "fixture": "fixtures/022-i-just-set-up-all-the-deal-tickets.eml",
-      "topic": "deals",
-      "thread": 8,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/023-termination-of-ellery-energy-services-in.eml",
-      "topic": "deals",
-      "thread": 5,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/024-please-reply-to-confirm-totals.eml",
-      "topic": "ops",
-      "thread": 22,
-      "suggested_labels": [
-        "Operations"
-      ]
-    },
-    {
-      "fixture": "fixtures/025-online-auction-benefiting-march-of-dimes.eml",
-      "topic": "deals",
-      "thread": 3,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/026-re-termination-of-ellery-energy-services.eml",
-      "topic": "deals",
-      "thread": 5,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/027-we-have-made-the-following-modifications.eml",
-      "topic": "deals",
-      "thread": 7,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/028-this-is-an-automated-email-delivery.eml",
-      "topic": "deals",
-      "thread": 9,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/029-get-ready.eml",
-      "topic": "newsletter",
-      "thread": 27,
-      "suggested_labels": [
-        "Newsletters"
-      ]
-    },
-    {
-      "fixture": "fixtures/030-parties-to-the-pg-e-gas-oii-settlement.eml",
+      "fixture": "fixtures/001-i-promise-this-is-my-last-e-mail-of.eml",
       "topic": "legal",
       "thread": 11,
       "suggested_labels": [
@@ -260,9 +28,241 @@
       ]
     },
     {
+      "fixture": "fixtures/002-for-a-long-time-it-had-seemed-to.eml",
+      "topic": "finance",
+      "thread": 15,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/003-by-the-way-do-you-need-any-tickets-for.eml",
+      "topic": "personal",
+      "thread": 21,
+      "suggested_labels": [
+        "Personal"
+      ]
+    },
+    {
+      "fixture": "fixtures/004-fw-employee-referral.eml",
+      "topic": "scheduling",
+      "thread": 14,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/005-legal-conference.eml",
+      "topic": "scheduling",
+      "thread": 12,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/006-re-legal-conference.eml",
+      "topic": "scheduling",
+      "thread": 12,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/007-fw-ca-development-i-and-ii-notice-of-exe.eml",
+      "topic": "legal",
+      "thread": 10,
+      "suggested_labels": [
+        "Legal"
+      ]
+    },
+    {
+      "fixture": "fixtures/008-fw-corvane-news-release.eml",
+      "topic": "deals",
+      "thread": 5,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/009-copies-of-the-front-to-back-detail-proce.eml",
+      "topic": "legal",
+      "thread": 9,
+      "suggested_labels": [
+        "Legal"
+      ]
+    },
+    {
+      "fixture": "fixtures/010-the-attached-memo-summarizes-the-status-.eml",
+      "topic": "deals",
+      "thread": 2,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/011-th-line-569-training-room-1-8-00-10-00-3.eml",
+      "topic": "ops",
+      "thread": 19,
+      "suggested_labels": [
+        "Operations"
+      ]
+    },
+    {
+      "fixture": "fixtures/012-the-2000-chairman-s-award.eml",
+      "topic": "board",
+      "thread": 17,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/013-felix-received-a-request-from-fpl-s-outs.eml",
+      "topic": "legal",
+      "thread": 8,
+      "suggested_labels": [
+        "Legal"
+      ]
+    },
+    {
+      "fixture": "fixtures/014-re-th-line-569-training-room-1-8-00-10-0.eml",
+      "topic": "ops",
+      "thread": 19,
+      "suggested_labels": [
+        "Operations"
+      ]
+    },
+    {
+      "fixture": "fixtures/015-please-reserve-a-conference-room-for-the.eml",
+      "topic": "scheduling",
+      "thread": 13,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/016-now-that-you-have-access-to-the-followin.eml",
+      "topic": "finance",
+      "thread": 16,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/017-december-20-2025.eml",
+      "topic": "newsletter",
+      "thread": 23,
+      "suggested_labels": [
+        "Newsletters"
+      ]
+    },
+    {
+      "fixture": "fixtures/018-i-talked-to-keira-penhallow-on-thursday-.eml",
+      "topic": "personal",
+      "thread": 20,
+      "suggested_labels": [
+        "Personal"
+      ]
+    },
+    {
+      "fixture": "fixtures/019-here-s-the-proposal.eml",
+      "topic": "deals",
+      "thread": 1,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/020-fw-elodie-company-rfp.eml",
+      "topic": "deals",
+      "thread": 3,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/021-this-past-week-we-experienced-technical-.eml",
+      "topic": "newsletter",
+      "thread": 22,
+      "suggested_labels": [
+        "Newsletters"
+      ]
+    },
+    {
+      "fixture": "fixtures/022-termination-of-ellery-energy-services-in.eml",
+      "topic": "deals",
+      "thread": 7,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/023-online-auction-benefiting-march-of-dimes.eml",
+      "topic": "deals",
+      "thread": 4,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/024-natsource-checkout.eml",
+      "topic": "deals",
+      "thread": 0,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/025-re-natsource-checkout.eml",
+      "topic": "deals",
+      "thread": 0,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/026-re-termination-of-ellery-energy-services.eml",
+      "topic": "deals",
+      "thread": 7,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/027-re-natsource-checkout.eml",
+      "topic": "deals",
+      "thread": 0,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/028-re-natsource-checkout.eml",
+      "topic": "deals",
+      "thread": 0,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/029-attached-is-the-location-of-a-red-rock.eml",
+      "topic": "deals",
+      "thread": 6,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/030-at-the-board-meeting-on-tuesday-a-copy.eml",
+      "topic": "board",
+      "thread": 18,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
       "fixture": "fixtures/031-confidential-board-pre-read-project-lark.eml",
       "topic": "board",
-      "thread": 28,
+      "thread": 24,
       "suggested_labels": [
         "Board"
       ]
@@ -270,7 +270,7 @@
     {
       "fixture": "fixtures/032-larkspur-deck-before-thursday.eml",
       "topic": "board",
-      "thread": 29,
+      "thread": 25,
       "suggested_labels": [
         "Board"
       ]

@@ -37,12 +37,12 @@ from mailsim.importers.pseudonymize import (
     Registry,
     external_meta,
     people_meta,
+    unknown_organisations,
     unknown_proper_nouns,
 )
 
 FORMAT = "mailsim.enron-corpus/1"
 MAX_SUBJECT = 120
-_PREFIX = re.compile(r"^\s*((re|fw|fwd)\s*:\s*)+", re.IGNORECASE)
 _GREETING = re.compile(
     r"^\s*(?:(?:Hi|Hello|Dear|Hey|Good morning|Morning)[ ,]+)?\{\{([pq]:\d+):[nfl]\}\}"
     r"\s*(?:[,:!\-]|$)"
@@ -117,12 +117,16 @@ class ImportStats:
 
 def select(rows: Iterable[tuple[str, int, str]], cfg: ImportConfig, harvester: Harvester,
            stats: ImportStats) -> list[tuple[str, str, int, str]]:  # fmt: skip
-    """Keyed-hash sample of `cfg.limit` rows (sorted by key); feeds the harvester."""
+    """Keyed-hash sample of `cfg.limit` rows (sorted by key); feeds the harvester. Rows outside
+    the size bounds are skipped before sampling, so the sample holds `limit` usable rows."""
     heap: list[tuple[str, str, int, str]] = []  # max-heap via negated ordering
     for shard, row, text in rows:
         stats.rows_read += 1
         if cfg.harvest_all:
             harvester.feed(text)
+        if not cfg.min_chars <= len(text) <= cfg.max_chars:
+            stats.dropped_size += 1
+            continue
         key = sample_key(cfg.seed, shard, row)
         item = (_neg(key), shard, row, text)
         if len(heap) < cfg.limit:
@@ -204,6 +208,7 @@ def build_record(raw: str, pseudo: Pseudonymizer, cfg: ImportConfig, stats: Impo
         "scores": result.scores,
         "keywords": result.keywords,
         "unknown_proper": len(unknown_proper_nouns(text, pseudo.reg)),
+        "unknown_orgs": len(unknown_organisations(text, pseudo.reg)),
         "leftover_headers": any(LEFTOVER.search(b) for b in bodies),
         "segments": out,
     }

@@ -61,20 +61,51 @@ _SIGNOFF_WORDS = re.compile(
     re.IGNORECASE,
 )
 PHONE = re.compile(
-    r"(?<![\w-])(?:\+?1[\s.-]?)?\(?\b\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}\b"
+    r"\b\d{2,3}-\d{2,3}-\d{3}-\d{4}\b"  # international without "+", e.g. 44-207-783-4040
+    r"|(?<![\w-])(?:\+?1[\s.-]?)?\(?\b\d{3}\)?[\s./-]\d{3}[\s.-]\d{4}\b"
     r"|(?<![\w-])\+\d{1,3}[\s.(]+\d[\d\s().-]{6,}\d"
     r"|(?<![\w/.-])\b\d{3}-\d{4}\b(?![\w/-])"
     r"|\b(?:ext\.?|x)\s?\d{4,5}\b"
     r"|\b(?:ext\.?|x)\s?\d[-.]\d{4}\b"
-    r"|(?<![\w/.$-])\d-\d{4}\b(?![\w/-])",
+    r"|(?<![\w/.$-])\d{1,2}-\d{4}\b(?![\w/-])",
     re.IGNORECASE,
 )
 SSN = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+ALNUM_ID = re.compile(r"\b[A-Z]{1,3}\d{6,}\b")  # personnel / member numbers (P00512345)
+_STATE_CODES = (
+    "AL|AK|AZ|AR|CA|CO|CT|DE|DC|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|"
+    "NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY"
+)
+_STATE_NAMES = (
+    "Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|Delaware|Florida|Georgia|"
+    "Hawaii|Idaho|Illinois|Indiana|Iowa|Kansas|Kentucky|Louisiana|Maine|Maryland|Massachusetts|"
+    "Michigan|Minnesota|Mississippi|Missouri|Montana|Nebraska|Nevada|Ohio|Oklahoma|Oregon|"
+    "Pennsylvania|Tennessee|Texas|Utah|Vermont|Virginia|Washington|Wisconsin|Wyoming|"
+    "New York|New Jersey|New Mexico|New Hampshire|North Carolina|North Dakota|South Carolina|"
+    "South Dakota|Rhode Island|West Virginia"
+)
+FAKE_ZIP = "79999"
+# ZIP codes in postal addresses (state + ZIP, any ZIP+4) and the former head-office ZIP anywhere
+ZIP_HQ = re.compile(
+    rf"\b77002(?:-\d{{4}})?\b|\b(?:{_STATE_CODES})\.?,?\s+(?!79999\b)\d{{5}}(?:-\d{{4}})?\b"
+    rf"|\b(?:{_STATE_NAMES}),?\s+(?!79999\b)\d{{5}}(?:-\d{{4}})?\b|\b(?!79999-0000)\d{{5}}-\d{{4}}\b"
+)
+
+
+def _fake_zip(m: re.Match[str]) -> str:
+    text = m.group(0)
+    head = re.match(r"\D*", text)
+    prefix = head.group(0) if head else ""
+    return prefix + (FAKE_ZIP + "-0000" if "-" in text[len(prefix) :] else FAKE_ZIP)
+
+
 LONG_DIGITS = re.compile(r"\b\d{8,}\b")
 STREET = re.compile(
     r"\b\d{1,5}\s+(?:[A-Z][a-z]+\s+){1,3}(?:Street|St\.|Avenue|Ave\.?|Road|Rd\.|Boulevard|"
-    r"Blvd\.?|Drive|Lane|Parkway|Pkwy\.?)"
+    r"Blvd\.?|Drive|Dr\.|Lane|Ln\.|Parkway|Pkwy\.?|Corridor|Way|Court|Ct\.|Circle|Place|Pl\.|"
+    r"Highway|Hwy\.?|Freeway|Fwy\.?|Trail|Terrace|Plaza|Square|Loop)"
 )
+PO_BOX = re.compile(r"\bP\.?\s?O\.?\s+Box\s+\d+", re.IGNORECASE)
 _WORD = re.compile(r"\b[a-z]{2,}\b")
 _CAP_WORD = re.compile(r"\b[A-Z][a-z]+\b")
 _LOWER_GREETING = re.compile(r"(?im)^(\s*(?:hi|hello|dear|hey|thanks|thx)[ ,]+)([a-z]{2,15})\b")
@@ -220,7 +251,8 @@ BLOCK = frozenset(
 )
 
 
-def _h(*parts: object) -> int:
+def stable_hash(*parts: object) -> int:
+    """Seeded, process-independent 64-bit hash (sha256) used for every deterministic choice."""
     data = "\x1f".join(str(p) for p in parts).encode()
     return int.from_bytes(hashlib.sha256(data).digest()[:8], "big")
 
@@ -434,7 +466,7 @@ class Pseudonymizer:
         host = re.sub(r"^(?:https?://)?", "", url, flags=re.IGNORECASE).split("/")[0].lower()
         if "enron" in host:
             return f"https://intranet.{N.COMPANY_DOMAIN}/"
-        org = N.FAKE_ORGS[_h(self.seed, "org", host) % len(N.FAKE_ORGS)]
+        org = N.FAKE_ORGS[stable_hash(self.seed, "org", host) % len(N.FAKE_ORGS)]
         return f"https://www.{org}.example.test/"
 
     def _fake_host(self, m: re.Match[str]) -> str:
@@ -443,7 +475,7 @@ class Pseudonymizer:
             return m.group(0)  # pragma: no cover - the pattern never matches .test
         if "enron" in host:
             return N.COMPANY_DOMAIN
-        return f"{N.FAKE_ORGS[_h(self.seed, 'org', host) % len(N.FAKE_ORGS)]}.example.test"
+        return f"{N.FAKE_ORGS[stable_hash(self.seed, 'org', host) % len(N.FAKE_ORGS)]}.example.test"
 
     def _lotus(self, m: re.Match[str], local: set[int]) -> str:
         groups = m.groups()
@@ -624,7 +656,7 @@ class Pseudonymizer:
 
     def _digits(self, text: str) -> str:
         def phone(m: re.Match[str]) -> str:
-            n = _h(self.seed, "tel", m.group(0)) % 100
+            n = stable_hash(self.seed, "tel", m.group(0)) % 100
             raw = m.group(0)
             if raw.lower().startswith(("x", "ext")):
                 return f"x55{n:02d}"
@@ -633,11 +665,18 @@ class Pseudonymizer:
             return f"(555) 555-01{n:02d}"
 
         text = SSN.sub("000-00-0000", text)
+        text = ALNUM_ID.sub(
+            lambda m: f"CV-{stable_hash(self.seed, 'id', m.group(0)) % 10**7:07d}", text
+        )
+        text = ZIP_HQ.sub(_fake_zip, text)
+        text = PO_BOX.sub("P.O. Box 100", text)
         text = PHONE.sub(phone, text)
         text = LONG_DIGITS.sub(
-            lambda m: str(_h(self.seed, "num", m.group(0)))[: len(m.group(0))], text
+            lambda m: str(stable_hash(self.seed, "num", m.group(0)))[: len(m.group(0))], text
         )
-        text = IPV4.sub(lambda m: f"192.0.2.{_h(self.seed, 'ip', m.group(0)) % 250 + 1}", text)
+        text = IPV4.sub(
+            lambda m: f"192.0.2.{stable_hash(self.seed, 'ip', m.group(0)) % 250 + 1}", text
+        )
         text = ROOM.sub("CT ", text)
         return STREET.sub("100 Commerce Street", text)
 
@@ -708,6 +747,33 @@ def unknown_proper_nouns(text: str, registry: Registry) -> list[str]:
         if tok.isupper() and len(tok) <= 4:
             continue
         out.append(tok)
+    # charset-mangled names ("G_nther", "Fran?ois") can never be checked against a vocabulary
+    out += re.findall(r"\b[A-Z][a-z]*[_?][a-z]+\b", bare)
+    return sorted(set(out))
+
+
+ORG = re.compile(
+    r"((?:\b[A-Z][A-Za-z&'.-]*\s+){1,3})(?:Media|Inc\b\.?|Incorporated|Corp\b\.?|Corporation|LLC|"
+    r"Ltd\b\.?|Limited|Company|Co\.|Group|Partners|Associates|Systems|Software|Technologies|"
+    r"Solutions|Consulting|Capital|Bank|Securities|Holdings|Ventures|Labs|Networks|"
+    r"Communications|Publishing|Research|Advisors|Advisory|Enterprises)\b"
+)
+
+
+def unknown_organisations(text: str, registry: Registry) -> list[str]:
+    """Organisation names ("Questia Media", "Acme Software Inc") whose distinctive words are
+    neither ordinary corpus words nor allowed/public names: possibly identifying private firms."""
+    bare = PLACEHOLDER.sub(" ", text)
+    out = []
+    for m in ORG.finditer(bare):
+        words = m.group(1).split()
+        odd = [
+            w for w in words
+            if not (registry.is_word(w) or w in N.PROPER_ALLOW or w in N.PUBLIC_ORGS
+                    or w.rstrip(".,").lower() in {"the", "and", "of", "&"})
+        ]  # fmt: skip
+        if odd:
+            out.append(m.group(0).strip())
     return sorted(set(out))
 
 
@@ -730,8 +796,8 @@ def fake_identity(seed: int, kind: str, num: int, *, real: frozenset[str], reser
     """Deterministic pseudonym for one placeholder id (never a real or reserved full name)."""
     salt = 0
     while True:
-        first = N.FAKE_FIRST[_h(seed, kind, num, "f", salt) % len(N.FAKE_FIRST)]
-        last = N.FAKE_LAST[_h(seed, kind, num, "l", salt) % len(N.FAKE_LAST)]
+        first = N.FAKE_FIRST[stable_hash(seed, kind, num, "f", salt) % len(N.FAKE_FIRST)]
+        last = N.FAKE_LAST[stable_hash(seed, kind, num, "l", salt) % len(N.FAKE_LAST)]
         full = f"{first} {last}".lower()
         if full not in real and full not in reserved:
             break
@@ -739,7 +805,7 @@ def fake_identity(seed: int, kind: str, num: int, *, real: frozenset[str], reser
     if internal:
         domain = N.COMPANY_DOMAIN
     else:
-        index = org if org is not None else _h(seed, kind, num, "org") % len(N.FAKE_ORGS)
+        index = org if org is not None else stable_hash(seed, kind, num, "org") % len(N.FAKE_ORGS)
         domain = f"{N.FAKE_ORGS[index % len(N.FAKE_ORGS)]}.example.test"
     local = f"{first}.{last}" if kind == "p" else f"{first[0]}{last}"
     return Identity(first, last, f"{local.lower()}@{domain}")
@@ -755,15 +821,29 @@ class Renderer:
     externals: dict[int, dict[str, object]] = field(default_factory=dict)
     real: frozenset[str] = frozenset()
     reserved: frozenset[str] = frozenset()
+    # per-scope (one scenario) assignments: two placeholder ids never share a full name
+    _assigned: dict[str, Identity] = field(default_factory=dict, init=False, repr=False)
+    _taken: set[str] = field(default_factory=set, init=False, repr=False)
+
+    def new_scope(self, taken: Iterable[str] = ()) -> None:
+        """Start a new output scope (scenario); `taken` are names already in use (personas)."""
+        self._assigned = {}
+        self._taken = {t.lower() for t in taken}
 
     def identity(self, ref: str) -> Identity:
+        if ref in self._assigned:
+            return self._assigned[ref]
         kind, _, num_s = ref.partition(":")
         num = int(num_s)
         meta = (self.people if kind == "p" else self.externals if kind == "x" else {}).get(num, {})
         org = meta.get("org")
-        return fake_identity(self.seed, kind, num, real=self.real, reserved=self.reserved,
-                             internal=bool(meta.get("internal", kind in ("q", "s"))),
-                             org=org if isinstance(org, int) else None)  # fmt: skip
+        ident = fake_identity(self.seed, kind, num, real=self.real,
+                              reserved=self.reserved | frozenset(self._taken),
+                              internal=bool(meta.get("internal", kind in ("q", "s"))),
+                              org=org if isinstance(org, int) else None)  # fmt: skip
+        self._assigned[ref] = ident
+        self._taken.add(ident.name.lower())
+        return ident
 
     def render(self, template: str, binding: dict[str, Identity] | None = None) -> str:
         binding = binding or {}
@@ -786,7 +866,7 @@ class Renderer:
 def org_index(seed: int, domain: str | None) -> int | None:
     if not domain:
         return None
-    return _h(seed, "org", domain) % len(N.FAKE_ORGS)
+    return stable_hash(seed, "org", domain) % len(N.FAKE_ORGS)
 
 
 def people_meta(registry: Registry, seed: int, pids: Iterable[int]) -> dict[int, dict[str, object]]:

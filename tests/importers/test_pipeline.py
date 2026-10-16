@@ -29,7 +29,8 @@ def test_import_is_deterministic_and_pseudonymized(shards, tmp_path):
     assert first == again
     assert (tmp_path / "a.jsonl").read_bytes() == (tmp_path / "b.jsonl").read_bytes()
     stats = header["stats"]
-    assert stats["rows_read"] == stats["sampled"] == len(make_texts())
+    assert stats["rows_read"] == len(make_texts())
+    assert stats["sampled"] == stats["rows_read"] - stats["dropped_size"]
     assert stats["dropped_size"] == 1 and stats["dropped_garbled"] == 1
     assert stats["records"] == len(recs) and set(stats["topics"]) >= {"finance", "board", "hr"}
     raw = (tmp_path / "a.jsonl").read_text().split("\n", 1)[1]  # records (header: metadata)
@@ -93,7 +94,12 @@ def test_cli_import_scan_generate(shards, tmp_path, capsys):
     leak = tmp_path / "leak.txt"
     leak.write_text("Forwarded by Marta Pellowe/HOU/ECT\ncall 713-853-1234\n")
     code, out = _run(capsys, "import", "scan", str(leak), "--names", str(reg))
-    assert code == 1 and out["by_kind"] == {"lotus-notes": 1, "phone": 1, "real-name": 1}
+    assert code == 1 and out["by_kind"] == {
+        "enron-acronym": 1,
+        "lotus-notes": 1,
+        "phone": 1,
+        "real-name": 1,
+    }
     # generate again: fixtures are replaced, output identical
     before = {p: p.read_bytes() for p in pack.rglob("*") if p.is_file()}
     _run(capsys, "generate", "leadership", "--corpus", str(corpus), "--out", str(pack), "--roles",
@@ -103,8 +109,16 @@ def test_cli_import_scan_generate(shards, tmp_path, capsys):
 
 
 def test_cli_errors(tmp_path, capsys, monkeypatch, shards):
-    code, out = _run(capsys, "generate", "leadership", "--corpus", str(tmp_path / "missing.jsonl"))
+    code, out = _run(capsys, "generate", "leadership", "--corpus", str(tmp_path / "missing.jsonl"),
+                     "--names", str(tmp_path / "missing.json"))  # fmt: skip
     assert code == 2 and out["code"] == "INVALID_REQUEST"
+    for argv in (["generate", "leadership", "--corpus", "c.jsonl"],  # --names or --no-names
+                 ["generate", "leadership", "--corpus", "c", "--no-names", "--days", "1"],
+                 ["import", "enron", "--parquet", "x.parquet", "--limit", "0"]):  # fmt: skip
+        with pytest.raises(SystemExit) as exc:
+            main(argv)
+        assert exc.value.code == 2
+    capsys.readouterr()
     real_import = builtins.__import__
 
     def no_pyarrow(name, *a, **kw):
@@ -119,6 +133,19 @@ def test_cli_errors(tmp_path, capsys, monkeypatch, shards):
     monkeypatch.setattr(builtins, "__import__", real_import)
     with pytest.raises(FileNotFoundError):
         enron.read_corpus(Path(tmp_path / "nope"))
+
+
+def test_cli_generate_without_registry_warns(shards, tmp_path, capsys):
+    corpus = tmp_path / "corpus.jsonl"
+    enron.write_corpus(corpus, *enron.import_enron(shards, enron.ImportConfig(limit=1000))[:2])
+    code, out = _run(capsys, "generate", "leadership", "--corpus", str(corpus), "--out",
+                     str(tmp_path / "p"), "--roles", "coo", "--volume", "coo=3", "--no-names")  # fmt: skip
+    assert code == 0 and out["scenarios"][0]["messages"] == 3
+
+
+def test_size_filter_applies_before_sampling(shards):
+    _, header, _ = enron.import_enron(shards, enron.ImportConfig(limit=5, seed=1, min_chars=40))
+    assert header["stats"]["sampled"] == 5 and header["stats"]["dropped_size"] == 1
 
 
 def test_cli_still_raises_unexpected_errors_for_engine_commands(monkeypatch):

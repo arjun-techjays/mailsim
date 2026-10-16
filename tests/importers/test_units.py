@@ -99,7 +99,7 @@ def _pseudo(text: str, seed: int = 5) -> Pseudonymizer:
 
 def test_harvest_and_template():
     corpus = (
-        LOTUS_CHAIN + OUTLOOK_CHAIN + LOTUS_REPLY + "Andrea Ring/HOU/ECT@ECT\n"
+        LOTUS_CHAIN + OUTLOOK_CHAIN + LOTUS_REPLY + "Paula Stonebridge/HOU/ECT@ECT\n"
         "Outlook Migration Team/Corp/Enron@ENRON\n"
     )
     p = _pseudo(corpus)
@@ -107,7 +107,7 @@ def test_harvest_and_template():
     assert (
         reg.lookup("Marta", "Pellowe") is not None and reg.lookup("Ferris", "Ockenden") is not None
     )
-    assert reg.lookup("Andrea", "Ring") is not None  # common first name, ordinary surname
+    assert reg.lookup("Paula", "Stonebridge") is not None  # common first name, ordinary surname
     assert reg.lookup("Outlook", "Team") is None
     assert reg.lookup("Vince", "Kaminski") is not None  # seed list
     marta = reg.lookup("Marta", "Pellowe")
@@ -172,7 +172,7 @@ def test_scanner_detects_every_kind():
     )
     kinds = {f.kind for f in s.scan_text(text, "t")}
     assert kinds == {"enron", "real-name", "real-surname", "lotus-notes", "phone", "ssn",
-                     "email-domain", "domain"}  # fmt: skip
+                     "email-domain", "domain", "enron-acronym"}  # fmt: skip
     assert s.scan_text(text.splitlines()[-1]) == []
     assert str(s.scan_text("Enron")[0]).startswith("<text>:1: enron")
 
@@ -200,3 +200,50 @@ def test_contractions_are_never_names():
 def test_scanner_flags_address_fragments():
     kinds = [f.kind for f in Scanner().scan_text("<jdoe@Corp-\nok a@b.example.test")]
     assert kinds == ["email-domain"]
+
+
+def test_phone_forms_ids_and_zips_are_replaced_and_scanned():
+    p = _pseudo(LOTUS_CHAIN)
+    raw = (
+        "Call 555/321-4567 or 555/321-4568, London 44-201-555-0000, ext 12-3456 or 1-2345.\n"
+        "Employee P00123456 / AB12345678 / member EG123456.\n100 Main St, Riverton, Texas 77002-1234; TX 77010.\n"
+    )
+    t = p.apply(raw).text
+    for real in ("321-4567", "321-4568", "44-201-555-0000", "12-3456", "1-2345", "P00123456",
+                 "AB12345678", "EG123456", "77002", "77010"):  # fmt: skip
+        assert real not in t, real
+    assert "CV-" in t and "79999" in t
+    s = Scanner()
+    kinds = {f.kind for f in s.scan_text(raw)}
+    assert {"phone", "personnel-id", "zip"} <= kinds
+    assert s.scan_text(t) == []
+    assert {f.kind for f in s.scan_text("EPMI and ENE desks")} == {"enron-acronym"}
+    assert "EPMI" not in p.apply("the EPMI desk").text
+
+
+def test_mangled_names_and_unknown_organisations():
+    p = _pseudo(LOTUS_CHAIN + "the media group and the bank. " * 3)
+    assert "G_nther" in unknown_proper_nouns("Thanks G_nther and Fran?ois", p.reg)
+    from mailsim.importers.pseudonymize import unknown_organisations
+
+    found = unknown_organisations(
+        "Quixly Media sent it; the ERCOT Group and The Bank agreed.", p.reg
+    )
+    assert found == ["Quixly Media"]
+
+
+def test_scanner_token_pairs_match_initials_and_case():
+    s = Scanner(extra_names=["Wendell Quarrick"])
+    assert [f.match for f in s.scan_text("met WENDELL Q. QUARRICK and wendell quarrick")] == [
+        "WENDELL QUARRICK", "wendell quarrick"]  # fmt: skip
+    assert s.scan_text("Wendell spoke to Quarrick") == []
+
+
+def test_postal_details_are_scrubbed():
+    p = _pseudo(LOTUS_CHAIN)
+    raw = "Suite 2, Memphis, TN 38120. Ship to 20171-4600, P.O. Box 748, 1181 Gothic Corridor.\n"
+    t = p.apply(raw).text
+    assert "38120" not in t and "20171" not in t and "748" not in t and "Gothic" not in t
+    assert "TN 79999" in t and "79999-0000" in t and "P.O. Box 100" in t
+    assert {f.kind for f in Scanner().scan_text(raw)} >= {"zip"}
+    assert Scanner().scan_text(t) == []

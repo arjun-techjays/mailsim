@@ -128,39 +128,39 @@ scenario:
   - owner: cfo
     initial_messages:
     - fixture: fixtures/001-iso-special-8-10-00-report-on-energy-mar.eml
-    - fixture: fixtures/002-attached-for-your-review-is-the-revised-.eml
-    - fixture: fixtures/003-competition-under-electric-deregulation-.eml
+    - fixture: fixtures/002-flora-delacroix.eml
+    - fixture: fixtures/003-re-flora-delacroix.eml
     - fixture: fixtures/004-please-email-your-time-exceptions-to-sor.eml
-    - fixture: fixtures/005-do-you-do-expense-reports-and-have-not.eml
-    - fixture: fixtures/006-draft-letter.eml
-    - fixture: fixtures/007-re-draft-letter.eml
-    - fixture: fixtures/008-how-is-it-going-buddy.eml
-    - fixture: fixtures/009-fenella-cashout-entries-5-00-and-6-00.eml
-    - fixture: fixtures/010-just-want-to-let-you-know-that-i.eml
-    - fixture: fixtures/011-re-fenella-cashout-entries-5-00-and-6-00.eml
-    - fixture: fixtures/012-re-draft-letter.eml
-    - fixture: fixtures/013-quotes-xls-sorry-about-the-sparse-quotes.eml
-    - fixture: fixtures/014-rohan-bill-silas-and-i-got-together-to.eml
-    - fixture: fixtures/015-it-should-be-the-chairman-s-choice-but-i.eml
-    - fixture: fixtures/016-hollis-and-i-have-developed-significant-.eml
-    - fixture: fixtures/017-highlights-of-ab21x-that-passed-the-ab-a.eml
-    - fixture: fixtures/018-please-find-attached-the-captioned-repor.eml
-    - fixture: fixtures/019-message.eml
-    - fixture: fixtures/020-yahoo.eml
-    - fixture: fixtures/021-mira-support-services-and-risk-analytics.eml
-    - fixture: fixtures/022-fw-dj-locals-seen-yelling-at-bellamy-boa.eml
-    - fixture: fixtures/023-i-suggest-we-combine-the-negative-ctc-li.eml
-    - fixture: fixtures/024-attached-is-an-updated-document-for-any-.eml
-    - fixture: fixtures/025-on-march-19th-the-foundation-for-taxpaye.eml
-    - fixture: fixtures/026-here-is-a-quick-and-dirty-worksheet.eml
-    - fixture: fixtures/027-please-mark-your-calendars.eml
-    - fixture: fixtures/028-puget-energy.eml
-    - fixture: fixtures/029-fw-isak.eml
+    - fixture: fixtures/005-re-flora-delacroix.eml
+    - fixture: fixtures/006-please-join-corvane-training-sessions-11.eml
+    - fixture: fixtures/007-ethink-stuff-for-sale.eml
+    - fixture: fixtures/008-i-just-wanted-to-thank-you-for-taking.eml
+    - fixture: fixtures/009-alma-is-going-to-be-in-japan-on.eml
+    - fixture: fixtures/010-the-following-is-our-close-schedule-for-.eml
+    - fixture: fixtures/011-greer-alert-legislators-propose-tax-on-e.eml
+    - fixture: fixtures/012-i-am-sure-this-is-a-joke.eml
+    - fixture: fixtures/013-fw-camille-everly.eml
+    - fixture: fixtures/014-update-vpn-ipass-remote-access.eml
+    - fixture: fixtures/015-re-update-vpn-ipass-remote-access.eml
+    - fixture: fixtures/016-i-m-emailing-all-of-you-because-i-never.eml
+    - fixture: fixtures/017-per-rhea-s-request-please-find-attached-.eml
+    - fixture: fixtures/018-the-purpose-of-this-survey-is-to-gather.eml
+    - fixture: fixtures/019-did-we-ever-come-to-terms-with-galloway.eml
+    - fixture: fixtures/020-retail-markets-conference.eml
+    - fixture: fixtures/021-re-retail-markets-conference.eml
+    - fixture: fixtures/022-fw-if-the-phone-company-ran-a-restaurant.eml
+    - fixture: fixtures/023-puget-energy.eml
+    - fixture: fixtures/024-fw-isak.eml
+    - fixture: fixtures/025-to-hiring-managers-and-assistants-please.eml
+    - fixture: fixtures/026-yes-i-had-already-approved-them-for-trad.eml
+    - fixture: fixtures/027-the-report-named-var-and-peak-position-r.eml
+    - fixture: fixtures/028-re-puget-energy.eml
+    - fixture: fixtures/029-this-is-to-remind-you-that-various-anony.eml
     - fixture: fixtures/030-re-puget-energy.eml
-    - fixture: fixtures/031-fw-ctr-credit-responses-08-11-00.eml
-    - fixture: fixtures/032-re-puget-energy.eml
-    - fixture: fixtures/033-ubs-have-organized-an-important-meeting-.eml
-    - fixture: fixtures/034-please-join-rohan-desai-on-wednesday-oct.eml
+    - fixture: fixtures/031-elias.eml
+    - fixture: fixtures/032-fenella-exchange-deal-march-2024.eml
+    - fixture: fixtures/033-re-elias.eml
+    - fixture: fixtures/034-re-fenella-exchange-deal-march-2024.eml
     - fixture: fixtures/035-urgent-confidential-payment-today.eml
     - fixture: fixtures/036-updated-remittance-details-invoice-ns-20.eml
   - owner: cbo

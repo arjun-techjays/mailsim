@@ -142,6 +142,12 @@ forbidden_modules = ["mailsim.engine.core"]
 allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
+name = "Corpus importers are offline tooling: nothing agent-facing or in the engine imports them"
+type = "forbidden"
+source_modules = ["mailsim.api", "mailsim.mcp", "mailsim.adapters", "mailsim.protocols", "mailsim.runner", "mailsim.bench", "mailsim.engine", "mailsim.personas", "mailsim.evaluation", "mailsim.llm", "mailsim.serve"]
+forbidden_modules = ["mailsim.importers"]
+
+[[tool.importlinter.contracts]]
 name = "Only the gateway may touch concrete LLM providers"
 type = "forbidden"
 source_modules = ["mailsim.engine", "mailsim.evaluation", "mailsim.adapters", "mailsim.protocols", "mailsim.api", "mailsim.mcp", "mailsim.scenario", "mailsim.store", "mailsim.personas", "mailsim.runner", "mailsim.bench", "mailsim.cli"]

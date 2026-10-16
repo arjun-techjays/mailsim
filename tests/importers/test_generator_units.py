@@ -20,7 +20,7 @@ def seg(**kw):
 
 
 def rec(rid, *segments, topic="finance"):
-    return {"id": rid, "topic": topic, "unknown_proper": 0, "leftover_headers": False,
+    return {"id": rid, "topic": topic, "unknown_proper": 0, "unknown_orgs": 0, "leftover_headers": False,
             "segments": list(segments)}  # fmt: skip
 
 
@@ -124,3 +124,24 @@ def test_pseudonymizer_branches():
     p.apply("mail me at zed@enron.com")
     meta = external_meta(p, range(len(p.email_domains)))
     assert any(v["internal"] for v in meta.values())
+
+
+def test_days_validation_and_year_shift():
+    import pytest
+
+    with pytest.raises(ValueError, match="days"):
+        Generator(HEADER, [], GenerateOptions(days=1))
+    from mailsim.importers.leadership import shift_years
+
+    assert shift_years("2000 MW in 2001; 01/02/2002, March 4, 2000, 2000-2001", 24) == (
+        "2000 MW in 2025; 01/02/2026, March 4, 2024, 2024-2025")  # fmt: skip
+
+
+def test_pseudonyms_never_collide_within_a_scenario():
+    from mailsim.importers.pseudonymize import Renderer
+
+    r = Renderer(1)
+    r.new_scope(["Helena Marsh"])
+    names = [r.identity(f"p:{i}").name for i in range(400)]
+    assert len(set(names)) == len(names) and "Helena Marsh" not in names
+    assert r.identity("p:3") is r.identity("p:3")
