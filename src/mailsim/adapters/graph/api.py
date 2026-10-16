@@ -45,6 +45,9 @@ BASES = ("/me", "/users/{user_id}")
 ENGINE_PAGE = 500
 DELTA_DEFAULT_PAGE = 10
 MAX_TOP_WITH_ATTACHMENTS = 50
+# $expand=attachments on a list: a page stops before the attachment bytes it carries would
+# exceed this (always at least one message; the rest via @odata.nextLink)
+MAX_EXPANDED_ATTACHMENT_BYTES = 25 * 1024 * 1024
 ITEM_NOT_FOUND = "The specified object was not found in the store."
 LIST_OPTIONS = frozenset(
     {"$top", "$skip", "$skiptoken", "$select", "$filter", "$orderby", "$count", "$search",
@@ -523,6 +526,8 @@ def list_messages(ctx: Ctx, folder: FolderRef | None) -> JSONResponse:
     order = odata.parse_orderby(q["$orderby"]) if "$orderby" in q else [("receivedDateTime", True)]
     docs = ordered(matching(ctx, folder), order)
     page = docs[skip : skip + top]
+    if expand is not None and expand.attachments:
+        page = _within_attachment_budget(page)
     body: dict[str, Any] = {
         "@odata.context": context_url(request, "users('me')/messages"),
         "value": [
@@ -532,9 +537,21 @@ def list_messages(ctx: Ctx, folder: FolderRef | None) -> JSONResponse:
     }
     if count == "true":
         body["@odata.count"] = len(docs)
-    if skip + top < len(docs):
-        body["@odata.nextLink"] = link(request, {"$skip": str(skip + top)}, ("$skiptoken",))
+    if skip + len(page) < len(docs):
+        body["@odata.nextLink"] = link(request, {"$skip": str(skip + len(page))},
+                                       ("$skiptoken",))  # fmt: skip
     return ok(body, headers=prefer.applied())
+
+
+def _within_attachment_budget(page: list[Any]) -> list[Any]:
+    """The longest prefix of `page` (at least one message) whose attachments total at most
+    MAX_EXPANDED_ATTACHMENT_BYTES (sizes from metadata, before any bytes are read)."""
+    total = 0
+    for i, (m, _) in enumerate(page):
+        total += sum(a.size for a in m.attachments)
+        if total > MAX_EXPANDED_ATTACHMENT_BYTES and i > 0:
+            return page[:i]
+    return page
 
 
 def count_messages(ctx: Ctx, folder: FolderRef | None) -> Response:
@@ -600,7 +617,7 @@ def _delta(ctx: Ctx, folder: FolderRef | None) -> JSONResponse:
         return ok(body, headers=prefer.applied())
     feed = ctx.mb.list_changes(int(state["s"]), limit=size)  # bounds the per-round fan-out
     if feed["reset_since"]:
-        raise SyncStateGone("The sync state is no longer valid (the run was reset); "
+        raise SyncStateGone("The sync state is no longer valid; "
                             "restart the sync without a token.")  # fmt: skip
     ids = list(dict.fromkeys(c["message_id"] for c in feed["changes"] if c["message_id"]))
     items = []

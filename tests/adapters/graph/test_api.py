@@ -690,3 +690,25 @@ def test_reply_overrides_are_one_engine_reply(env, tmp_path, world):
     headers = {h["name"]: h["value"] for h in sent[0]["internetMessageHeaders"]}
     assert sent[0]["subject"] == "Re: INV-001 verification"
     assert headers["In-Reply-To"] == "<invoice-001@example.test>"
+
+
+def test_expanded_attachment_bytes_are_capped_per_page(world, monkeypatch):
+    from email.message import EmailMessage
+
+    msg = EmailMessage()
+    msg["From"], msg["To"], msg["Subject"] = "vendor@example.test", "finance@example.test", "pdf2"
+    msg.set_content("second")
+    msg.add_attachment(b"%PDF-2" * 10, maintype="application", subtype="pdf", filename="b.pdf")
+    world.ctl.inject(world.run, world.mailbox, msg.as_bytes())
+    monkeypatch.setattr(graph_api, "MAX_EXPANDED_ATTACHMENT_BYTES", 50)  # one PDF per page
+    params = {"$expand": "attachments", "$filter": "hasAttachments eq true", "$top": 10}
+    first = world.get("/me/messages", params=params)
+    assert len(first["value"]) == 1 and first["value"][0]["attachments"][0]["contentBytes"]
+    r = world.client.get(first["@odata.nextLink"])
+    assert r.status_code == 200, r.text
+    second = r.json()
+    assert len(second["value"]) == 1 and "@odata.nextLink" not in second
+    assert {first["value"][0]["subject"], second["value"][0]["subject"]} == {
+        "Invoice INV-001", "pdf2"}  # fmt: skip
+    monkeypatch.setattr(graph_api, "MAX_EXPANDED_ATTACHMENT_BYTES", 10**6)
+    assert len(world.get("/me/messages", params=params)["value"]) == 2

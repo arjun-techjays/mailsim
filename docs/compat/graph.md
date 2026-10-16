@@ -143,7 +143,7 @@ other value clears it). Other extended properties are not supported.
 
 | Option | Support |
 |---|---|
-| `$top` | 1..1000, default 10 (or `Prefer: odata.maxpagesize=N`); at most 50 per page with `$expand=attachments` (the rest via `@odata.nextLink`) |
+| `$top` | 1..1000, default 10 (or `Prefer: odata.maxpagesize=N`); with `$expand=attachments` at most 50 per page, and a page ends before its attachments would exceed 25 MiB in total (always at least one message; the rest via `@odata.nextLink`) |
 | `$skip` | offset; `@odata.nextLink` carries `$skip` like Graph's message lists |
 | `$skiptoken` | opaque token from a delta `@odata.nextLink`; also accepted on lists |
 | `$count=true` | `@odata.count` |
@@ -209,7 +209,8 @@ ErrorNotSupported`.
   at most that many message reads) and continues with `@odata.nextLink`.
 - Tokens are opaque; `$select` is kept on the links. `$filter`/`$orderby` on delta are not
   supported.
-- After a run reset, an older token answers `410 SyncStateNotFound`: restart without a token.
+- After a run reset, an older token answers `410 SyncStateNotFound` ("The sync state is no
+  longer valid"): restart without a token.
 
 ## Identifiers
 
@@ -241,9 +242,9 @@ Body: `{"error": {"code", "message", "innerError": {"request-id", "client-reques
 | `PERMISSION_DENIED` | 403 | `ErrorAccessDenied` |
 | `EXTERNAL_DELIVERY_BLOCKED` | 403 | `ErrorMessageSubmissionBlocked` |
 | `CONFLICT` | 409 | `ErrorIrresolvableConflict` |
-| `RUN_NOT_ACTIVE` | 412 | `ErrorPreconditionFailed` |
+| `RUN_NOT_ACTIVE` | 412 | `ErrorPreconditionFailed` ("mailbox is not available") |
 | `RATE_LIMITED` | 429 (+ `Retry-After: 1`) | `ErrorTooManyRequests` |
-| `SIMULATION_LIMIT_EXCEEDED` | 429 | `ErrorQuotaExceeded` |
+| `SIMULATION_LIMIT_EXCEEDED` | 429 | `ErrorQuotaExceeded` ("action limit reached") |
 | `UNSUPPORTED_OPERATION` (incl. any path outside the profile) | 501 | `ErrorNotSupported` |
 | `UPSTREAM_UNAVAILABLE` | 503 | `ErrorServiceUnavailable` |
 | stale delta token | 410 | `SyncStateNotFound` |
