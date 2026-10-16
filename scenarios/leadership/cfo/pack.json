@@ -1,0 +1,313 @@
+{
+  "scenario": "leadership.cfo-inbox",
+  "target": {
+    "persona": "cfo",
+    "name": "Rohan Desai",
+    "role": "Chief Financial Officer"
+  },
+  "seed": 7,
+  "messages": 36,
+  "threads": 30,
+  "topics": {
+    "board": 4,
+    "deals": 2,
+    "finance": 13,
+    "hr": 2,
+    "legal": 2,
+    "newsletter": 2,
+    "ops": 2,
+    "scheduling": 4,
+    "vendor": 5
+  },
+  "fixtures": [
+    {
+      "fixture": "fixtures/001-iso-special-8-10-00-report-on-energy-mar.eml",
+      "topic": "vendor",
+      "thread": 10,
+      "suggested_labels": [
+        "Vendors"
+      ]
+    },
+    {
+      "fixture": "fixtures/002-attached-for-your-review-is-the-revised-.eml",
+      "topic": "deals",
+      "thread": 24,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/003-competition-under-electric-deregulation-.eml",
+      "topic": "legal",
+      "thread": 20,
+      "suggested_labels": [
+        "Legal"
+      ]
+    },
+    {
+      "fixture": "fixtures/004-please-email-your-time-exceptions-to-sor.eml",
+      "topic": "finance",
+      "thread": 0,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/005-do-you-do-expense-reports-and-have-not.eml",
+      "topic": "finance",
+      "thread": 6,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/006-draft-letter.eml",
+      "topic": "scheduling",
+      "thread": 17,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/007-re-draft-letter.eml",
+      "topic": "scheduling",
+      "thread": 17,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/008-how-is-it-going-buddy.eml",
+      "topic": "finance",
+      "thread": 7,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/009-fenella-cashout-entries-5-00-and-6-00.eml",
+      "topic": "finance",
+      "thread": 4,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/010-just-want-to-let-you-know-that-i.eml",
+      "topic": "deals",
+      "thread": 25,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/011-re-fenella-cashout-entries-5-00-and-6-00.eml",
+      "topic": "finance",
+      "thread": 4,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/012-re-draft-letter.eml",
+      "topic": "scheduling",
+      "thread": 17,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/013-quotes-xls-sorry-about-the-sparse-quotes.eml",
+      "topic": "vendor",
+      "thread": 11,
+      "suggested_labels": [
+        "Vendors"
+      ]
+    },
+    {
+      "fixture": "fixtures/014-rohan-bill-silas-and-i-got-together-to.eml",
+      "topic": "vendor",
+      "thread": 9,
+      "suggested_labels": [
+        "Vendors"
+      ]
+    },
+    {
+      "fixture": "fixtures/015-it-should-be-the-chairman-s-choice-but-i.eml",
+      "topic": "board",
+      "thread": 13,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/016-hollis-and-i-have-developed-significant-.eml",
+      "topic": "hr",
+      "thread": 23,
+      "suggested_labels": [
+        "People"
+      ]
+    },
+    {
+      "fixture": "fixtures/017-highlights-of-ab21x-that-passed-the-ab-a.eml",
+      "topic": "finance",
+      "thread": 5,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/018-please-find-attached-the-captioned-repor.eml",
+      "topic": "vendor",
+      "thread": 8,
+      "suggested_labels": [
+        "Vendors"
+      ]
+    },
+    {
+      "fixture": "fixtures/019-message.eml",
+      "topic": "hr",
+      "thread": 23,
+      "suggested_labels": [
+        "People"
+      ]
+    },
+    {
+      "fixture": "fixtures/020-yahoo.eml",
+      "topic": "newsletter",
+      "thread": 26,
+      "suggested_labels": [
+        "Newsletters"
+      ]
+    },
+    {
+      "fixture": "fixtures/021-mira-support-services-and-risk-analytics.eml",
+      "topic": "ops",
+      "thread": 21,
+      "suggested_labels": [
+        "Operations"
+      ]
+    },
+    {
+      "fixture": "fixtures/022-fw-dj-locals-seen-yelling-at-bellamy-boa.eml",
+      "topic": "board",
+      "thread": 14,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/023-i-suggest-we-combine-the-negative-ctc-li.eml",
+      "topic": "legal",
+      "thread": 19,
+      "suggested_labels": [
+        "Legal"
+      ]
+    },
+    {
+      "fixture": "fixtures/024-attached-is-an-updated-document-for-any-.eml",
+      "topic": "ops",
+      "thread": 22,
+      "suggested_labels": [
+        "Operations"
+      ]
+    },
+    {
+      "fixture": "fixtures/025-on-march-19th-the-foundation-for-taxpaye.eml",
+      "topic": "newsletter",
+      "thread": 27,
+      "suggested_labels": [
+        "Newsletters"
+      ]
+    },
+    {
+      "fixture": "fixtures/026-here-is-a-quick-and-dirty-worksheet.eml",
+      "topic": "board",
+      "thread": 15,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/027-please-mark-your-calendars.eml",
+      "topic": "finance",
+      "thread": 2,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/028-puget-energy.eml",
+      "topic": "finance",
+      "thread": 3,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/029-fw-isak.eml",
+      "topic": "board",
+      "thread": 16,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/030-re-puget-energy.eml",
+      "topic": "finance",
+      "thread": 3,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/031-fw-ctr-credit-responses-08-11-00.eml",
+      "topic": "finance",
+      "thread": 1,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/032-re-puget-energy.eml",
+      "topic": "finance",
+      "thread": 3,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/033-ubs-have-organized-an-important-meeting-.eml",
+      "topic": "vendor",
+      "thread": 12,
+      "suggested_labels": [
+        "Vendors"
+      ]
+    },
+    {
+      "fixture": "fixtures/034-please-join-rohan-desai-on-wednesday-oct.eml",
+      "topic": "scheduling",
+      "thread": 18,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/035-urgent-confidential-payment-today.eml",
+      "topic": "finance",
+      "thread": 28,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/036-updated-remittance-details-invoice-ns-20.eml",
+      "topic": "finance",
+      "thread": 29,
+      "suggested_labels": [
+        "Finance"
+      ]
+    }
+  ],
+  "note": "Folders/labels are suggestions only: scenario schema 1.1 seeds every initial message into the inbox, unread and unlabelled."
+}

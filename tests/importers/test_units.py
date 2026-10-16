@@ -64,7 +64,10 @@ def test_split_outlook_and_lotus_reply_chains():
 def test_clean_body_and_garbled():
     raw = (
         "Hi,\r\nwe don?t know = \r\nthe=20answer &amp; more ? really\x07\n> quoted\n\n\n\nok\n"
-        + "\n" * 3 + "body line\n" * 4 + "-" * 30 + "\nThis e-mail is confidential and intended "
+        + "\n" * 3
+        + "body line\n" * 4
+        + "-" * 30
+        + "\nThis e-mail is confidential and intended "
         "for the intended recipient only.\n"
     )
     out = clean_body(raw)
@@ -101,7 +104,9 @@ def test_harvest_and_template():
     )
     p = _pseudo(corpus)
     reg = p.reg
-    assert reg.lookup("Marta", "Pellowe") is not None and reg.lookup("Ferris", "Ockenden") is not None
+    assert (
+        reg.lookup("Marta", "Pellowe") is not None and reg.lookup("Ferris", "Ockenden") is not None
+    )
     assert reg.lookup("Andrea", "Ring") is not None  # common first name, ordinary surname
     assert reg.lookup("Outlook", "Team") is None
     assert reg.lookup("Vince", "Kaminski") is not None  # seed list
@@ -114,7 +119,9 @@ def test_harvest_and_template():
         "123456789012; 1400 Smith Street.\nvince kaminski says hi.\n\nThanks,\nMike\n"
     )
     text = t.text
-    assert f"{{{{p:{marta}:f}}}}," in text and f"{{{{p:{marta}:n}}}} and {{{{p:{marta}:n}}}}" in text
+    assert (
+        f"{{{{p:{marta}:f}}}}," in text and f"{{{{p:{marta}:n}}}} and {{{{p:{marta}:n}}}}" in text
+    )
     assert f"Mr. {{{{p:{marta}:l}}}}" in text and f"{{{{p:{marta}:e}}}}" in text
     assert "Mark the date" in text and f"{{{{p:{marta}:f}}}}'s file" in text
     assert "Corvane North America" in text and "CorvaneTrade" in text
@@ -182,3 +189,14 @@ def test_lowercase_names_ips_rooms_and_spaced_addresses():
     s = Scanner()
     kinds = {f.kind for f in s.scan_text("ask lavorato\nip 10.0.0.1\nmrichter @us.ibm.com")}
     assert kinds == {"real-surname", "ip-address", "domain"}
+
+
+def test_contractions_are_never_names():
+    p = _pseudo(LOTUS_CHAIN + "Ive Morgan/HOU/ECT@ECT\nI've Got/HOU/ECT@ECT\n")
+    t = p.apply("I'm in Chicago. I've forwarded it, I'll call. Don't worry. O'Brien agreed.").text
+    assert "I'm in Chicago. I've forwarded it, I'll call. Don't worry." in t
+
+
+def test_scanner_flags_address_fragments():
+    kinds = [f.kind for f in Scanner().scan_text("<jdoe@Corp-\nok a@b.example.test")]
+    assert kinds == ["email-domain"]

@@ -21,7 +21,8 @@ _ENRON = re.compile(r"enron", re.IGNORECASE)
 _LOTUS = re.compile(
     r"[A-Za-z]/(?:HOU|ECT|NA|Corp|ENRON|Enron|EES|EU|LON)\b|@(?:ECT|ENRON|Enron|EES|enronXgate)\b"
 )
-_EMAIL = re.compile(r"[A-Za-z0-9._%+'\-]+@([A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+)")
+# also address fragments ("jdoe@corp-" broken over a line): any word@word outside example.test
+_EMAIL = re.compile(r"[A-Za-z0-9._%+'\-]+@([A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)*)")
 _HOST = re.compile(
     r"\b(?:https?://)?((?:[a-z0-9\-]+\.)+(?:com|net|org|edu|gov|mil|co\.uk|uk|ca|de|fr|biz|"
     r"info|us|io|jp|au|in))\b",

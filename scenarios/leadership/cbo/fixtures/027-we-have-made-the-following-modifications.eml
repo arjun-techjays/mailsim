@@ -1,0 +1,43 @@
+Message-ID: <acecd2e98d49e5050e46@northstar-partners.example.test>
+Date: Tue, 13 Oct 2026 21:47:00 +0000
+From: Sam Adeyemi <sam.adeyemi@northstar-partners.example.test>
+To: Helena Marsh <helena.marsh@corvane.example.test>
+Cc: Natalie Okafor <natalie.okafor@corvane.example.test>
+Subject: We have made the following modifications to the...
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+We have made the following modifications to the CorvaneTrade applications.
+
+Stack Manager Changes
+
+Fill Order Enhancements - (Effective Tuesday September 25)
+- To fill a Top of Stack order in Stack Manager, Right click on the pink shad=
+ed order in the depth window of Stack Manager and select fill.
+- The trader now has the ability to fill limit orders that appear at the top =
+of the trader's stack on both sides.
+- The order will now be filled at the full order volume regardless of the tra=
+der's stack volume.
+- Filling an order will not move the trader's price or cause a hedge to occur.
+
+Resize floated stack windows- (Effective Tuesday September 25)
+
+You will now have the ability to resize the stack window to the desired exten=
+t.
+
+Website Changes ( Effective Monday September 24)
+
+Limit Order Restrictions on Physical Transactions -
+- Customers will not be allowed to transact with themselves on physical trans=
+actions. If a top of stack limit order has been placed on a physical product =
+the counterparty or desk that placed the order will not be allowed to transac=
+t on it.
+- If a customer or desk has top of stack limit orders at different prices on =
+both the bid and offer and subsequently moves the price of one so that they a=
+re at the same price, both orders will be cancelled. The customer would have =
+effectively transacted with himself.
+
+Please call me if you have any questions. Thanks.
+
+Tobias ( x5565)

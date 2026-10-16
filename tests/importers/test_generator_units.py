@@ -35,9 +35,20 @@ def _gen(records, volume=3):
 
 def test_forward_embeds_original_and_fyi():
     records = [
-        rec("r1", seg(author="p:1", to=["p:2"], subject="plan notes", kind="forward",
-                      forwarded_by="p:2", body=f"{{{{p:2:f}}}},\n\n{BODY}\n\n{{{{p:1:f}}}}",
-                      greeting="p:2", signoff="p:1"), seg(body="")),  # fmt: skip
+        rec(
+            "r1",
+            seg(
+                author="p:1",
+                to=["p:2"],
+                subject="plan notes",
+                kind="forward",
+                forwarded_by="p:2",
+                body=f"{{{{p:2:f}}}},\n\n{BODY}\n\n{{{{p:1:f}}}}",
+                greeting="p:2",
+                signoff="p:1",
+            ),
+            seg(body=""),
+        ),  # fmt: skip
     ]
     sc = _gen(records, volume=1).generate_role("coo")
     assert sc.messages == 1
@@ -54,11 +65,19 @@ def test_unbindable_pii_and_fallbacks():
         rec("r1", seg(subject="a", kind="forward"), seg()),
         # the greeting names someone other than the addressee in one segment, the author in
         # the next: contradictory binding
-        rec("r2", seg(author="p:1", subject="b", kind="reply", greeting="p:2"),
-            seg(greeting="p:2", signoff="p:2"), seg(signoff="p:2")),  # fmt: skip
+        rec(
+            "r2",
+            seg(author="p:1", subject="b", kind="reply", greeting="p:2"),
+            seg(greeting="p:2", signoff="p:2"),
+            seg(signoff="p:2"),
+        ),  # fmt: skip
         # thread longer than the remaining quota
-        rec("r4", seg(author="p:1", subject="c", kind="reply"), seg(author="p:2", kind="reply"),
-            seg()),  # fmt: skip
+        rec(
+            "r4",
+            seg(author="p:1", subject="c", kind="reply"),
+            seg(author="p:2", kind="reply"),
+            seg(),
+        ),  # fmt: skip
         # fine: no sign-off -> the sender's first name is appended; subject from the body
         rec("r5", seg()),
         rec("r6", seg(), topic="general"),

@@ -1,0 +1,345 @@
+{
+  "scenario": "leadership.ceo-inbox",
+  "target": {
+    "persona": "ceo",
+    "name": "Helena Marsh",
+    "role": "Chief Executive Officer"
+  },
+  "seed": 7,
+  "messages": 40,
+  "threads": 37,
+  "topics": {
+    "board": 10,
+    "deals": 6,
+    "finance": 4,
+    "hr": 2,
+    "legal": 4,
+    "newsletter": 2,
+    "ops": 4,
+    "personal": 2,
+    "scheduling": 6
+  },
+  "fixtures": [
+    {
+      "fixture": "fixtures/001-discussions-have-taken-place-between-cns.eml",
+      "topic": "finance",
+      "thread": 22,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/002-i-spoke-with-dorian-blackwood-at-corin-a.eml",
+      "topic": "deals",
+      "thread": 7,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/003-i-have-checked-out-april-but-still-worki.eml",
+      "topic": "finance",
+      "thread": 19,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/004-does-anyone-have-this-file.eml",
+      "topic": "board",
+      "thread": 3,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/005-in-addition-to-world-markets-energy-info.eml",
+      "topic": "legal",
+      "thread": 23,
+      "suggested_labels": [
+        "Legal"
+      ]
+    },
+    {
+      "fixture": "fixtures/006-fw-imogen-computer-financial-practices.eml",
+      "topic": "finance",
+      "thread": 20,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/007-on-monday-december-4th-a-new-version-of.eml",
+      "topic": "board",
+      "thread": 0,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/008-fw-succession-plan.eml",
+      "topic": "board",
+      "thread": 1,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/009-fw-new-oii.eml",
+      "topic": "ops",
+      "thread": 27,
+      "suggested_labels": [
+        "Operations"
+      ]
+    },
+    {
+      "fixture": "fixtures/010-re-new-oii.eml",
+      "topic": "ops",
+      "thread": 27,
+      "suggested_labels": [
+        "Operations"
+      ]
+    },
+    {
+      "fixture": "fixtures/011-we-have-received-the-following-eei-maste.eml",
+      "topic": "legal",
+      "thread": 25,
+      "suggested_labels": [
+        "Legal"
+      ]
+    },
+    {
+      "fixture": "fixtures/012-fw-kian-monthly-prices-2022-to-date.eml",
+      "topic": "scheduling",
+      "thread": 13,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/013-just-a-head-s-up.eml",
+      "topic": "legal",
+      "thread": 26,
+      "suggested_labels": [
+        "Legal"
+      ]
+    },
+    {
+      "fixture": "fixtures/014-another-person-that-should-be-included-i.eml",
+      "topic": "legal",
+      "thread": 24,
+      "suggested_labels": [
+        "Legal"
+      ]
+    },
+    {
+      "fixture": "fixtures/015-we-are-coordinating-a-project-regarding-.eml",
+      "topic": "scheduling",
+      "thread": 18,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/016-fw-alliance-netback-worksheet.eml",
+      "topic": "personal",
+      "thread": 32,
+      "suggested_labels": [
+        "Personal"
+      ]
+    },
+    {
+      "fixture": "fixtures/017-if-you-previously-received-this-memo-ple.eml",
+      "topic": "scheduling",
+      "thread": 14,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/018-a-href-https-www-valebridge-example-test.eml",
+      "topic": "newsletter",
+      "thread": 34,
+      "suggested_labels": [
+        "Newsletters"
+      ]
+    },
+    {
+      "fixture": "fixtures/019-helena-in-response-to-your-note-i-am.eml",
+      "topic": "deals",
+      "thread": 11,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/020-attached-is-the-corvane-fothergill-gastr.eml",
+      "topic": "board",
+      "thread": 4,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/021-fw-corvane-credit-inc.eml",
+      "topic": "board",
+      "thread": 2,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/022-fw-blue-dog.eml",
+      "topic": "hr",
+      "thread": 30,
+      "suggested_labels": [
+        "People"
+      ]
+    },
+    {
+      "fixture": "fixtures/023-this-is-an-automated-email-delivery.eml",
+      "topic": "deals",
+      "thread": 10,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/024-re-corvane-credit-inc.eml",
+      "topic": "board",
+      "thread": 2,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/025-please-review-and-act-upon-this-request.eml",
+      "topic": "scheduling",
+      "thread": 15,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/026-attached-is-a-revised-credit-watch-listi.eml",
+      "topic": "finance",
+      "thread": 21,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/027-that-s-right-the-dot-is-coming.eml",
+      "topic": "newsletter",
+      "thread": 33,
+      "suggested_labels": [
+        "Newsletters"
+      ]
+    },
+    {
+      "fixture": "fixtures/028-this-deal-needs-to-be-settled-financiall.eml",
+      "topic": "deals",
+      "thread": 9,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/029-ansel-castellan-and-i-are-scheduled-to-p.eml",
+      "topic": "scheduling",
+      "thread": 17,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/030-as-the-merger-between-stellaris-corvane-.eml",
+      "topic": "deals",
+      "thread": 12,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/031-fw-ge-conference-call.eml",
+      "topic": "scheduling",
+      "thread": 16,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/032-prc-meetings-begin-on-monday-november-20.eml",
+      "topic": "hr",
+      "thread": 29,
+      "suggested_labels": [
+        "People"
+      ]
+    },
+    {
+      "fixture": "fixtures/033-reminder.eml",
+      "topic": "ops",
+      "thread": 28,
+      "suggested_labels": [
+        "Operations"
+      ]
+    },
+    {
+      "fixture": "fixtures/034-re-reminder.eml",
+      "topic": "ops",
+      "thread": 28,
+      "suggested_labels": [
+        "Operations"
+      ]
+    },
+    {
+      "fixture": "fixtures/035-topic-the-increasingly-critical-role-of-.eml",
+      "topic": "board",
+      "thread": 6,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/036-here-are-the-proposed-dates-for-next-yea.eml",
+      "topic": "board",
+      "thread": 5,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/037-fw-smurfit-stone-container-contract.eml",
+      "topic": "deals",
+      "thread": 8,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/038-congratulations.eml",
+      "topic": "personal",
+      "thread": 31,
+      "suggested_labels": [
+        "Personal"
+      ]
+    },
+    {
+      "fixture": "fixtures/039-confidential-board-pre-read-project-lark.eml",
+      "topic": "board",
+      "thread": 35,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/040-larkspur-deck-before-thursday.eml",
+      "topic": "board",
+      "thread": 36,
+      "suggested_labels": [
+        "Board"
+      ]
+    }
+  ],
+  "note": "Folders/labels are suggestions only: scenario schema 1.1 seeds every initial message into the inbox, unread and unlabelled."
+}

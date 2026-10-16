@@ -241,10 +241,12 @@ SENSITIVE = re.compile(
     r"\b(password|passwd|social security|ssn|diagnos\w*|cancer|pregnan\w*|divorce|funeral|"
     r"hospital\w*|arrest\w*|sex\w*|drunk|surgery|medical|illness|died|death|lawsuit against|"
     r"harass\w*|porn\w*|nude|religio\w*|lay-?offs?|terminated|firing|fired|bankrupt\w*|"
-    r"chapter 11|creditors|wife|husband|my (?:son|daughter|kids))\b",
+    r"chapter 11|creditors|wife|husband|my (?:son|daughter|kids)|drinking|hangover)\b",
     re.IGNORECASE,
 )
 _PREFIX = re.compile(r"^\s*((re|fw|fwd)\s*:\s*)+", re.IGNORECASE)
+# quoted header fields left inside a body (e.g. Lotus column layouts the splitter missed)
+HEADERISH = re.compile(r"(?:^|\s)(?:Subject|cc|To|From|Sent):\s", re.MULTILINE)
 _YEAR = re.compile(r"\b(199[5-9]|200[0-3])\b")
 MAX_BODY = 2500
 MIN_BODY = 60
@@ -489,7 +491,7 @@ class Generator:
         if total < MIN_BODY or any(len(b) > MAX_BODY for b in bodies):
             return False
         text = "\n".join(bodies + [s["subject"] for s in segs])
-        return not SENSITIVE.search(text)
+        return not SENSITIVE.search(text) and not HEADERISH.search("\n".join(bodies))
 
     def _candidates(self, role: str, topic: str) -> list[dict[str, Any]]:
         pool = [r for r in self.records if r["topic"] == topic and r["id"] not in self.used]

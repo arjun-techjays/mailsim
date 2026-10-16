@@ -85,6 +85,34 @@ ROOM = re.compile(r"\bEB ?(?=\d)")
 _LOWER_PAIR = re.compile(r"\b([a-z]{2,20}) ([a-z]{2,20})\b")
 BLOCK = frozenset(
     [
+        "Im",
+        "Ive",
+        "Ill",
+        "Id",
+        "Youre",
+        "Youve",
+        "Youll",
+        "Dont",
+        "Cant",
+        "Wont",
+        "Isnt",
+        "Hes",
+        "Shes",
+        "Theyre",
+        "Weve",
+        "Thats",
+        "Whats",
+        "Lets",
+        "Its",
+        "Didnt",
+        "Doesnt",
+        "Wouldnt",
+        "Couldnt",
+        "Shouldnt",
+        "Havent",
+        "Hasnt",
+        "Arent",
+        "Wasnt",
         "The",
         "This",
         "That",
@@ -201,7 +229,12 @@ def title(token: str) -> str:
     return "-".join(p[:1].upper() + p[1:].lower() for p in token.split("-"))
 
 
+_CONTRACTION = re.compile(r"'(?:m|ve|ll|d|re|t)$|n't$", re.IGNORECASE)
+
+
 def _alpha_name(token: str) -> bool:
+    if "'" in token and not re.fullmatch(r"[A-Z]'[A-Z][a-z]+", token):
+        return False  # only O'Brien-style apostrophes
     return (
         2 <= len(token) <= 20 and re.fullmatch(r"[A-Za-z][A-Za-z'\-]*[A-Za-z]", token) is not None
     )
@@ -553,6 +586,8 @@ class Pseudonymizer:
 
     def _single(self, m: re.Match[str], text: str, local: set[int]) -> str:
         whole = m.group(0)
+        if _CONTRACTION.search(whole):
+            return whole  # I'm, I've, I'll, We'd, Don't: never a name
         tok, suffix = whole, ""
         if whole.endswith(("'s", "'S")):
             tok, suffix = whole[:-2], whole[-2:]

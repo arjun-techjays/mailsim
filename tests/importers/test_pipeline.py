@@ -12,7 +12,7 @@ import pytest
 from mailsim.cli import main
 from mailsim.importers import enron
 from mailsim.importers.pseudonymize import PLACEHOLDER, Renderer
-from tests.importers.conftest import PEOPLE, make_texts, write_parquet
+from tests.importers.conftest import PEOPLE, make_texts
 
 
 def _run(capsys, *argv: str) -> tuple[int, dict]:
@@ -33,7 +33,7 @@ def test_import_is_deterministic_and_pseudonymized(shards, tmp_path):
     assert stats["dropped_size"] == 1 and stats["dropped_garbled"] == 1
     assert stats["records"] == len(recs) and set(stats["topics"]) >= {"finance", "board", "hr"}
     raw = (tmp_path / "a.jsonl").read_text().split("\n", 1)[1]  # records (header: metadata)
-    for first_name, last in PEOPLE:
+    for _first, last in PEOPLE:
         assert last not in raw  # surnames never survive into templates
     assert "enron" not in raw.lower() and "713" not in raw and "/HOU/" not in raw
     threads = [r for r in recs if len(r["segments"]) > 1]
