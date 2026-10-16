@@ -272,8 +272,8 @@ class GmailDriver(NeutralDriver):
     capabilities: ClassVar[frozenset[str]] = ALL_CAPABILITIES
     _FOLDER_LABEL: ClassVar[dict[str, str]] = {"inbox": "INBOX", "sent": "SENT", "drafts": "DRAFT",
                                                 "trash": "TRASH"}  # fmt: skip
-    _FLAG_ADD: ClassVar[dict[str, str]] = {"FLAGGED": "STARRED", "ANSWERED": "MAILSIM_ANSWERED",
-                                            "DELETED": "MAILSIM_DELETED", "DRAFT": "DRAFT"}  # fmt: skip
+    _FLAG_ADD: ClassVar[dict[str, str]] = {"FLAGGED": "STARRED", "ANSWERED": "ANSWERED",
+                                            "DELETED": "DELETED", "DRAFT": "DRAFT"}  # fmt: skip
 
     def __init__(self, mailbox: AgentMailbox) -> None:
         from fastapi.testclient import TestClient
@@ -757,6 +757,8 @@ def _code_in(text: str) -> str:
     found = re.search(r"\b(" + "|".join(_CODES) + r")\b", text)
     if found:
         return found.group(1)
+    if "relay not permitted" in text:  # SMTP RCPT refusal names no engine code
+        return "EXTERNAL_DELIVERY_BLOCKED"
     return "NOT_FOUND" if "TRYCREATE" in text or "NONEXISTENT" in text else "UNKNOWN"
 
 

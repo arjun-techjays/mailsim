@@ -238,7 +238,7 @@ class ImapSession:
 
     def greeting(self) -> bytes:
         caps = " ".join(self.capabilities())
-        return f"* OK [CAPABILITY {caps}] mailsim IMAP4rev1 sandbox ready\r\n".encode()
+        return f"* OK [CAPABILITY {caps}] IMAP4rev1 ready\r\n".encode()
 
     def execute(self, data: bytes, flush: Callable[[list[bytes]], None] | None = None) -> Reply:
         """Run one complete command (literals inline as received). `flush` streams untagged
@@ -342,12 +342,12 @@ class ImapSession:
 
     def cmd_logout(self, tag: str, args: list[Any], out: list[bytes]) -> Reply:
         self._arity(args, 0, "LOGOUT")
-        return Reply([b"* BYE mailsim logging out\r\n", f"{tag} OK LOGOUT completed\r\n".encode()],
+        return Reply([b"* BYE logging out\r\n", f"{tag} OK LOGOUT completed\r\n".encode()],
                      close=True)  # fmt: skip
 
     def cmd_id(self, tag: str, args: list[Any], out: list[bytes]) -> str:
         self._arity(args, 1, "ID (params) | ID NIL")
-        out.append(b'* ID ("name" "mailsim" "vendor" "mailsim")\r\n')
+        out.append(b'* ID ("name" "IMAP" "vendor" "IMAP")\r\n')
         return "OK ID completed"
 
     # ----------------------------------------------------------------- authentication

@@ -177,8 +177,7 @@ class SandboxHandler:
             return "452 4.5.3 too many recipients"
         policy = await asyncio.to_thread(self.auth.recipient_policy, agent)
         if not policy.allows(addr):
-            return (f"550 5.7.1 <{addr}> EXTERNAL_DELIVERY_BLOCKED: recipient is outside the "
-                    "simulated environment and external delivery is not permitted")  # fmt: skip
+            return f"550 5.7.1 <{addr}>: relay not permitted"
         envelope.rcpt_tos.append(addr)
         envelope.rcpt_options.extend(rcpt_options)
         return "250 2.1.5 OK"
@@ -195,9 +194,7 @@ class SandboxHandler:
         try:
             parsed = parse_mime(raw, self.limits)
             if parsed.attachments:
-                return ("554 5.6.1 UNSUPPORTED_OPERATION: attachments cannot be submitted over "
-                        "SMTP in this simulator (the agent send operations carry text/html "
-                        "only)")  # fmt: skip
+                return "554 5.6.1 attachments are not accepted on this submission path"
             result = self._submit(agent, parsed, rcpts)
         except SimError as exc:
             return smtp_error(exc)
@@ -281,7 +278,7 @@ def smtp_factory(authenticator: Authenticator, *, tls_context: TLSContext | None
         server = _TrackedSMTP(
             handler,
             hostname=hostname,
-            ident="mailsim sandbox ESMTP (no relay)",
+            ident="ESMTP ready",
             data_size_limit=MAX_MESSAGE_BYTES,
             decode_data=False,
             tls_context=tls_context,

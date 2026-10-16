@@ -84,7 +84,9 @@ def test_stdio_session_in_process(world):
     run_stdio(world.engine, environ={"MAILSIM_API_KEY": world.keys["agent"]},
               evaluation_service=world.evaluations, stdin=stdin, stdout=out)  # fmt: skip
     res = out.responses()
-    assert res[0]["result"]["serverInfo"]["name"] == "mailsim"
+    info = res[0]["result"]
+    assert info["serverInfo"]["name"] == "mail"  # neutral identity for an agent session
+    assert "mailsim" not in json.dumps(info).lower()
     names = [t["name"] for t in res[1]["result"]["tools"]]
     assert names[0] == "list_messages" and "get_test_results" not in names
     assert len(res[2]["result"]["structuredContent"]["items"]) == 2

@@ -298,11 +298,16 @@ def test_run_stdio_attributes_mcp_stdio(monkeypatch):
         seen.update(kw)
         return object()
 
-    monkeypatch.setattr(stdio, "verify_principal", lambda sf, key: None)
+    from types import SimpleNamespace
+
+    from mailsim.auth.principal import Role
+
+    agent = SimpleNamespace(role=Role.AGENT)
+    monkeypatch.setattr(stdio, "verify_principal", lambda sf, key: agent)
     monkeypatch.setattr(stdio, "build_server", fake_build)
     monkeypatch.setattr(stdio.anyio, "run", lambda *a: None)
     stdio.run_stdio(object(), "msk_x", session_factory=object())
-    assert seen["interface"] == "mcp_stdio"
+    assert seen["interface"] == "mcp_stdio" and seen["role"] is Role.AGENT
 
 
 def test_imap_and_smtp_sessions_are_recorded(api, run):

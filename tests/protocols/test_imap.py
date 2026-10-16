@@ -200,9 +200,7 @@ def test_wrong_state_and_unknown_commands(proto):
     c.cmd(f"a4 LOGIN {AGENT} {proto.key}".encode())
     assert c.cmd(b"a5 CHECK")[-1] == b"a5 BAD no mailbox selected\r\n"
     assert c.cmd(b"a6 CAPABILITY extra")[-1].startswith(b"a6 BAD usage")
-    assert (
-        c.cmd(b'a7 ID ("name" "imaplib")')[0] == b'* ID ("name" "mailsim" "vendor" "mailsim")\r\n'
-    )
+    assert c.cmd(b'a7 ID ("name" "imaplib")')[0] == b'* ID ("name" "IMAP" "vendor" "IMAP")\r\n'
 
 
 # ------------------------------------------------------------------------ FETCH

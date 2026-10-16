@@ -94,7 +94,7 @@ def test_partial_recipient_rejection(proto):
     refused = s.sendmail(AGENT, [VENDOR, "boss@real-company.example"],
                          message(to=(VENDOR, "boss@real-company.example")))  # fmt: skip
     code, text = refused["boss@real-company.example"]
-    assert code == 550 and b"EXTERNAL_DELIVERY_BLOCKED" in text
+    assert code == 550 and text.endswith(b"relay not permitted")
     assert len(vendor_inbox(proto)) == 1
     types = {e["type"] for e in proto.ev.events(proto.run)}
     assert not types & {"delivery.external_attempt", "delivery.sunk"}
@@ -157,7 +157,7 @@ def test_cc_bcc_and_html(proto):
          b"MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\n"
          b"Content-Type: text/plain\r\n\r\nhi\r\n--b\r\nContent-Type: application/pdf\r\n"
          b"Content-Disposition: attachment; filename=a.pdf\r\n\r\nPDF\r\n--b--\r\n",
-         554, b"attachments cannot be submitted"),
+         554, b"attachments are not accepted"),
         (b"From: finance@example.test\r\nTo: vendor@example.test\r\nSubject: s\r\n"
          b"MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\n"
          b"Content-Type: application/x-msdownload\r\n"

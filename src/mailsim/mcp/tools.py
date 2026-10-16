@@ -77,7 +77,10 @@ def _list(description: str | None = None) -> Any:
 
 # recipient lists: "Name <addr@example.com>" entries are reduced to the address
 Recipients = Annotated[list[Address], AfterValidator(normalise_addresses)]
-RECIPIENTS_HELP = 'addresses; "Name <addr@example.com>" is accepted'
+RECIPIENTS_HELP = (
+    'addresses; "Name <addr@example.com>" is accepted (quote a name containing '
+    "a comma); at most 100 distinct recipients per message"
+)
 
 
 PageSize = Field(default=50, ge=1, le=MAX_PAGE_SIZE, description="items per page")
@@ -94,11 +97,11 @@ class ListMessagesArgs(Args):
 
 
 class MessageIdArgs(Args):
-    message_id: Id = Field(description="simulator message id (msg_...)")
+    message_id: Id = Field(description="message id (msg_...)")
 
 
 class ThreadIdArgs(Args):
-    thread_id: Id = Field(description="simulator thread id")
+    thread_id: Id = Field(description="thread id")
 
 
 class SearchArgs(Args):

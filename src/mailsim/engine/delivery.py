@@ -46,7 +46,7 @@ class DeliveryPolicy:
                 plan.external.append(email)
         if plan.external and self.mode is ExternalMode.DENY:
             raise ExternalDeliveryBlocked(
-                "recipient(s) outside the simulated environment; external delivery is denied",
+                f"delivery to {', '.join(plan.external)} is not permitted",
                 details={"recipients": plan.external},
             )
         return plan

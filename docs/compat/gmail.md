@@ -55,6 +55,11 @@ Notes for google-api-python-client:
   permissions (`allowed_operations` / `prohibited_operations`), the run state and the write
   budget all apply. Reads are free but audited; every write is one budgeted, audited action.
   The mailbox address and the run's virtual time come from `AgentMailbox.mailbox_info()`.
+- `messages.attachments.get` reads the bytes with the audited `AgentMailbox.get_attachment`
+  (one `read` with the attachment id, mailbox-scoped, 25 MiB cap). A message resource
+  (`sizeEstimate`, `format=raw`, the `full` payload) is built from the stored MIME of a message
+  the request already read through the facade (`get_message`, audited); that MIME is not
+  recorded as a second read, unlike the REST/MCP/Graph attachment downloads.
 - Every path under `/gmail/v1` and `/upload/gmail/v1`, including unknown and unsupported ones,
   checks the credential first (401 before 404/501).
 - Hidden scenario data (answer keys, evaluation, scenario controls) is not reachable from any
@@ -112,7 +117,7 @@ All paths are under `/gmail/v1/users/{userId}`; media uploads under
 
 Places a message without sending it (never delivered to anyone). `labelIds` decide the result:
 folder by precedence `TRASH` > `INBOX` > `SENT`, otherwise archived; without `UNREAD` the message
-is read; `STARRED`/`MAILSIM_*` set flags; user labels are applied. Each of those after the
+is read; `STARRED`/`ANSWERED`/`DELETED` set flags; user labels are applied. Each of those after the
 insert itself is a separate write. `DRAFT` is refused (use drafts); `internalDateSource` is
 ignored (the `Date` header is used, else the virtual clock). The raw message needs a `From`.
 
@@ -140,7 +145,7 @@ fixed state, no duplicates or gaps.
 | (none) | folder `archive` (Gmail "archived") |
 | `UNREAD` | flag `SEEN` absent (never on drafts) |
 | `STARRED` | flag `FLAGGED` |
-| `MAILSIM_ANSWERED`, `MAILSIM_DELETED` | **sandbox extensions** for the IMAP flags `\Answered`, `\Deleted` (Gmail has no equivalent; type `system`, hidden) |
+| `ANSWERED`, `DELETED` | **extensions** for the IMAP flags `\Answered`, `\Deleted` (Gmail has no equivalent; type `system`, hidden; the names are reserved, so user labels cannot be called `Answered`/`Deleted`) |
 | `Label_...` | a message label by name |
 | `SPAM`, `IMPORTANT`, `CHAT`, `CATEGORY_*` | not modelled: modify -> 501; list filter matches nothing; `labels.get` 404 |
 
@@ -250,7 +255,7 @@ Google's shape, plus a `google.rpc.ErrorInfo` detail whose `reason` is the neutr
 {"error": {"code": 404, "message": "...", "status": "NOT_FOUND",
            "errors": [{"message": "...", "domain": "global", "reason": "notFound"}],
            "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo",
-                        "reason": "NOT_FOUND", "domain": "mailsim.local", "metadata": {}}]}}
+                        "reason": "NOT_FOUND", "domain": "global", "metadata": {}}]}}
 ```
 
 | Neutral code | HTTP | `errors[].reason` | `status` |
@@ -280,7 +285,7 @@ middleware with the REST error envelope (400), not the Gmail shape.
 - Unknown label ids answer 404 `notFound` (Gmail: 400 "Invalid label").
 - User label ids derive from names and change on rename; unapplied labels live in the server
   process only; `labels.create` is not an audited write.
-- Extra system labels `MAILSIM_ANSWERED` / `MAILSIM_DELETED`.
+- Extra system labels `ANSWERED` / `DELETED`.
 - No attachments when composing; no send-as aliases.
 - History records for label/flag/folder changes carry no label delta.
 - Free-text search is substring-based over subject, text body and sender address; dates are UTC.

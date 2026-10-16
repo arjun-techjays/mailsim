@@ -76,7 +76,7 @@ def error_response(request: Request, exc: Exception) -> JSONResponse:
         return graph_error(request, status, code, exc.message, headers)
     if isinstance(exc, GraphAuthError):
         return graph_error(request, *UNAUTHENTICATED, str(exc),
-                           {"WWW-Authenticate": 'Bearer realm="mailsim"'})  # fmt: skip
+                           {"WWW-Authenticate": 'Bearer realm="api"'})  # fmt: skip
     if isinstance(exc, SyncStateGone):
         return graph_error(request, *SYNC_STATE_NOT_FOUND, str(exc))
     if isinstance(exc, RequestValidationError):
