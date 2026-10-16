@@ -15,7 +15,7 @@ from mailsim.adapters.graph import errors as graph_errors
 from mailsim.adapters.graph import resources as res
 from mailsim.domain.errors import RateLimited, UpstreamUnavailable
 from mailsim.domain.models import CanonicalMessage
-from tests.adapters.graph.conftest import BASE, make_app, open_agent
+from tests.adapters.graph.conftest import BASE, open_agent
 from tests.scenarios import write_variant
 
 pytestmark = pytest.mark.db
@@ -207,6 +207,42 @@ def test_filter_and_search(world):
         "ErrorNotSupported")  # fmt: skip
 
 
+def test_kql_search(world):
+    world.inject("kql-one", text="urgent bank change")
+    subjects = lambda **q: sorted(m["subject"] for m in world.messages(**q))  # noqa: E731
+    assert subjects(**{"$search": '"subject:invoice"'}) == [
+        "Invoice INV-001",
+        "Re: Invoice INV-001",
+    ]
+    assert subjects(**{"$search": '"from:vendor AND hasAttachments:true"'}) == ["Invoice INV-001"]
+    assert subjects(**{"$search": '"body:urgent OR subject:\\"INV-001\\""'}) == [
+        "Invoice INV-001", "Re: Invoice INV-001", "kql-one"]  # fmt: skip
+    assert subjects(**{"$search": '"subject:invoice NOT hasAttachments:true"'}) == [
+        "Re: Invoice INV-001"]  # fmt: skip
+    assert subjects(**{"$search": '"bank subject:kql"'}) == ["kql-one"]  # free text + property
+    assert subjects(**{"$search": '"isRead:false subject:kql"'}) == ["kql-one"]
+    assert subjects(**{"$search": '"received>=2100-01-01"'}) == []
+    assert "kql-one" in subjects(**{"$search": '"received:2000-01-01..2100-01-01"'})
+    assert world.messages("sentitems", **{"$search": '"subject:invoice"'}) == []
+    # a phrase alone, two words (AND, any order), a phrase plus a word
+    assert subjects(**{"$search": '"\\"bank change\\""'}) == ["kql-one"]
+    assert subjects(**{"$search": '"\\"change bank\\""'}) == []
+    assert subjects(**{"$search": '"change urgent"'}) == ["kql-one"]
+    assert subjects(**{"$search": '"\\"bank change\\" urgent"'}) == ["kql-one"]
+    assert subjects(**{"$search": '"\\"bank change\\" nothing"'}) == []
+    assert subjects(**{"$search": '"re:meeting"'}) == []  # unknown prefix: plain text
+    body = err(world.call("GET", "/me/messages", params={"$search": '"isRead:maybe"'}), 400,
+               "ErrorInvalidRequest")  # fmt: skip
+    assert "true or false" in body["message"]
+    err(world.call("GET", "/me/messages", params={"$search": '"received:9999-12-31"'}), 400,
+        "ErrorInvalidRequest")  # fmt: skip
+    err(world.call("GET", "/me/messages", params={"$search": '"(subject:x"'}), 400,
+        "ErrorInvalidRequest")  # fmt: skip
+    count = world.call("GET", "/me/messages/$count", expect=200,
+                       params={"$search": '"subject:invoice"'})  # fmt: skip
+    assert count.text == "2"
+
+
 def test_get_select_expand_prefer_and_mime(world):
     m = invoice(world)
     assert m["hasAttachments"] and m["internetMessageId"] == "<invoice-001@example.test>"
@@ -249,14 +285,27 @@ def test_attachments(world):
         "ErrorItemNotFound")  # fmt: skip
 
 
-def test_attachment_metadata_without_a_blob_store(env, world):
-    app = make_app(env)
-    app.state.blobs = None
-    client = TestClient(app, raise_server_exceptions=False)
-    client.headers["Authorization"] = f"Bearer {world.key}"
+def test_attachment_resource_without_bytes_has_no_content(world):
+    m = world.mb().list_messages(folder="inbox").items
+    msg = next(x for x in m if x.attachments)
+    doc = res.attachment(msg.attachments[0], msg, None)
+    assert "contentBytes" not in doc and doc["size"] > 0
+
+
+def test_attachment_bytes_are_audited_facade_reads(world):
     m = invoice(world)
-    (att,) = client.get(f"{BASE}/me/messages/{m['id']}/attachments").json()["value"]
-    assert "contentBytes" not in att and att["size"] > 0
+
+    def reads():
+        return [a for a in world.ev.actions(world.run)
+                if a["actor"] == "agent" and "attachment_id" in a["input"]]  # fmt: skip
+
+    (att,) = world.get(f"/me/messages/{m['id']}/attachments")["value"]
+    assert len(reads()) == 1  # the list's contentBytes
+    world.get(f"/me/messages/{m['id']}/attachments/{att['id']}")
+    world.call("GET", f"/me/messages/{m['id']}/attachments/{att['id']}/$value", 200)
+    world.get(f"/me/messages/{m['id']}", params={"$expand": "attachments"})
+    world.get("/me/messages", params={"$expand": "attachments", "$top": 100})
+    assert len(reads()) == 5 and {a["operation"] for a in reads()} == {"read"}
 
 
 # --------------------------------------------------------------------------- folders
@@ -714,3 +763,25 @@ def test_received_mail_cannot_be_moved_into_sent_or_drafts(world):
             r = world.call("POST", f"/me/messages/{mid}/{path}", json={"destinationId": dest})
             err(r, 403, "ErrorAccessDenied")
     assert world.messages("sentitems") == [] and world.messages("drafts") == []
+
+
+def test_expanded_attachment_bytes_are_capped_per_page(world, monkeypatch):
+    from email.message import EmailMessage
+
+    msg = EmailMessage()
+    msg["From"], msg["To"], msg["Subject"] = "vendor@example.test", "finance@example.test", "pdf2"
+    msg.set_content("second")
+    msg.add_attachment(b"%PDF-2" * 10, maintype="application", subtype="pdf", filename="b.pdf")
+    world.ctl.inject(world.run, world.mailbox, msg.as_bytes())
+    monkeypatch.setattr(graph_api, "MAX_EXPANDED_ATTACHMENT_BYTES", 50)  # one PDF per page
+    params = {"$expand": "attachments", "$filter": "hasAttachments eq true", "$top": 10}
+    first = world.get("/me/messages", params=params)
+    assert len(first["value"]) == 1 and first["value"][0]["attachments"][0]["contentBytes"]
+    r = world.client.get(first["@odata.nextLink"])
+    assert r.status_code == 200, r.text
+    second = r.json()
+    assert len(second["value"]) == 1 and "@odata.nextLink" not in second
+    assert {first["value"][0]["subject"], second["value"][0]["subject"]} == {
+        "Invoice INV-001", "pdf2"}  # fmt: skip
+    monkeypatch.setattr(graph_api, "MAX_EXPANDED_ATTACHMENT_BYTES", 10**6)
+    assert len(world.get("/me/messages", params=params)["value"]) == 2

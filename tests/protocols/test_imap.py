@@ -200,9 +200,7 @@ def test_wrong_state_and_unknown_commands(proto):
     c.cmd(f"a4 LOGIN {AGENT} {proto.key}".encode())
     assert c.cmd(b"a5 CHECK")[-1] == b"a5 BAD no mailbox selected\r\n"
     assert c.cmd(b"a6 CAPABILITY extra")[-1].startswith(b"a6 BAD usage")
-    assert (
-        c.cmd(b'a7 ID ("name" "imaplib")')[0] == b'* ID ("name" "mailsim" "vendor" "mailsim")\r\n'
-    )
+    assert c.cmd(b'a7 ID ("name" "imaplib")')[0] == b'* ID ("name" "IMAP" "vendor" "IMAP")\r\n'
 
 
 # ------------------------------------------------------------------------ FETCH
@@ -540,7 +538,7 @@ def test_budget_limit(make_proto):
     ok(c.select("INBOX"))
     ok(c.store("1", "+FLAGS", "\\Seen"))
     typ, data = c.store("1", "+FLAGS", "\\Flagged")
-    assert typ == "NO" and data[0].startswith(b"[LIMIT] SIMULATION_LIMIT_EXCEEDED")
+    assert typ == "NO" and data[0] == b"[LIMIT] QUOTA_EXCEEDED: action limit reached"
 
 
 def test_reset_changes_uidvalidity(proto):

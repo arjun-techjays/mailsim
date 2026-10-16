@@ -9,13 +9,15 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from fastapi import Request
+from fastapi import Request, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from mailsim.api import schemas as s
+from mailsim.api.downloads import safe_download_headers
 from mailsim.auth.principal import Principal
 from mailsim.domain.errors import NotFound, PermissionDenied, UnsupportedOperation
+from mailsim.domain.models import AttachmentRef
 from mailsim.engine.facades import AgentMailbox, Controller, EvaluatorView, facade_for
 from mailsim.personas.runtime import PersonaRuntime
 from mailsim.store import models as m
@@ -128,3 +130,20 @@ def scenario_version(
         suffix = f" version {version}" if version is not None else ""
         raise NotFound(f"scenario {key}{suffix} not found")
     return row
+
+
+# ---- attachment downloads ----------------------------------------------------------------
+ATTACHMENT_RESPONSE: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": "The attachment bytes, always as a download (`Content-Disposition: "
+        "attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`). "
+        "Active types (HTML, SVG, XML, scripts, ...) are served as application/octet-stream.",
+        "content": {"application/octet-stream": {"schema": {"type": "string",
+                                                             "format": "binary"}}},
+    }
+}  # fmt: skip
+
+
+def attachment_response(ref: AttachmentRef, data: bytes) -> Response:
+    """Bytes of one attachment, served so a browser never renders or sniffs them."""
+    return Response(content=data, headers=safe_download_headers(ref.filename, ref.mime_type))

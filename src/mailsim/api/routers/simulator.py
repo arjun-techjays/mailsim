@@ -12,7 +12,13 @@ from mailsim.api import schemas as s
 from mailsim.api.deps import Controller, Inspector
 from mailsim.api.errors import ErrorEnvelope
 from mailsim.api.idempotency import idempotent
-from mailsim.api.routers._common import controller, inspector, persona_runtime
+from mailsim.api.routers._common import (
+    ATTACHMENT_RESPONSE,
+    attachment_response,
+    controller,
+    inspector,
+    persona_runtime,
+)
 from mailsim.domain.errors import InvalidRequest, PermissionDenied, UnsupportedOperation
 from mailsim.engine.facades import EvaluatorView
 from mailsim.personas.runtime import advance_clock, tick_clock
@@ -123,3 +129,17 @@ def inspect_messages(
         run_id, mailbox_id, folder=folder, page_size=page_size, cursor=cursor, order=order
     )
     return s.MessagePage(items=page.items, next_cursor=page.next_cursor)
+
+
+@router.get("/mailboxes/{mailbox_id}/messages/{message_id}/attachments/{attachment_id}",
+            response_class=Response, responses=ATTACHMENT_RESPONSE)  # fmt: skip
+def inspect_attachment(
+    request: Request, run_id: str, mailbox_id: str, message_id: str, attachment_id: str,
+    principal: Inspector,
+) -> Response:  # fmt: skip
+    """Operator download of one attachment of any mailbox in the run (records nothing; works
+    on finished runs). Always a download: `Content-Disposition: attachment`, `nosniff` and
+    `Content-Security-Policy: sandbox`, so it is never rendered in the dashboard's origin."""
+    ref, data = inspector(request, principal).inspect_attachment(run_id, mailbox_id, message_id,
+                                                                 attachment_id)  # fmt: skip
+    return attachment_response(ref, data)

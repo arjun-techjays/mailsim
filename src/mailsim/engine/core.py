@@ -68,6 +68,11 @@ EVALUATOR = "evaluator"
 READ_OPERATIONS = frozenset({"read", "search"})
 PRESENT_CHUNK = 500  # ids per IN list in present_messages
 MAX_ADVANCE_SECONDS = 10 * 365 * 86400  # longest single clock advance
+# Upper bound of one attachment read (interfaces may pass a lower one, e.g. MCP's base64 cap).
+MAX_ATTACHMENT_READ_BYTES = 25 * 1024 * 1024
+# Distinct recipients (to + cc + bcc) of one agent send, whatever the interface (SMTP's
+# RCPT limit is the same).
+MAX_RECIPIENTS = 100
 
 
 def counts_against_budget(operation: str) -> bool:
@@ -324,10 +329,8 @@ class SimEngine:
         rcpts = [r.strip().lower() for r in recipients]
 
         def fn(c: Ctx) -> None:
-            raise ExternalDeliveryBlocked(
-                "recipient(s) outside the simulated environment; external delivery is not "
-                "permitted", details={"recipients": rcpts},
-            )  # fmt: skip
+            raise ExternalDeliveryBlocked(f"delivery to {', '.join(rcpts)} is not permitted",
+                                          details={"recipients": rcpts})  # fmt: skip
 
         self._command(scope, run_id, actor, "send", {"to": rcpts, "stage": "envelope"}, fn,
                       mailbox_id=mailbox_id)  # fmt: skip
@@ -1306,6 +1309,10 @@ class SimEngine:
         to_a, cc_a, bcc_a = [_addr(a) for a in to], [_addr(a) for a in cc], [_addr(a) for a in bcc]
         if not (to_a or cc_a or bcc_a):
             raise InvalidRequest("at least one recipient is required")
+        distinct = len({a.email for a in (*to_a, *cc_a, *bcc_a)})
+        if distinct > MAX_RECIPIENTS:
+            raise InvalidRequest(f"too many recipients ({distinct}; at most {MAX_RECIPIENTS})",
+                                 details={"recipients": distinct, "max": MAX_RECIPIENTS})  # fmt: skip
         policy = DeliveryPolicy(c.config["external_delivery"])
         plan = policy.plan([a.email for a in (*to_a, *cc_a, *bcc_a)], self._emails(c))
         if (
@@ -1314,7 +1321,7 @@ class SimEngine:
             and "external_delivery" in c.config["agent"]["prohibited"]
         ):
             raise ExternalDeliveryBlocked(
-                "agent is prohibited from external delivery",
+                f"delivery to {', '.join(plan.external)} is not permitted",
                 details={"recipients": plan.external},
             )
         header = c.gen.message_id_header(c.config["domain"])
@@ -1336,10 +1343,13 @@ class SimEngine:
                     received_at=c.now, bcc=[], actor=actor, operation=operation,
                 )
             )  # fmt: skip
+        sunk_ref = (
+            self.blobs.put(raw) if plan.external and policy.mode is ExternalMode.SINK else None
+        )  # one stored copy per send, referenced by every delivery.sunk event
         for ext in plan.external:
-            if policy.mode is ExternalMode.SINK:
+            if sunk_ref is not None:
                 c.emit("delivery.sunk",
-                       {"id": c.gen.next("snk"), "recipient": ext, "raw_blob_ref": self.blobs.put(raw),
+                       {"id": c.gen.next("snk"), "recipient": ext, "raw_blob_ref": sunk_ref,
                         "sent_at": iso(c.now)}, actor=actor, operation=operation)  # fmt: skip
             else:
                 c.emit("delivery.external_attempt",
@@ -1517,7 +1527,8 @@ class SimEngine:
                                  a.content_id) for a in rows]  # fmt: skip
 
     def forward(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str, *,
-                to: list[str], text: str = "", actor: str = AGENT) -> dict[str, Any]:  # fmt: skip
+                to: list[str], text: str = "", cc: list[str] | None = None,
+                actor: str = AGENT) -> dict[str, Any]:  # fmt: skip
         def fn(c: Ctx) -> dict[str, Any]:
             orig = self._message(c, mailbox_id, message_id)
             subj = (
@@ -1527,12 +1538,14 @@ class SimEngine:
             )
             quoted = (f"{text}\n\n---------- Forwarded message ----------\n"
                       f"From: {orig.from_['email']}\nSubject: {orig.subject}\n\n{orig.body_text or ''}")  # fmt: skip
-            return self._send(c, mailbox_id, to, [], [], subj, quoted, None, None,
+            return self._send(c, mailbox_id, to, list(cc or []), [], subj, quoted, None, None,
                               [*orig.references, orig.message_id_header], actor, "forward",
                               attachments=self._blob_attachments(c, orig.id))  # fmt: skip
 
-        return self._command(scope, run_id, actor, "forward",
-                             {"message_id": message_id, "to": to, "body_chars": len(text)}, fn,
+        input_: dict[str, Any] = {"message_id": message_id, "to": to, "body_chars": len(text)}
+        if cc:
+            input_["cc"] = list(cc)
+        return self._command(scope, run_id, actor, "forward", input_, fn,
                              mailbox_id=mailbox_id)  # fmt: skip
 
     def insert_message(self, scope: Scope, run_id: str, mailbox_id: str, raw: bytes, *,
@@ -2119,6 +2132,46 @@ class SimEngine:
         return self._read(scope, run_id, actor, "read", {"message_id": message_id, "raw": True},
                           fn, mailbox_id)  # fmt: skip
 
+    def _attachment(self, c: Ctx, mailbox_id: str, message_id: str, attachment_id: str,
+                    max_bytes: int | None) -> tuple[AttachmentRef, bytes]:  # fmt: skip
+        if max_bytes is None:
+            max_bytes = MAX_ATTACHMENT_READ_BYTES
+        self._message(c, mailbox_id, message_id)  # mailbox-scoped: 404 for another mailbox's
+        a = c.session.get(m.Attachment, (attachment_id, c.run.id))
+        if a is None or a.message_id != message_id:
+            raise NotFound(f"attachment {attachment_id} not found")
+        if a.size > max_bytes:
+            raise UnsupportedOperation(
+                f"attachment is {a.size} bytes; this read returns at most {max_bytes} bytes",
+                details={"size": a.size, "max_bytes": max_bytes},
+            )
+        ref = AttachmentRef(id=a.id, filename=a.filename, mime_type=a.mime_type, size=a.size,
+                            checksum=a.checksum, blob_ref=a.blob_ref, inline=a.inline,
+                            content_id=a.content_id)  # fmt: skip
+        return ref, self.blobs.get(a.blob_ref)
+
+    def get_attachment(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str,
+                       attachment_id: str, *, max_bytes: int | None = None,
+                       actor: str = AGENT) -> tuple[AttachmentRef, bytes]:  # fmt: skip
+        """One attachment of a message of this mailbox: its metadata and bytes (a read).
+        Larger than `max_bytes` -> UNSUPPORTED_OPERATION before the bytes are loaded."""
+        return self._read(
+            scope, run_id, actor, "read",
+            {"message_id": message_id, "attachment_id": attachment_id},
+            lambda c: self._attachment(c, mailbox_id, message_id, attachment_id, max_bytes),
+            mailbox_id,
+        )  # fmt: skip
+
+    def inspect_attachment(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str,
+                           attachment_id: str, *,
+                           max_bytes: int | None = None) -> tuple[AttachmentRef, bytes]:  # fmt: skip
+        """Operator read of an attachment of any mailbox in the run (records nothing)."""
+        with self._sf() as s:
+            run = get_run(s, scope, run_id)
+            c = Ctx(s, run, id_generator(run))
+            self._mailbox(c, mailbox_id)
+            return self._attachment(c, mailbox_id, message_id, attachment_id, max_bytes)
+
     def find_by_message_id(self, scope: Scope, run_id: str, mailbox_id: str, header: str,
                            *, actor: str = AGENT) -> list[CanonicalMessage]:  # fmt: skip
         """Non-draft messages of this mailbox whose Message-ID header is `header` (indexed)."""
@@ -2233,6 +2286,8 @@ __all__ = [
     "CONTROLLER",
     "EVALUATOR",
     "MAX_ADVANCE_SECONDS",
+    "MAX_ATTACHMENT_READ_BYTES",
+    "MAX_RECIPIENTS",
     "SIMULATOR",
     "DraftThreading",
     "ReplayResult",

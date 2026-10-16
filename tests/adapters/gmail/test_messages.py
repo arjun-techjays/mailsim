@@ -133,7 +133,7 @@ def test_send_reply_maps_to_engine_reply(gm):
     ops = gm.actions()
     assert ("reply", "ok") in ops and ("send", "ok") not in ops
     # the original is now answered (sandbox label for the IMAP \\Answered flag)
-    assert "MAILSIM_ANSWERED" in gm.get(f"/messages/{gm.gid(INVOICE)}")["labelIds"]
+    assert "ANSWERED" in gm.get(f"/messages/{gm.gid(INVOICE)}")["labelIds"]
     # the reply went to the vendor's (simulated) mailbox only
     theirs = [m for m in gm.ev.state(gm.run)["messages"] if m["mailbox_id"] == gm.vendor_mb]
     assert [m["subject"] for m in theirs] == ["Re: Invoice INV-001"]
@@ -247,9 +247,9 @@ def test_modify_folders_flags_labels(gm):
     n = len(gm.actions())
     assert set(modify(add=["STARRED", lab], remove=["UNREAD"])) == {"INBOX", "STARRED", lab}
     assert [a for a in gm.actions()[n:] if a[0] != "read"] == []  # no-op costs no writes
-    assert set(modify(add=["UNREAD", "MAILSIM_ANSWERED", "MAILSIM_DELETED"], remove=["STARRED", lab])) == {
-        "INBOX", "UNREAD", "MAILSIM_ANSWERED", "MAILSIM_DELETED"}  # fmt: skip
-    modify(remove=["MAILSIM_ANSWERED", "MAILSIM_DELETED"])
+    assert set(modify(add=["UNREAD", "ANSWERED", "DELETED"], remove=["STARRED", lab])) == {
+        "INBOX", "UNREAD", "ANSWERED", "DELETED"}  # fmt: skip
+    modify(remove=["ANSWERED", "DELETED"])
     assert modify(remove=["INBOX"]) == ["UNREAD"]  # archived
     assert modify(add=["INBOX"]) == ["INBOX", "UNREAD"]
     assert set(modify(add=["TRASH"])) == {"TRASH", "UNREAD"}
@@ -318,6 +318,6 @@ def test_draft_reply_send_and_history_are_clean_and_one_reply(gm):
     assert {o for _, o in acts} == {"ok"}, acts
     writes = [op for op, _ in acts if op not in ("read", "search", "create_run", "start")]
     assert writes == ["draft", "draft", "reply", "draft", "send", "draft", "draft", "send"]
-    assert "MAILSIM_ANSWERED" in gm.get(f"/messages/{gm.gid(INVOICE)}")["labelIds"]
+    assert "ANSWERED" in gm.get(f"/messages/{gm.gid(INVOICE)}")["labelIds"]
     armed = [e["payload"]["id"] for e in gm.ev.events(gm.run) if e["type"] == "event.armed"]
     assert armed == ["vendor-bank-change"]

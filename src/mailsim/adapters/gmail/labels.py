@@ -4,8 +4,8 @@ System labels are derived, never stored:
 
 - folder -> label: inbox=INBOX, sent=SENT, drafts=DRAFT, trash=TRASH; archive has no folder
   label (Gmail's "archived" = not in INBOX).
-- flags -> labels: not SEEN=UNREAD, FLAGGED=STARRED, and two sandbox extensions for IMAP flags
-  that Gmail has no label for: ANSWERED=MAILSIM_ANSWERED, DELETED=MAILSIM_DELETED.
+- flags -> labels: not SEEN=UNREAD, FLAGGED=STARRED, and two extensions for IMAP flags that
+  Gmail has no label for: ANSWERED=ANSWERED, DELETED=DELETED (hidden system labels).
 
 User labels are the canonical message labels (by name). Their ids are a deterministic,
 reversible encoding of the name, ``Label_<hex(utf-8 name)>``, so they are stable across
@@ -26,10 +26,10 @@ from mailsim.domain.models import SYSTEM_FOLDERS, CanonicalMessage
 USER_PREFIX = "Label_"
 FOLDER_LABEL = {"inbox": "INBOX", "sent": "SENT", "drafts": "DRAFT", "trash": "TRASH"}
 LABEL_FOLDER = {v: k for k, v in FOLDER_LABEL.items()}
-FLAG_LABEL = {"FLAGGED": "STARRED", "ANSWERED": "MAILSIM_ANSWERED", "DELETED": "MAILSIM_DELETED"}
+FLAG_LABEL = {"FLAGGED": "STARRED", "ANSWERED": "ANSWERED", "DELETED": "DELETED"}
+HIDDEN_LABELS = frozenset({"ANSWERED", "DELETED"})  # extensions: not in Gmail's label list UI
 LABEL_FLAG = {v: k for k, v in FLAG_LABEL.items()}
-SYSTEM_LABELS = ("INBOX", "SENT", "DRAFT", "TRASH", "UNREAD", "STARRED", "MAILSIM_ANSWERED",
-                 "MAILSIM_DELETED")  # fmt: skip
+SYSTEM_LABELS = ("INBOX", "SENT", "DRAFT", "TRASH", "UNREAD", "STARRED", "ANSWERED", "DELETED")
 # Real Gmail system labels this profile does not model: modifying them is UNSUPPORTED, and a
 # list filter on them matches nothing (there is no spam folder, no categories, no importance).
 UNMODELLED_LABELS = frozenset({"SPAM", "IMPORTANT", "CHAT", "CATEGORY_PERSONAL", "CATEGORY_SOCIAL",
@@ -144,7 +144,7 @@ def check_settings(body: dict[str, Any]) -> dict[str, Any]:
 def system_label(label_id: str) -> dict[str, Any]:
     return {"id": label_id, "name": label_id, "type": "system",
             "messageListVisibility": "hide", "labelListVisibility": "labelHide"
-            if label_id.startswith("MAILSIM_") else "labelShow"}  # fmt: skip
+            if label_id in HIDDEN_LABELS else "labelShow"}  # fmt: skip
 
 
 def user_label(name: str, settings: dict[str, Any] | None = None) -> dict[str, Any]:

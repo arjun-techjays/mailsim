@@ -109,7 +109,7 @@ def test_custom_reply_is_one_reply_under_shipped_permissions(env, tmp_path):
     writes = [(a["operation"], a["outcome"]) for a in g.ctl.actions(g.run)[before:]
               if a["operation"] != "read"]  # fmt: skip
     assert writes == [("reply", "ok")]
-    assert "MAILSIM_ANSWERED" in g.get(f"/messages/{g.gid(INVOICE)}")["labelIds"]
+    assert "ANSWERED" in g.get(f"/messages/{g.gid(INVOICE)}")["labelIds"]
     assert "event.armed" in {e["type"] for e in g.ev.events(g.run)}  # send_reply trigger
     got = g.get(f"/messages/{sent['id']}", params={"format": "metadata"})
     headers = {h["name"]: h["value"] for h in got["payload"]["headers"]}
@@ -125,7 +125,7 @@ def test_reply_target_falls_back_to_older_references(env, tmp_path):
                        "References": "<invoice-001@example.test> <not-here@example.test>"},
                       "Following up.")  # fmt: skip
     g.post("/messages/send", json={"raw": b64(raw)})  # a reply (send is not allowed here)
-    assert "MAILSIM_ANSWERED" in g.get(f"/messages/{g.gid(INVOICE)}")["labelIds"]
+    assert "ANSWERED" in g.get(f"/messages/{g.gid(INVOICE)}")["labelIds"]
 
 
 @pytest.mark.db

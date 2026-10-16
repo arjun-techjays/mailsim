@@ -27,9 +27,10 @@ from mcp.shared.exceptions import MCPError
 from pydantic import ValidationError
 
 from mailsim import __version__
+from mailsim.api.agent_errors import agent_view
 from mailsim.api.auth import InvalidCredential, verify_key
 from mailsim.api.errors import INTERNAL, UNAUTHENTICATED
-from mailsim.auth.principal import Principal
+from mailsim.auth.principal import Principal, Role
 from mailsim.domain.errors import ErrorCode, PermissionDenied, SimError
 from mailsim.engine.context import with_interface
 from mailsim.engine.facades import facade_for
@@ -45,6 +46,13 @@ INSTRUCTIONS = (
     "API key's role: agent keys act on one simulated mailbox; controller keys drive runs and "
     "the virtual clock; evaluator keys read traces and results. Mail never leaves the sandbox."
 )
+# What an agent session is told: nothing about simulation, roles or delivery handling.
+AGENT_NAME, AGENT_TITLE = "mail", "Mail"
+AGENT_INSTRUCTIONS = (
+    "Email tools for one mailbox: list, read, search, send, reply, forward, organise "
+    "(folders, labels, flags) and download attachments."
+)
+OPERATOR_NAME, OPERATOR_TITLE = "mailsim", "mailsim email simulator"
 UNAUTHENTICATED_MESSAGE = "missing or invalid API key"
 
 
@@ -137,6 +145,8 @@ class McpService:
             return tool_error(str(ErrorCode.INVALID_REQUEST), "invalid tool arguments",
                               {"errors": errors})  # fmt: skip
         except SimError as exc:
+            if principal.role is Role.AGENT:
+                return tool_error(*agent_view(str(exc.code), exc.message, exc.details))
             return tool_error(str(exc.code), exc.message, exc.details)
         except Exception:
             log.exception("MCP tool %s failed", name)
@@ -151,10 +161,13 @@ def build_server(
     evaluation_service: Any = None,
     persona_runtime_factory: Callable[[Any], Any] | None = None,
     interface: str | None = None,
+    role: Role | None = None,
 ) -> Server[Any]:
     """An MCP server over ``engine`` (a SimEngine, typed loosely: interfaces never import
     ``engine.core``). ``session_factory`` defaults to ``engine.session_factory``.
-    ``interface`` (``mcp_http`` / ``mcp_stdio``) is recorded on the actions tool calls cause."""
+    ``interface`` (``mcp_http`` / ``mcp_stdio``) is recorded on the actions tool calls cause.
+    ``role`` (the authenticated key's) picks the server identity: controller and evaluator
+    sessions get the operator name and instructions, any other session the neutral agent ones."""
     deps = Deps(
         session_factory=session_factory or getattr(engine, "session_factory", None),
         evaluation_service=evaluation_service,
@@ -182,11 +195,12 @@ def build_server(
         spec = TOOLS_BY_NAME.get(name)
         return spec.tool().input_schema if spec is not None else None
 
+    operator = role in (Role.CONTROLLER, Role.EVALUATOR)
     return Server(
-        "mailsim",
+        OPERATOR_NAME if operator else AGENT_NAME,
         version=__version__,
-        title="mailsim email simulator",
-        instructions=INSTRUCTIONS,
+        title=OPERATOR_TITLE if operator else AGENT_TITLE,
+        instructions=INSTRUCTIONS if operator else AGENT_INSTRUCTIONS,
         get_tool_input_schema=input_schema,
         on_list_tools=on_list_tools,
         on_call_tool=on_call_tool,
@@ -194,6 +208,7 @@ def build_server(
 
 
 __all__ = [
+    "AGENT_INSTRUCTIONS",
     "INSTRUCTIONS",
     "McpService",
     "PrincipalResolver",

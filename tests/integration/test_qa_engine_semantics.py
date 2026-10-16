@@ -160,7 +160,8 @@ def test_reply_draft_send_is_one_reply_with_reply_semantics(w):
     assert (act["operation"], act["input"]) == (
         "reply", {"draft_message_id": upd["message_id"], "draft_of": "reply",
                   "message_id": inv.id})  # fmt: skip
-    assert out["delivered_message_ids"]
+    assert set(out) == {"message_id", "message_id_header"}  # agents see only the sent copy
+    assert act["result"]["delivered_message_ids"]  # operators see the delivery
     # replay reproduces the state from the recorded events alone
     assert w.ctl.replay_run(w.run).matches
 

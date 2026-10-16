@@ -291,6 +291,18 @@
             "title": "Api Key",
             "type": "string"
           },
+          "key_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "revoke with DELETE /v1/keys/{key_id}",
+            "title": "Key Id"
+          },
           "mailbox_address": {
             "title": "Mailbox Address",
             "type": "string"
@@ -2140,6 +2152,43 @@
         "title": "FolderOut",
         "type": "object"
       },
+      "ForwardRequest": {
+        "additionalProperties": false,
+        "description": "Forward a message (with its attachments) to new recipients; `text` goes above it.",
+        "properties": {
+          "cc": {
+            "description": "addresses; \"Name <addr@example.com>\" is accepted (the name is dropped); quote a name that contains a comma ('\"Smith, John\" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.",
+            "items": {
+              "maxLength": 8192,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Cc",
+            "type": "array"
+          },
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          },
+          "to": {
+            "description": "addresses; \"Name <addr@example.com>\" is accepted (the name is dropped); quote a name that contains a comma ('\"Smith, John\" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.",
+            "items": {
+              "maxLength": 8192,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "To",
+            "type": "array"
+          }
+        },
+        "required": [
+          "to"
+        ],
+        "title": "ForwardRequest",
+        "type": "object"
+      },
       "InjectMessage": {
         "additionalProperties": false,
         "properties": {
@@ -3388,16 +3437,22 @@
         "additionalProperties": false,
         "properties": {
           "bcc": {
+            "description": "addresses; \"Name <addr@example.com>\" is accepted (the name is dropped); quote a name that contains a comma ('\"Smith, John\" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.",
             "items": {
+              "maxLength": 8192,
               "type": "string"
             },
+            "maxItems": 100,
             "title": "Bcc",
             "type": "array"
           },
           "cc": {
+            "description": "addresses; \"Name <addr@example.com>\" is accepted (the name is dropped); quote a name that contains a comma ('\"Smith, John\" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.",
             "items": {
+              "maxLength": 8192,
               "type": "string"
             },
+            "maxItems": 100,
             "title": "Cc",
             "type": "array"
           },
@@ -3423,9 +3478,12 @@
             "type": "string"
           },
           "to": {
+            "description": "addresses; \"Name <addr@example.com>\" is accepted (the name is dropped); quote a name that contains a comma ('\"Smith, John\" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.",
             "items": {
+              "maxLength": 8192,
               "type": "string"
             },
+            "maxItems": 100,
             "title": "To",
             "type": "array"
           }
@@ -3435,25 +3493,8 @@
       },
       "SendResult": {
         "additionalProperties": false,
+        "description": "The sent copy in the caller's mailbox. How each recipient was handled is not part of\nthe agent-facing result (operators see it in the run's actions and events).",
         "properties": {
-          "delivered_message_ids": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Delivered Message Ids",
-            "type": "array"
-          },
-          "external_mode": {
-            "title": "External Mode",
-            "type": "string"
-          },
-          "external_recipients": {
-            "items": {
-              "type": "string"
-            },
-            "title": "External Recipients",
-            "type": "array"
-          },
           "message_id": {
             "title": "Message Id",
             "type": "string"
@@ -3465,10 +3506,7 @@
         },
         "required": [
           "message_id",
-          "message_id_header",
-          "delivered_message_ids",
-          "external_recipients",
-          "external_mode"
+          "message_id_header"
         ],
         "title": "SendResult",
         "type": "object"
@@ -4011,7 +4049,7 @@
         ]
       },
       "post": {
-        "description": "Send to simulated mailboxes only. External recipients follow the scenario's rule\n(deny/sink/event); nothing is ever delivered outside the sandbox.",
+        "description": "Send a new message. Recipients may be bare addresses or `Name <addr@example.com>`; a\nrecipient the run does not allow is rejected with EXTERNAL_DELIVERY_BLOCKED (422).",
         "operationId": "send_v1_mailboxes__mailbox_id__messages_post",
         "parameters": [
           {
@@ -4231,6 +4269,140 @@
           }
         ],
         "summary": "Patch Message",
+        "tags": [
+          "mailbox"
+        ]
+      }
+    },
+    "/v1/mailboxes/{mailbox_id}/messages/{message_id}/attachments/{attachment_id}": {
+      "get": {
+        "description": "Download one attachment (ids from the message's `attachments`). Served as a download\nwith its stored media type; never rendered inline. Recorded as a `read`.",
+        "operationId": "get_attachment_v1_mailboxes__mailbox_id__messages__message_id__attachments__attachment_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mailbox_id",
+            "required": true,
+            "schema": {
+              "title": "Mailbox Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "title": "Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "attachment_id",
+            "required": true,
+            "schema": {
+              "title": "Attachment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The attachment bytes, always as a download (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`). Active types (HTML, SVG, XML, scripts, ...) are served as application/octet-stream."
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Attachment",
+        "tags": [
+          "mailbox"
+        ]
+      }
+    },
+    "/v1/mailboxes/{mailbox_id}/messages/{message_id}/forward": {
+      "post": {
+        "description": "Forward a message, attachments included, to `to` (and `cc`); `text` is written above\nthe forwarded content. Counts as one `forward` operation.",
+        "operationId": "forward_v1_mailboxes__mailbox_id__messages__message_id__forward_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mailbox_id",
+            "required": true,
+            "schema": {
+              "title": "Mailbox Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "title": "Message Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForwardRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Forward",
         "tags": [
           "mailbox"
         ]
@@ -4812,7 +4984,7 @@
     },
     "/v1/runs/{run_id}/agent-credentials": {
       "post": {
-        "description": "Issue a new agent key for a run (e.g. after a lost or redacted response). Earlier agent\nkeys of the run are revoked.",
+        "description": "Issue an additional agent key for a run (e.g. after a lost or redacted response, or one\nkey per interface). Earlier agent keys are NOT revoked: revoke one explicitly with\n`DELETE /v1/keys/{key_id}`. Cancelling or completing the run revokes all of them. At most\n16 live agent keys per run: beyond that, 409 CONFLICT until one is revoked.",
         "operationId": "create_agent_credential_v1_runs__run_id__agent_credentials_post",
         "parameters": [
           {
@@ -5772,6 +5944,82 @@
           }
         ],
         "summary": "Inspect Messages",
+        "tags": [
+          "simulator"
+        ]
+      }
+    },
+    "/v1/runs/{run_id}/mailboxes/{mailbox_id}/messages/{message_id}/attachments/{attachment_id}": {
+      "get": {
+        "description": "Operator download of one attachment of any mailbox in the run (records nothing; works\non finished runs). Always a download: `Content-Disposition: attachment`, `nosniff` and\n`Content-Security-Policy: sandbox`, so it is never rendered in the dashboard's origin.",
+        "operationId": "inspect_attachment_v1_runs__run_id__mailboxes__mailbox_id__messages__message_id__attachments__attachment_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "mailbox_id",
+            "required": true,
+            "schema": {
+              "title": "Mailbox Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "title": "Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "attachment_id",
+            "required": true,
+            "schema": {
+              "title": "Attachment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The attachment bytes, always as a download (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`). Active types (HTML, SVG, XML, scripts, ...) are served as application/octet-stream."
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Inspect Attachment",
         "tags": [
           "simulator"
         ]

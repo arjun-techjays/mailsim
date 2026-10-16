@@ -24,7 +24,7 @@ from urllib.parse import quote, urlencode
 from fastapi import APIRouter, Body, Depends, Request, Response
 from fastapi.responses import JSONResponse
 
-from mailsim.adapters.graph import odata
+from mailsim.adapters.graph import kql, odata
 from mailsim.adapters.graph import resources as res
 from mailsim.adapters.graph.errors import GraphAuthError, GraphRoute, SyncStateGone
 from mailsim.api.auth import InvalidCredential, verify_key
@@ -46,6 +46,9 @@ BASES = ("/me", "/users/{user_id}")
 ENGINE_PAGE = 500
 DELTA_DEFAULT_PAGE = 10
 MAX_TOP_WITH_ATTACHMENTS = 50
+# $expand=attachments on a list: a page stops before the attachment bytes it carries would
+# exceed this (always at least one message; the rest via @odata.nextLink)
+MAX_EXPANDED_ATTACHMENT_BYTES = 25 * 1024 * 1024
 ITEM_NOT_FOUND = "The specified object was not found in the store."
 LIST_OPTIONS = frozenset(
     {"$top", "$skip", "$skiptoken", "$select", "$filter", "$orderby", "$count", "$search",
@@ -234,15 +237,23 @@ def folder_record(ctx: Ctx, ref: FolderRef) -> dict[str, Any]:
     raise NotFound("The specified folder could not be found in the store.")
 
 
-def attachment_docs(request: Request, m: CanonicalMessage) -> list[dict[str, Any]]:
-    blobs = getattr(request.app.state, "blobs", None)
-    return [res.attachment(a, m, blobs.get(a.blob_ref) if blobs is not None else None)
-            for a in m.attachments]  # fmt: skip
+def attachment_docs(mb: AgentMailbox, m: CanonicalMessage) -> list[dict[str, Any]]:
+    """Attachment resources with contentBytes: each attachment's bytes are one audited facade
+    read (`get_attachment`), like a REST or MCP attachment download."""
+    docs = []
+    for a in m.attachments:
+        ref, data = mb.get_attachment(m.id, a.id)
+        docs.append(res.attachment(ref, m, data))
+    return docs
 
 
 def render(request: Request, m: CanonicalMessage, *, select: frozenset[str] | None = None,
-           prefer: Prefer | None = None, expand: odata.Expand | None = None) -> dict[str, Any]:  # fmt: skip
-    atts = attachment_docs(request, m) if expand is not None and expand.attachments else None
+           prefer: Prefer | None = None, expand: odata.Expand | None = None,
+           mb: AgentMailbox | None = None) -> dict[str, Any]:  # fmt: skip
+    atts = (
+        attachment_docs(mb, m) if mb is not None and expand is not None and expand.attachments
+        else None
+    )  # fmt: skip
     return res.message(m, select=select, prefer_body=prefer.body if prefer else None,
                        expand=expand, attachments=atts)  # fmt: skip
 
@@ -320,8 +331,8 @@ def check_writable(ctx: Ctx, payload: Mapping[str, Any]) -> None:
     if payload.get("importance") not in (None, "normal"):
         unsupported.append("importance")
     if unsupported:
-        raise UnsupportedOperation(f"setting {', '.join(unsupported)} is not supported by the "
-                                   "mailsim Graph profile", details={"properties": unsupported})  # fmt: skip
+        raise UnsupportedOperation(f"setting {', '.join(unsupported)} is not supported",
+                                   details={"properties": unsupported})  # fmt: skip
     for name in ("from", "sender"):
         address = odata.path_get(payload.get(name), "emailAddress/address")
         if isinstance(address, str) and address.casefold() != ctx.email().casefold():
@@ -478,12 +489,20 @@ def matching(ctx: Ctx, folder: FolderRef | None) -> list[tuple[CanonicalMessage,
     """Messages selected by $search / $filter (unordered). The query is validated before
     the mailbox is read."""
     q = ctx.request.query_params
-    search = odata.parse_search(q["$search"]) if "$search" in q else None
+    search = kql.parse(q["$search"]) if "$search" in q else None
     if search is not None and ("$filter" in q or "$orderby" in q):
         raise odata.QueryNotSupported("$search cannot be combined with $filter or $orderby")
     predicate = odata.compile_filter(q["$filter"]) if "$filter" in q else None
     if search is not None:
-        hits = ctx.mb.search_messages(search)
+        # plain text, or KQL whose positive free-text term narrows the candidates: the
+        # engine search (audited as `search`); KQL on properties only: the folder listing
+        anchor = search.text or search.anchor
+        if anchor is not None:
+            hits = ctx.mb.search_messages(anchor)
+        else:
+            hits = all_messages(ctx.mb, folder.engine_ref if folder else None)
+        if search.node is not None:
+            hits = [m for m in hits if kql.matches(search.node, m)]
         msgs = [m for m in hits if folder is None or res.folder_key(m.folder) == folder.key]
     else:
         msgs = all_messages(ctx.mb, folder.engine_ref if folder else None)
@@ -509,15 +528,32 @@ def list_messages(ctx: Ctx, folder: FolderRef | None) -> JSONResponse:
     order = odata.parse_orderby(q["$orderby"]) if "$orderby" in q else [("receivedDateTime", True)]
     docs = ordered(matching(ctx, folder), order)
     page = docs[skip : skip + top]
+    if expand is not None and expand.attachments:
+        page = _within_attachment_budget(page)
     body: dict[str, Any] = {
         "@odata.context": context_url(request, "users('me')/messages"),
-        "value": [render(request, m, select=select, prefer=prefer, expand=expand) for m, _ in page],
+        "value": [
+            render(request, m, select=select, prefer=prefer, expand=expand, mb=ctx.mb)
+            for m, _ in page
+        ],
     }
     if count == "true":
         body["@odata.count"] = len(docs)
-    if skip + top < len(docs):
-        body["@odata.nextLink"] = link(request, {"$skip": str(skip + top)}, ("$skiptoken",))
+    if skip + len(page) < len(docs):
+        body["@odata.nextLink"] = link(request, {"$skip": str(skip + len(page))},
+                                       ("$skiptoken",))  # fmt: skip
     return ok(body, headers=prefer.applied())
+
+
+def _within_attachment_budget(page: list[Any]) -> list[Any]:
+    """The longest prefix of `page` (at least one message) whose attachments total at most
+    MAX_EXPANDED_ATTACHMENT_BYTES (sizes from metadata, before any bytes are read)."""
+    total = 0
+    for i, (m, _) in enumerate(page):
+        total += sum(a.size for a in m.attachments)
+        if total > MAX_EXPANDED_ATTACHMENT_BYTES and i > 0:
+            return page[:i]
+    return page
 
 
 def count_messages(ctx: Ctx, folder: FolderRef | None) -> Response:
@@ -583,7 +619,7 @@ def _delta(ctx: Ctx, folder: FolderRef | None) -> JSONResponse:
         return ok(body, headers=prefer.applied())
     feed = ctx.mb.list_changes(int(state["s"]), limit=size)  # bounds the per-round fan-out
     if feed["reset_since"]:
-        raise SyncStateGone("The sync state is no longer valid (the run was reset); "
+        raise SyncStateGone("The sync state is no longer valid; "
                             "restart the sync without a token.")  # fmt: skip
     ids = list(dict.fromkeys(c["message_id"] for c in feed["changes"] if c["message_id"]))
     present = ctx.mb.present_messages(ids)  # deleted ones are absent, not agent errors
@@ -623,18 +659,17 @@ def get_message(message_id: str, ctx: Context) -> JSONResponse:
     prefer = Prefer.parse(ctx.request)
     select, expand = read_options(ctx.request)
     m = ctx.mb.get_message(resolve_message(ctx, message_id))
-    doc = render(ctx.request, m, select=select, prefer=prefer, expand=expand)
+    doc = render(ctx.request, m, select=select, prefer=prefer, expand=expand, mb=ctx.mb)
     return ok({"@odata.context": context_url(ctx.request, "users('me')/messages/$entity"), **doc},
               headers=prefer.applied())  # fmt: skip
 
 
 @route("GET", "/messages/{message_id}/$value")
 def get_mime(message_id: str, ctx: Context) -> Response:
-    m = ctx.mb.get_message(resolve_message(ctx, message_id))
-    blobs = app_state(ctx.request, "blobs")
-    if m.raw_blob_ref is None:  # pragma: no cover - every inserted message keeps its raw MIME
+    raw = ctx.mb.get_raw(resolve_message(ctx, message_id))
+    if raw is None:  # pragma: no cover - every inserted message keeps its raw MIME
         raise NotFound("this message has no MIME content")
-    return Response(blobs.get(m.raw_blob_ref), media_type="text/plain")
+    return Response(raw, media_type="text/plain")
 
 
 @route("POST", "/messages", 201)
@@ -883,13 +918,14 @@ def _attachment(ctx: Ctx, message_id: str, attachment_id: str) -> tuple[Canonica
 def list_attachments(message_id: str, ctx: Context) -> JSONResponse:
     m = ctx.mb.get_message(resolve_message(ctx, message_id))
     return ok({"@odata.context": context_url(ctx.request, "users('me')/messages('id')/attachments"),
-               "value": attachment_docs(ctx.request, m)})  # fmt: skip
+               "value": attachment_docs(ctx.mb, m)})  # fmt: skip
 
 
 @route("GET", "/messages/{message_id}/attachments/{attachment_id}")
 def get_attachment(message_id: str, attachment_id: str, ctx: Context) -> JSONResponse:
     m, i = _attachment(ctx, message_id, attachment_id)
-    doc = attachment_docs(ctx.request, m)[i]
+    ref, data = ctx.mb.get_attachment(m.id, m.attachments[i].id)
+    doc = res.attachment(ref, m, data)
     return ok({"@odata.context": context_url(ctx.request, "users('me')/messages('id')/attachments/$entity"),
                **doc})  # fmt: skip
 
@@ -897,9 +933,8 @@ def get_attachment(message_id: str, attachment_id: str, ctx: Context) -> JSONRes
 @route("GET", "/messages/{message_id}/attachments/{attachment_id}/$value")
 def get_attachment_content(message_id: str, attachment_id: str, ctx: Context) -> Response:
     m, i = _attachment(ctx, message_id, attachment_id)
-    att = m.attachments[i]
-    return Response(app_state(ctx.request, "blobs").get(att.blob_ref),
-                    headers=safe_download_headers(att.filename, att.mime_type))  # fmt: skip
+    ref, data = ctx.mb.get_attachment(m.id, m.attachments[i].id)
+    return Response(data, headers=safe_download_headers(ref.filename, ref.mime_type))
 
 
 # ------------------------------------------------------------------- capability discovery
@@ -910,6 +945,6 @@ def get_attachment_content(message_id: str, attachment_id: str, ctx: Context) ->
 def unsupported(path: str, ctx: Context) -> NoReturn:
     """Anything not listed above fails explicitly (spec 5.5 capability discovery)."""
     raise UnsupportedOperation(
-        f"{ctx.request.method} /{path} is not supported by the mailsim Graph profile",
+        f"{ctx.request.method} /{path} is not supported by this server",
         details={"path": path},
     )

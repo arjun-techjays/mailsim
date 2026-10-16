@@ -24,6 +24,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
+from mailsim.api.agent_errors import agent_view
 from mailsim.api.auth import InvalidCredential, verify_key
 from mailsim.auth.principal import Principal, Role
 from mailsim.domain.errors import SimError
@@ -88,7 +89,8 @@ class Authenticator:
         try:  # the engine decides: run active, mailbox is the agent's, ... (an audited read)
             info = mailbox.mailbox_info()
         except SimError as exc:
-            raise AuthFailed(f"{exc.code}: {exc.message}", code=str(exc.code)) from None
+            agent_code, message, _ = agent_view(str(exc.code), exc.message)
+            raise AuthFailed(f"{agent_code}: {message}", code=str(exc.code)) from None
         address = str(info["email"]).lower()
         if username.strip().lower() != address:
             raise AuthFailed("username does not match the key's mailbox")

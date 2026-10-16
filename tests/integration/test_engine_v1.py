@@ -127,7 +127,8 @@ def test_forward_carries_attachments(world):
     assert (
         got[0].subject == "Fwd: Invoice INV-001" and got[0].attachments[0].filename == "INV-001.pdf"
     )
-    assert "Forwarded message" in got[0].body_text and res["external_recipients"] == []
+    assert "Forwarded message" in got[0].body_text
+    assert set(res) == {"message_id", "message_id_header"}  # no delivery details for the agent
     again = agent.forward(agent.get_message(res["message_id"]).id, to=["vendor@example.test"])
     assert agent.get_message(again["message_id"]).subject == "Fwd: Invoice INV-001"
 
@@ -315,8 +316,8 @@ def test_external_ids_imap_uids_drafts_and_order(world):
 
 def test_external_ids_never_resolve_across_mailboxes(world):
     env, ctl, ev, run, agent, fm, vendor, vend = world
-    sent = agent.send(to=["vendor@example.test"], subject="cross", text="x")
-    vendor_copy = sent["delivered_message_ids"][0]
+    agent.send(to=["vendor@example.test"], subject="cross", text="x")
+    vendor_copy = vendor_inbox(env, run, vendor)[-1].id
     gid = next(p["external_id"] for p in ev.state(run)["provider_ids"]
                if p["entity_id"] == vendor_copy and p["provider"] == "gmail")  # fmt: skip
     with pytest.raises(NotFound):
@@ -357,3 +358,19 @@ def test_operator_reads_validate_and_page(world):
     items, nxt = ev.events_page(run, limit=2)
     assert len(items) == 2 and nxt == items[-1]["sequence"]
     assert {b["owner_id"] for b in ctl.list_mailboxes(run)} == {"finance_manager", "vendor"}
+
+
+def test_every_agent_send_result_is_only_the_sent_copy(world):
+    env, ctl, ev, run, agent, fm, vendor, _ = world
+    first = agent.list_messages().items[0]
+    draft = agent.create_draft(to=["vendor@example.test"], subject="d", text="x")
+    results = {
+        "send": agent.send(to=["vendor@example.test"], subject="s", text="x"),
+        "reply": agent.reply(first.id, text="ack"),
+        "forward": agent.forward(first.id, to=["vendor@example.test"], cc=["finance@example.test"]),
+        "send_draft": agent.send_draft(draft["message_id"]),
+    }
+    for name, result in results.items():
+        assert set(result) == {"message_id", "message_id_header"}, name
+    logged = [a for a in ev.actions(run) if a["operation"] in ("send", "reply", "forward")]
+    assert all("external_mode" in a["result"] for a in logged)  # operators keep the details

@@ -130,7 +130,7 @@ def test_send_reply_modify_trash_delete(live):
     assert media["labelIds"] == ["SENT"]
     mod = users.messages().modify(userId="me", id=inv["id"], body={
         "removeLabelIds": ["UNREAD", "INBOX"], "addLabelIds": ["STARRED"]}).execute()  # fmt: skip
-    assert set(mod["labelIds"]) == {"STARRED", "MAILSIM_ANSWERED"}
+    assert set(mod["labelIds"]) == {"STARRED", "ANSWERED"}
     assert users.messages().trash(userId="me", id=inv["id"]).execute()["labelIds"][0] == "TRASH"
     users.messages().untrash(userId="me", id=inv["id"]).execute()
     users.messages().batchModify(userId="me", body={"ids": [inv["id"]],

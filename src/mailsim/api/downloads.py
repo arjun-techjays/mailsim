@@ -1,9 +1,9 @@
 """Headers for serving recorded (untrusted) bytes: always a download, never rendered.
 
-Used by every route that returns stored blobs (run artifacts, evaluation reports, Graph
-attachment `$value`). Only the validated main type of a small allowlist of passive types is
-echoed; anything that a browser could execute or render as a document (HTML, SVG, XML,
-JavaScript, ...) is served as application/octet-stream.
+Used by every route that returns stored blobs (run artifacts, evaluation reports, agent and
+operator attachment downloads, Graph attachment `$value`). Only the validated main type of a
+small allowlist of passive types is echoed; anything that a browser could execute or render
+as a document (HTML, SVG, XML, JavaScript, ...) is served as application/octet-stream.
 """
 
 from __future__ import annotations
@@ -17,10 +17,11 @@ _UNSAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]")
 MAX_FILENAME_CHARS = 150
 PASSIVE_TYPES = frozenset({
     "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/tiff",
+    "image/avif", "image/heic",
     "application/pdf", "text/plain", "text/csv", "text/markdown", "application/json",
-    "message/rfc822", OCTET_STREAM, "application/zip", "application/gzip",
-    "application/msword", "application/vnd.ms-excel", "application/vnd.ms-powerpoint",
-    "application/rtf",
+    "message/rfc822", OCTET_STREAM, "application/zip", "application/x-zip-compressed",
+    "application/gzip", "application/msword", "application/vnd.ms-excel",
+    "application/vnd.ms-powerpoint", "application/rtf",
 })  # fmt: skip
 _OFFICE_XML = "application/vnd.openxmlformats-officedocument."
 _OPEN_DOCUMENT = "application/vnd.oasis.opendocument."
@@ -37,18 +38,27 @@ def safe_content_type(content_type: str | None) -> str:
     return OCTET_STREAM
 
 
-def safe_download_headers(filename: str, content_type: str | None) -> dict[str, str]:
-    """Content-Type (see `safe_content_type`), attachment disposition with an ASCII fallback
-    name (+ RFC 5987 `filename*` when the name is not plain ASCII), nosniff, CSP sandbox."""
+def content_disposition(filename: str) -> str:
+    """`attachment` with an ASCII fallback `filename` (only [A-Za-z0-9._-], no leading dots)
+    and, when that differs from the real name, the exact UTF-8 name as RFC 5987 `filename*`
+    (percent-encoded: control characters, quotes and separators never reach the header raw)."""
     name = filename[:MAX_FILENAME_CHARS]
     fallback = _UNSAFE_FILENAME.sub("_", name).strip("._") or "download"
     disposition = f'attachment; filename="{fallback}"'
     if name and fallback != name:
         disposition += f"; filename*=UTF-8''{quote(name, safe='')}"
-    return {"Content-Type": safe_content_type(content_type), "Content-Disposition": disposition,
+    return disposition
+
+
+def safe_download_headers(filename: str, content_type: str | None) -> dict[str, str]:
+    """Content-Type (see `safe_content_type`), attachment disposition (see
+    `content_disposition`), nosniff, a sandboxing CSP and no caching."""
+    return {"Content-Type": safe_content_type(content_type),
+            "Content-Disposition": content_disposition(filename),
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "sandbox; default-src 'none'",
             "Cache-Control": "private, no-store"}  # fmt: skip
 
 
-__all__ = ["OCTET_STREAM", "PASSIVE_TYPES", "safe_content_type", "safe_download_headers"]
+__all__ = ["OCTET_STREAM", "PASSIVE_TYPES", "content_disposition", "safe_content_type",
+           "safe_download_headers"]  # fmt: skip

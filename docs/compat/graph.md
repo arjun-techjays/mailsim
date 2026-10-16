@@ -143,15 +143,38 @@ other value clears it). Other extended properties are not supported.
 
 | Option | Support |
 |---|---|
-| `$top` | 1..1000, default 10 (or `Prefer: odata.maxpagesize=N`); at most 50 per page with `$expand=attachments` (the rest via `@odata.nextLink`) |
+| `$top` | 1..1000, default 10 (or `Prefer: odata.maxpagesize=N`); with `$expand=attachments` at most 50 per page, and a page ends before its attachments would exceed 25 MiB in total (always at least one message; the rest via `@odata.nextLink`) |
 | `$skip` | offset; `@odata.nextLink` carries `$skip` like Graph's message lists |
 | `$skiptoken` | opaque token from a delta `@odata.nextLink`; also accepted on lists |
 | `$count=true` | `@odata.count` |
 | `$select` | any message property listed above; unknown names `400 ErrorInvalidRequest` |
 | `$orderby` | `receivedDateTime`, `sentDateTime`, `createdDateTime`, `lastModifiedDateTime`, `subject`, `from/emailAddress/address`, `from/emailAddress/name`; `asc`/`desc`, comma-separated; default `receivedDateTime desc`. Ties keep the engine's (created, id) order |
 | `$filter` | see below |
-| `$search` | `"text"`: substring match over subject, text body and sender (not KQL); cannot be combined with `$filter`/`$orderby` |
+| `$search` | `"text"`: substring match over subject, text body and sender; or the KQL subset below. Cannot be combined with `$filter`/`$orderby` |
 | `$expand` | `attachments`; `singleValueExtendedProperties($filter=id eq '...')` |
+
+`$search` KQL subset (the value is quoted as a whole: `$search="subject:invoice AND
+hasAttachments:true"`; a phrase inside it is escaped: `$search="\"bank details\""`):
+
+- Property terms: `subject:`, `body:` (plain-text body, or the text of the HTML body; never the
+  markup), `from:`, `to:`, `cc:`, `bcc:`, `recipients:` (to/cc/bcc), `participants:`
+  (from/to/cc/bcc), `attachment:` (file name): case-insensitive substring; a value may be
+  quoted (`subject:"bank details"`). `hasAttachments:` / `hasAttachment:` and `isRead:` take
+  `true`/`false`. The dates `received` and `sent` take `:`/`=` (that UTC day or instant), `<`,
+  `<=`, `>`, `>=` or a range `received:2026-10-01..2026-10-15` (inclusive days), with
+  `YYYY-MM-DD` or an ISO 8601 date-time (`9999-12-31` and later is refused). Drafts have no
+  `sent` date.
+- Free text: each word or `"phrase"` is a case-insensitive substring of subject, text body or
+  sender address. Several terms are ANDed (`$search="bank change"` = both words, any order);
+  one word or one phrase is a single engine search.
+- `AND` (also implied between terms), `OR`, `NOT` / `-`, and parentheses.
+- A `name:value` word whose name is not a property above (`re:meeting`, `mailto:a@x`,
+  `foo:bar`) is free text, as in Graph. Only malformed queries are `400 ErrorInvalidRequest`:
+  a bad value for a known property (`isRead:maybe`, `received:yesterday`), an empty value,
+  comparisons on a text property, unbalanced parentheses or quotes, more than 1024 characters
+  or nesting deeper than 32.
+- A positive top-level free-text term is run as the engine search (audited `search`); a query
+  of property terms only reads the folder (audited `read`) and filters it.
 
 `$filter` grammar: comparisons joined with `and` / `or` and parentheses.
 
@@ -186,7 +209,8 @@ ErrorNotSupported`.
   at most that many message reads) and continues with `@odata.nextLink`.
 - Tokens are opaque; `$select` is kept on the links. `$filter`/`$orderby` on delta are not
   supported.
-- After a run reset, an older token answers `410 SyncStateNotFound`: restart without a token.
+- After a run reset, an older token answers `410 SyncStateNotFound` ("The sync state is no
+  longer valid"): restart without a token.
 
 ## Identifiers
 
@@ -218,9 +242,9 @@ Body: `{"error": {"code", "message", "innerError": {"request-id", "client-reques
 | `PERMISSION_DENIED` | 403 | `ErrorAccessDenied` |
 | `EXTERNAL_DELIVERY_BLOCKED` | 403 | `ErrorMessageSubmissionBlocked` |
 | `CONFLICT` | 409 | `ErrorIrresolvableConflict` |
-| `RUN_NOT_ACTIVE` | 412 | `ErrorPreconditionFailed` |
+| `RUN_NOT_ACTIVE` | 412 | `ErrorPreconditionFailed` ("mailbox is not available") |
 | `RATE_LIMITED` | 429 (+ `Retry-After: 1`) | `ErrorTooManyRequests` |
-| `SIMULATION_LIMIT_EXCEEDED` | 429 | `ErrorQuotaExceeded` |
+| `SIMULATION_LIMIT_EXCEEDED` | 429 | `ErrorQuotaExceeded` ("action limit reached") |
 | `UNSUPPORTED_OPERATION` (incl. any path outside the profile) | 501 | `ErrorNotSupported` |
 | `UPSTREAM_UNAVAILABLE` | 503 | `ErrorServiceUnavailable` |
 | stale delta token | 410 | `SyncStateNotFound` |
@@ -243,7 +267,8 @@ Each Graph code maps back to exactly one simulator code.
 - `lastModifiedDateTime` equals `createdDateTime`; `importance`, `inferenceClassification`,
   `replyTo` are constants; there is no `uniqueBody`, `webLink`, `conversationIndex`,
   `isDeliveryReceiptRequested` handling or `followupFlag` dates.
-- `$search` is a substring search, not KQL. `$filter` is the subset above. `$skip` paging is
+- `$search` supports the KQL subset above only (no `size`, `importance`, `kind`, wildcards
+  or proximity). `$filter` is the subset above. `$skip` paging is
   offset-based over the state at request time (stable under a fixed state).
 - `GET /me/messages/delta` (mailbox-wide) is an extension; Graph v1.0 offers delta per folder.
 - A draft that was sent or deleted appears in delta as `@removed` under its last internal
@@ -253,7 +278,10 @@ Each Graph code maps back to exactly one simulator code.
 - No `$batch`, no change notifications (subscriptions), no mail rules, focused inbox, search
   folders, child folders, categories master list, mailbox settings or calendar.
 - Each Graph request may record more than one agent read in the audit trail (e.g. id
-  resolution + read); only writes count against the action budget.
+  resolution + read); only writes count against the action budget. Attachment bytes
+  (`contentBytes` of the attachment list, a single attachment, `$expand=attachments`, and
+  `$value`) are each one audited `AgentMailbox.get_attachment` read (25 MiB cap); a message's
+  MIME `$value` is one `get_raw` read.
 
 ## Cost and mailbox-size envelope
 

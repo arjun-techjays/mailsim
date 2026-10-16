@@ -46,14 +46,14 @@ def run_stdio(
     stdin: Any = None,
     stdout: Any = None,
 ) -> None:
-    """Run the MCP server on stdio for one sandbox API key (agent, controller or evaluator)."""
+    """Run the MCP server on stdio for one API key (agent, controller or evaluator)."""
     env = os.environ if environ is None else environ
     key = (key or env.get(API_KEY_ENV, "")).strip()
     if not key:
-        raise StdioConfigError(f"set {API_KEY_ENV} to a sandbox API key (msk_...)")
+        raise StdioConfigError(f"set {API_KEY_ENV} to an API key (msk_...)")
     sf = session_factory or engine.session_factory
     try:
-        verify_principal(sf, key)
+        principal = verify_principal(sf, key)
     except InvalidCredential:
         raise StdioConfigError(
             "the API key is missing, malformed, unknown, expired or revoked"
@@ -61,7 +61,7 @@ def run_stdio(
     server = build_server(engine, key_resolver(sf, key), session_factory=sf,
                           evaluation_service=evaluation_service,
                           persona_runtime_factory=persona_runtime_factory,
-                          interface="mcp_stdio")  # fmt: skip
+                          interface="mcp_stdio", role=principal.role)  # fmt: skip
     anyio.run(serve_stdio, server, stdin, stdout)
 
 

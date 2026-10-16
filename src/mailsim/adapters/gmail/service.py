@@ -197,7 +197,7 @@ class GmailService:
         ref = find_attachment(msg, attachment_id)
         if ref is None:
             raise NotFound(f"attachment {attachment_id} not found")
-        data = self._blobs.get(ref.blob_ref)
+        _, data = self.mb.get_attachment(msg.id, ref.id)
         return {"attachmentId": attachment_id, "size": len(data), "data": b64url(data)}
 
     def resource(self, msg: CanonicalMessage, fmt: str = "full",
@@ -307,7 +307,7 @@ class GmailService:
             raise InvalidRequest("a label cannot be both added and removed")
         for label_id in (*add, *remove):
             if lb.check_label_id(label_id) == "unmodelled":
-                raise UnsupportedOperation(f"label {label_id} is not modelled by this sandbox")
+                raise UnsupportedOperation(f"label {label_id} is not supported")
         if "DRAFT" in add or "DRAFT" in remove:
             raise InvalidRequest("Invalid label: DRAFT changes only through the drafts API")
         folder = self._target_folder(msg, add, remove)
@@ -358,8 +358,9 @@ class GmailService:
     def _parse(raw: bytes) -> tuple[ParsedMessage, str]:
         parsed = parse_mime(raw)
         if parsed.attachments:
-            raise UnsupportedOperation("attachments are not supported when composing through this "
-                                       "sandbox profile (send, drafts)")  # fmt: skip
+            raise UnsupportedOperation(
+                "attachments are not supported when composing (send, drafts)"
+            )
         text = (
             parsed.body_text
             if parsed.body_text is not None
@@ -413,7 +414,7 @@ class GmailService:
         of those beyond the insert itself is a separate write."""
         for label_id in label_ids:
             if lb.check_label_id(label_id) == "unmodelled":
-                raise UnsupportedOperation(f"label {label_id} is not modelled by this sandbox")
+                raise UnsupportedOperation(f"label {label_id} is not supported")
         if "DRAFT" in label_ids:
             raise InvalidRequest("Invalid label: DRAFT (create drafts through the drafts API)")
         folder = next((lb.LABEL_FOLDER[x] for x in ("TRASH", "INBOX", "SENT") if x in label_ids),
@@ -594,7 +595,7 @@ class GmailService:
             since = history_number(decode_cursor(token)[0], "malformed page token")
         feed = self.mb.list_changes(since, limit=page_size(max_results))
         if feed["reset_since"]:
-            raise NotFound("Requested entity was not found: startHistoryId predates a run reset; "
+            raise NotFound("Requested entity was not found: startHistoryId is no longer valid; "
                            "perform a full sync")  # fmt: skip
         changes = [c for c in feed["changes"] if c.get("message_id")]
         ids = list(dict.fromkeys(str(c["message_id"]) for c in changes))

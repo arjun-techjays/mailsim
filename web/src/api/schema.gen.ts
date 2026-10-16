@@ -96,8 +96,8 @@ export interface paths {
         put?: never;
         /**
          * Send
-         * @description Send to simulated mailboxes only. External recipients follow the scenario's rule
-         *     (deny/sink/event); nothing is ever delivered outside the sandbox.
+         * @description Send a new message. Recipients may be bare addresses or `Name <addr@example.com>`; a
+         *     recipient the run does not allow is rejected with EXTERNAL_DELIVERY_BLOCKED (422).
          */
         post: operations["send_v1_mailboxes__mailbox_id__messages_post"];
         delete?: never;
@@ -135,6 +135,48 @@ export interface paths {
          *     GET the message to see its state.
          */
         patch: operations["patch_message_v1_mailboxes__mailbox_id__messages__message_id__patch"];
+        trace?: never;
+    };
+    "/v1/mailboxes/{mailbox_id}/messages/{message_id}/attachments/{attachment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Attachment
+         * @description Download one attachment (ids from the message's `attachments`). Served as a download
+         *     with its stored media type; never rendered inline. Recorded as a `read`.
+         */
+        get: operations["get_attachment_v1_mailboxes__mailbox_id__messages__message_id__attachments__attachment_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mailboxes/{mailbox_id}/messages/{message_id}/forward": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Forward
+         * @description Forward a message, attachments included, to `to` (and `cc`); `text` is written above
+         *     the forwarded content. Counts as one `forward` operation.
+         */
+        post: operations["forward_v1_mailboxes__mailbox_id__messages__message_id__forward_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/mailboxes/{mailbox_id}/messages/{message_id}/reply": {
@@ -343,8 +385,10 @@ export interface paths {
         put?: never;
         /**
          * Create Agent Credential
-         * @description Issue a new agent key for a run (e.g. after a lost or redacted response). Earlier agent
-         *     keys of the run are revoked.
+         * @description Issue an additional agent key for a run (e.g. after a lost or redacted response, or one
+         *     key per interface). Earlier agent keys are NOT revoked: revoke one explicitly with
+         *     `DELETE /v1/keys/{key_id}`. Cancelling or completing the run revokes all of them. At most
+         *     16 live agent keys per run: beyond that, 409 CONFLICT until one is revoked.
          */
         post: operations["create_agent_credential_v1_runs__run_id__agent_credentials_post"];
         delete?: never;
@@ -613,6 +657,28 @@ export interface paths {
          *     agent action: nothing is recorded and no triggers are armed; finished runs are readable.
          */
         get: operations["inspect_messages_v1_runs__run_id__mailboxes__mailbox_id__messages_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{run_id}/mailboxes/{mailbox_id}/messages/{message_id}/attachments/{attachment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Inspect Attachment
+         * @description Operator download of one attachment of any mailbox in the run (records nothing; works
+         *     on finished runs). Always a download: `Content-Disposition: attachment`, `nosniff` and
+         *     `Content-Security-Policy: sandbox`, so it is never rendered in the dashboard's origin.
+         */
+        get: operations["inspect_attachment_v1_runs__run_id__mailboxes__mailbox_id__messages__message_id__attachments__attachment_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1178,6 +1244,11 @@ export interface components {
         AgentCredential: {
             /** Api Key */
             api_key: string;
+            /**
+             * Key Id
+             * @description revoke with DELETE /v1/keys/{key_id}
+             */
+            key_id?: string | null;
             /** Mailbox Address */
             mailbox_address: string;
             /** Mailbox Id */
@@ -1914,6 +1985,27 @@ export interface components {
             /** System Type */
             system_type: string | null;
         };
+        /**
+         * ForwardRequest
+         * @description Forward a message (with its attachments) to new recipients; `text` goes above it.
+         */
+        ForwardRequest: {
+            /**
+             * Cc
+             * @description addresses; "Name <addr@example.com>" is accepted (the name is dropped); quote a name that contains a comma ('"Smith, John" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.
+             */
+            cc?: string[];
+            /**
+             * Text
+             * @default
+             */
+            text: string;
+            /**
+             * To
+             * @description addresses; "Name <addr@example.com>" is accepted (the name is dropped); quote a name that contains a comma ('"Smith, John" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.
+             */
+            to: string[];
+        };
         /** InjectMessage */
         InjectMessage: {
             /** Cc */
@@ -2379,9 +2471,15 @@ export interface components {
         };
         /** SendRequest */
         SendRequest: {
-            /** Bcc */
+            /**
+             * Bcc
+             * @description addresses; "Name <addr@example.com>" is accepted (the name is dropped); quote a name that contains a comma ('"Smith, John" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.
+             */
             bcc?: string[];
-            /** Cc */
+            /**
+             * Cc
+             * @description addresses; "Name <addr@example.com>" is accepted (the name is dropped); quote a name that contains a comma ('"Smith, John" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.
+             */
             cc?: string[];
             /** Html */
             html?: string | null;
@@ -2395,17 +2493,18 @@ export interface components {
              * @default
              */
             text: string;
-            /** To */
+            /**
+             * To
+             * @description addresses; "Name <addr@example.com>" is accepted (the name is dropped); quote a name that contains a comma ('"Smith, John" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.
+             */
             to?: string[];
         };
-        /** SendResult */
+        /**
+         * SendResult
+         * @description The sent copy in the caller's mailbox. How each recipient was handled is not part of
+         *     the agent-facing result (operators see it in the run's actions and events).
+         */
         SendResult: {
-            /** Delivered Message Ids */
-            delivered_message_ids: string[];
-            /** External Mode */
-            external_mode: string;
-            /** External Recipients */
-            external_recipients: string[];
             /** Message Id */
             message_id: string;
             /** Message Id Header */
@@ -2760,6 +2859,75 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CanonicalMessage"];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_attachment_v1_mailboxes__mailbox_id__messages__message_id__attachments__attachment_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                mailbox_id: string;
+                message_id: string;
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The attachment bytes, always as a download (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`). Active types (HTML, SVG, XML, scripts, ...) are served as application/octet-stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    forward_v1_mailboxes__mailbox_id__messages__message_id__forward_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                mailbox_id: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ForwardRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SendResult"];
                 };
             };
             /** @description Default Response */
@@ -3558,6 +3726,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MessagePage"];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    inspect_attachment_v1_runs__run_id__mailboxes__mailbox_id__messages__message_id__attachments__attachment_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                mailbox_id: string;
+                message_id: string;
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The attachment bytes, always as a download (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`). Active types (HTML, SVG, XML, scripts, ...) are served as application/octet-stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
                 };
             };
             /** @description Default Response */
