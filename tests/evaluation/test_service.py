@@ -437,7 +437,7 @@ def test_accuracy_and_variance_across_builds(world):
     _synthetic(world, world.run, None, [F, F], key_id, v, 8, checks=False)
     svc = world.service()
     cmp = svc.accuracy(world.env.scope, KEY, answer_key_version=None, builds=None, baseline="b1")
-    assert cmp.answer_key_version == v and set(cmp.builds) == {"b1", "b2", "unspecified"}
+    assert cmp.answer_key_version == v and set(cmp.builds) == {"b1", "b2", "(no build)"}
     b1, b2 = cmp.builds["b1"], cmp.builds["b2"]
     assert b1.runs == 2 and b1.mean_accuracy == pytest.approx(0.75)
     assert b1.variance == pytest.approx(0.125) and b1.stdev == pytest.approx(0.125**0.5)
@@ -446,8 +446,8 @@ def test_accuracy_and_variance_across_builds(world):
     assert cmp.baseline == "b1"
     assert cmp.deltas["b2"]["mean_accuracy"] == pytest.approx(-0.5)
     assert cmp.deltas["b2"]["pass_rate"] == pytest.approx(-0.5)
-    assert cmp.builds["unspecified"].runs == 1 and cmp.builds["unspecified"].variance is None
-    assert cmp.builds["unspecified"].pass_rate == 1.0  # the completing evaluation counts
+    assert cmp.builds["(no build)"].runs == 1 and cmp.builds["(no build)"].variance is None
+    assert cmp.builds["(no build)"].pass_rate == 1.0  # the completing evaluation counts
 
     only = svc.accuracy(world.env.scope, KEY, answer_key_version=v, builds=["b2", "nope"],
                         baseline=None)  # fmt: skip

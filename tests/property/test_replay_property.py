@@ -69,6 +69,6 @@ def test_replay_of_any_command_sequence_reproduces_state(env, ops):
     assert result.matches
     seqs = [ev["sequence"] for ev in e.events(sc, run)]
     assert seqs == list(range(1, len(seqs) + 1))
-    assert [ev["type"] for ev in e.events(sc, run)] == [
-        ev["type"] for ev in e.events(sc, result.replay_run_id)
-    ]
+    replayed = [ev["type"] for ev in e.events(sc, result.replay_run_id)]
+    # the copy of the log, then the replay's own closing status change
+    assert [ev["type"] for ev in e.events(sc, run)] + ["run.status_changed"] == replayed

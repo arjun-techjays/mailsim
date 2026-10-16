@@ -6,8 +6,10 @@ WS-B). Without one, they answer 501 UNSUPPORTED_OPERATION.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Annotated, Any, Literal, Protocol
+from urllib.parse import quote
 
 from fastapi import APIRouter, Header, Query, Request, Response
 from pydantic import ValidationError
@@ -33,7 +35,7 @@ from mailsim.api.routers._common import (
 from mailsim.auth.principal import Principal, Role
 from mailsim.domain.clock import iso, parse_ts
 from mailsim.domain.errors import Conflict, InvalidRequest, NotFound
-from mailsim.domain.states import TERMINAL
+from mailsim.domain.states import TERMINAL, RunStatus
 from mailsim.engine.facades import EvaluatorView
 from mailsim.engine.pagination import decode_cursor, encode_cursor
 from mailsim.evaluation.contract import BuildComparison, EvaluationReport
@@ -48,6 +50,9 @@ router = APIRouter(prefix="/v1", tags=["control"], responses={"default": {"model
 Idem = Annotated[str | None, Header(alias="Idempotency-Key", max_length=200)]
 REPORT_TYPES = {"json": "application/json", "junit": "application/xml",
                 "markdown": "text/markdown; charset=utf-8"}  # fmt: skip
+REPORT_EXTENSIONS = {"json": "json", "junit": "xml", "markdown": "md"}
+_MIME_TYPE = re.compile(r"[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*")
+_UNSAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]")
 
 
 class EvaluationService(Protocol):
@@ -336,9 +341,13 @@ def list_runs(
     status: str | None = None,
     cursor: str | None = None,
     page_size: Annotated[int, Query(ge=1, le=500)] = 50,
+    include_replays: bool = False,
 ) -> s.RunPage:
     """Runs in the caller's project, newest first (by creation time, then id); filter by
-    `scenario_key` and/or `status`; follow `next_cursor` until it is null."""
+    `scenario_key` and/or `status`; follow `next_cursor` until it is null.
+
+    Replay runs (`replay_of` set, status REPLAYED) are copies of another run's log, not agent
+    runs: they are left out unless `include_replays=true` (or `status=REPLAYED`)."""
     stmt = (
         select(m.Run, m.ScenarioVersion.version, m.Scenario.key)
         .join(m.ScenarioVersion, m.ScenarioVersion.id == m.Run.scenario_version_id)
@@ -349,6 +358,8 @@ def list_runs(
         stmt = stmt.where(m.Scenario.key == scenario_key)
     if status is not None:
         stmt = stmt.where(m.Run.status == status)
+    if not include_replays and status != RunStatus.REPLAYED:
+        stmt = stmt.where(m.Run.replay_of.is_(None))
     if cursor is not None:
         stamp, last_id = decode_cursor(cursor)
         stmt = stmt.where(tuple_(m.Run.created_at, m.Run.id) < (parse_ts(stamp), last_id))
@@ -438,6 +449,11 @@ def run_events(
 def replay_run(
     request: Request, run_id: str, principal: Controller, idempotency_key: Idem = None
 ) -> Response:
+    """Copy the run's recorded event log into a new run and compare state hashes. The copy
+    (`replay_of` = this run) ends REPLAYED (or the original's final status if it had ended):
+    it takes no commands, cannot be evaluated (409), and is left out of /accuracy and of the
+    runs list unless `include_replays=true`."""
+
     def replay() -> s.ReplayOut:
         r = controller(request, principal).replay_run(run_id)
         return s.ReplayOut(replay_run_id=r.replay_run_id, matches=r.matches,
@@ -447,24 +463,30 @@ def replay_run(
     return idempotent(request, principal, idempotency_key, {}, 200, replay)
 
 
-@router.get("/runs/{run_id}/artifacts", response_model=list[s.ArtifactOut])
-def run_artifacts(request: Request, run_id: str, principal: Inspector) -> list[s.ArtifactOut]:
-    """Trace, raw MIME and attachment blobs; evaluation reports for evaluators only."""
+def _artifacts(request: Request, principal: Principal,
+               run_id: str) -> list[tuple[s.ArtifactOut, str]]:  # fmt: skip
+    """(artifact, download file name) of a run; reports only for evaluators."""
     view = inspector(request, principal)
     state = view.state(run_id)  # scope-checked
-    out = [s.ArtifactOut(kind="trace", ref=f"/v1/runs/{run_id}/events",
-                         content_type="application/json")]  # fmt: skip
+    out = [(s.ArtifactOut(kind="trace", ref=f"/v1/runs/{run_id}/events",
+                          content_type="application/json"), "")]  # fmt: skip
+
+    def url(ref: str) -> str:
+        return f"/v1/runs/{run_id}/artifacts/{ref}"
+
     seen: set[str] = set()
     for row in [*state["messages"], *state["sink_messages"]]:
         ref = row["raw_blob_ref"]
         if ref and ref not in seen:
             seen.add(ref)
-            out.append(s.ArtifactOut(kind="raw_mime", ref=ref, content_type="message/rfc822"))
+            out.append((s.ArtifactOut(kind="raw_mime", ref=ref, content_type="message/rfc822",
+                                      url=url(ref)), f"{run_id}-{ref[:12]}.eml"))  # fmt: skip
     for att in state["attachments"]:
         if att["blob_ref"] not in seen:
             seen.add(att["blob_ref"])
-            out.append(s.ArtifactOut(kind="attachment", ref=att["blob_ref"],
-                                     content_type=att["mime_type"], size=att["size"]))  # fmt: skip
+            out.append((s.ArtifactOut(kind="attachment", ref=att["blob_ref"],
+                                      content_type=att["mime_type"], size=att["size"],
+                                      url=url(att["blob_ref"])), att["filename"]))  # fmt: skip
     if isinstance(view, EvaluatorView):
         with sessions(request)() as session:
             reports = session.execute(
@@ -473,10 +495,53 @@ def run_artifacts(request: Request, run_id: str, principal: Inspector) -> list[s
                 .where(m.Evaluation.run_id == run_id)
                 .order_by(m.ReportRow.created_at, m.ReportRow.id)
             ).scalars()
-            out += [s.ArtifactOut(kind="report", ref=r.blob_ref,
-                                  content_type=REPORT_TYPES.get(r.format, "application/octet-stream"))
+            out += [(s.ArtifactOut(kind="report", ref=r.blob_ref, url=url(r.blob_ref),
+                                   content_type=REPORT_TYPES.get(r.format,
+                                                                 "application/octet-stream")),
+                     report_filename(run_id, r.evaluation_id, r.format))
                     for r in reports]  # fmt: skip
     return out
+
+
+@router.get("/runs/{run_id}/artifacts", response_model=list[s.ArtifactOut])
+def run_artifacts(request: Request, run_id: str, principal: Inspector) -> list[s.ArtifactOut]:
+    """Trace, raw MIME and attachment blobs; evaluation reports for evaluators only. Blob
+    artifacts carry a `url` that downloads them (`GET /v1/runs/{run_id}/artifacts/{ref}`)."""
+    return [artifact for artifact, _name in _artifacts(request, principal, run_id)]
+
+
+@router.get(
+    "/runs/{run_id}/artifacts/{artifact_id}",
+    response_class=Response,
+    responses={200: {"content": {"application/octet-stream": {}}}},
+)
+def run_artifact(request: Request, run_id: str, artifact_id: str, principal: Inspector) -> Response:
+    """Download one listed blob artifact (`artifact_id` = its `ref`) as an attachment. Only
+    blobs this run lists for the caller are served (reports: evaluators only), with
+    `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`; 404 otherwise."""
+    for artifact, name in _artifacts(request, principal, run_id):
+        if artifact.kind != "trace" and artifact.ref == artifact_id:
+            ctype = artifact.content_type.strip().lower()
+            if not _MIME_TYPE.fullmatch(ctype.split(";")[0].strip()):
+                ctype = "application/octet-stream"
+            return Response(blobs(request).get(artifact.ref), media_type=ctype,
+                            headers=download_headers(name))  # fmt: skip
+    raise NotFound(f"artifact {artifact_id[:80]} not found for run {run_id}")
+
+
+def report_filename(run_id: str, evaluation_id: str, fmt: str) -> str:
+    return f"{run_id}-{evaluation_id}.{REPORT_EXTENSIONS.get(fmt, 'bin')}"
+
+
+def download_headers(filename: str) -> dict[str, str]:
+    """Headers for serving recorded (untrusted) bytes: always a download, never rendered."""
+    fallback = _UNSAFE_FILENAME.sub("_", filename)[:150].strip("._") or "download"
+    disposition = f'attachment; filename="{fallback}"'
+    if fallback != filename:
+        disposition += f"; filename*=UTF-8''{quote(filename[:150], safe='')}"
+    return {"Content-Disposition": disposition, "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox; default-src 'none'",
+            "Cache-Control": "private, no-store"}  # fmt: skip
 
 
 # ---- evaluations (WS-B service) --------------------------------------------------------
@@ -502,6 +567,12 @@ def evaluate_run(
     principal: Evaluator,
     idempotency_key: Idem = None,
 ) -> Response:
+    """Grade the recorded run with an answer key (default: the latest compatible version).
+
+    404 when the run or the requested answer-key version does not exist; 409 CONFLICT when
+    the key is not compatible with the run's scenario version (`details.answer_key_version`,
+    `details.scenario_versions`, `details.run_scenario_version`) and for replay runs
+    (`details.replay_of`: evaluate the original run instead)."""
     service = _evaluations(request)
 
     def evaluate() -> EvaluationReport:
@@ -540,9 +611,11 @@ def evaluation_report(
     principal: Evaluator,
     fmt: Annotated[Literal["json", "junit", "markdown"], Query(alias="format")] = "json",
 ) -> Response:
-    """Download one evaluation's report (JSON, JUnit XML or Markdown)."""
+    """Download one evaluation's report (JSON, JUnit XML or Markdown) as an attachment named
+    `<run_id>-<evaluation_id>.<json|xml|md>`."""
     service = _evaluations(request)
     sc = scope(principal)
     if evaluation_id not in {r.evaluation_id for r in service.list(sc, run_id)}:
         raise NotFound(f"evaluation {evaluation_id} not found")
-    return Response(service.report_blob(sc, evaluation_id, fmt), media_type=REPORT_TYPES[fmt])
+    return Response(service.report_blob(sc, evaluation_id, fmt), media_type=REPORT_TYPES[fmt],
+                    headers=download_headers(report_filename(run_id, evaluation_id, fmt)))  # fmt: skip

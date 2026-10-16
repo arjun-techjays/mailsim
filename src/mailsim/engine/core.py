@@ -38,7 +38,7 @@ from mailsim.domain.models import (
     AttachmentRef,
     CanonicalMessage,
 )
-from mailsim.domain.states import TERMINAL, RunStatus, check_transition
+from mailsim.domain.states import NO_BUILD, TERMINAL, RunStatus, check_transition
 from mailsim.engine import projectors as _projectors  # noqa: F401  (registers projectors)
 from mailsim.engine.context import current_interface
 from mailsim.engine.delivery import DeliveryPolicy, ExternalMode
@@ -536,8 +536,10 @@ class SimEngine:
     ) -> dict[str, Any]:
         if checks not in (None, "on", "off"):
             raise InvalidRequest("checks must be 'on', 'off' or omitted")
-        if agent_build is not None and not (0 < len(agent_build) <= 200):
-            raise InvalidRequest("agent_build must be 1-200 characters")
+        if agent_build is not None and not (0 < len(agent_build) <= 200 and agent_build.strip()):
+            raise InvalidRequest("agent_build must be 1-200 characters, not only whitespace")
+        if agent_build == NO_BUILD:  # the accuracy report's name for runs without a build
+            raise InvalidRequest(f"agent_build {NO_BUILD!r} is reserved: omit agent_build instead")
         return {
             # post-run evaluation preferences only; never contains the answer key
             "evaluation": {"checks": checks, "agent_build": agent_build},
@@ -709,7 +711,9 @@ class SimEngine:
         """Rebuild state in a fresh run from the recorded events/artifacts only.
 
         Nothing is regenerated: payloads carry ids, timestamps and blob references. The
-        result states whether the replayed state hash equals the original's.
+        result states whether the replayed state hash equals the original's (compared before
+        the replay is closed). The replay run (`replay_of` set) is then closed with a final
+        `run.status_changed` to REPLAYED unless the copied log already ended the run.
         """
         with self._sf.begin() as s:
             orig = lock_run(s, scope, run_id)
@@ -747,6 +751,12 @@ class SimEngine:
                 )  # fmt: skip
                 missing.extend(self._missing_blobs(ev.payload))
             replay_hash = state_hash(snapshot(s, replay.id))
+            if RunStatus(replay.status) not in TERMINAL:
+                # a replay is a frozen copy of a recording, never a live agent run: it ends in
+                # REPLAYED (an original that had already ended keeps its final status)
+                append(s, replay, Event("run.status_changed",
+                                        {"from": replay.status, "to": str(RunStatus.REPLAYED)},
+                                        actor=CONTROLLER, operation="replay"))  # fmt: skip
             s.add(
                 m.ActionRow(
                     run_id=orig.id,
