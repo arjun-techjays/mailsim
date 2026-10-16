@@ -15,10 +15,26 @@ from typing import Any
 
 from mailsim.auth.principal import Principal, Role
 from mailsim.domain.errors import PermissionDenied
-from mailsim.domain.models import CanonicalMessage
-from mailsim.engine.core import AGENT, CONTROLLER, EVALUATOR, ReplayResult, SimEngine
+from mailsim.domain.models import AttachmentRef, CanonicalMessage
+from mailsim.engine.core import (
+    AGENT,
+    CONTROLLER,
+    EVALUATOR,
+    MAX_ATTACHMENT_READ_BYTES,
+    ReplayResult,
+    SimEngine,
+)
 from mailsim.engine.pagination import Page
 from mailsim.store.repos import Scope
+
+# What an agent learns from a send / reply / forward / draft send. The engine's result also
+# says how recipients were handled (simulated-mailbox copies, external recipients, the run's
+# sink/event mode); that stays in the operator-only action log and is never shown to the agent.
+AGENT_SEND_RESULT_FIELDS = ("message_id", "message_id_header")
+
+
+def _agent_send_result(result: dict[str, Any]) -> dict[str, Any]:
+    return {k: result[k] for k in AGENT_SEND_RESULT_FIELDS}
 
 
 class AgentMailbox:
@@ -66,20 +82,28 @@ class AgentMailbox:
     # mutations
     def send(self, *, to: list[str], subject: str, text: str = "", cc: list[str] | None = None,
              bcc: list[str] | None = None, html: str | None = None) -> dict[str, Any]:  # fmt: skip
-        return self._e.send(*self._a(), to=to, subject=subject, text=text, cc=cc, bcc=bcc,
-                            html=html, actor=AGENT)  # fmt: skip
+        return _agent_send_result(self._e.send(*self._a(), to=to, subject=subject, text=text,
+                                               cc=cc, bcc=bcc, html=html, actor=AGENT))  # fmt: skip
 
     def reply(self, message_id: str, *, text: str, reply_all: bool = False,
               to: list[str] | None = None, cc: list[str] | None = None,
               bcc: list[str] | None = None, subject: str | None = None,
               html: str | None = None) -> dict[str, Any]:  # fmt: skip
         """One `reply` operation; `to`/`cc`/`bcc`/`subject`/`html` override the derived reply."""
-        return self._e.reply(*self._a(), message_id, text=text, reply_all=reply_all, to=to, cc=cc,
-                             bcc=bcc, subject=subject, html=html, actor=AGENT)  # fmt: skip
+        return _agent_send_result(self._e.reply(*self._a(), message_id, text=text,
+                                                reply_all=reply_all, to=to, cc=cc, bcc=bcc,
+                                                subject=subject, html=html, actor=AGENT))  # fmt: skip
 
     def get_raw(self, message_id: str) -> bytes | None:
         """Stored RFC 5322 bytes of one of this mailbox's messages (a read; None if not kept)."""
         return self._e.get_raw(*self._a(), message_id, actor=AGENT)
+
+    def get_attachment(self, message_id: str, attachment_id: str, *,
+                       max_bytes: int = MAX_ATTACHMENT_READ_BYTES) -> tuple[AttachmentRef, bytes]:  # fmt: skip
+        """One attachment of one of this mailbox's messages: (metadata, bytes). A read; an
+        attachment larger than `max_bytes` is UNSUPPORTED_OPERATION (bytes never loaded)."""
+        return self._e.get_attachment(*self._a(), message_id, attachment_id, max_bytes=max_bytes,
+                                      actor=AGENT)  # fmt: skip
 
     def find_by_message_id(self, header: str) -> list[CanonicalMessage]:
         """This mailbox's non-draft messages with that Message-ID header (a read)."""
@@ -93,8 +117,10 @@ class AgentMailbox:
         """{mailbox_id, email, run_id, virtual_time} of this agent's own mailbox (a read)."""
         return self._e.mailbox_info(*self._a(), actor=AGENT)
 
-    def forward(self, message_id: str, *, to: list[str], text: str = "") -> dict[str, Any]:
-        return self._e.forward(*self._a(), message_id, to=to, text=text, actor=AGENT)
+    def forward(self, message_id: str, *, to: list[str], text: str = "",
+                cc: list[str] | None = None) -> dict[str, Any]:  # fmt: skip
+        return _agent_send_result(self._e.forward(*self._a(), message_id, to=to, text=text, cc=cc,
+                                                  actor=AGENT))  # fmt: skip
 
     def insert_message(self, raw: bytes, *, folder: str = "inbox") -> dict[str, Any]:
         return self._e.insert_message(*self._a(), raw, folder=folder, actor=AGENT)
@@ -115,7 +141,7 @@ class AgentMailbox:
                                     actor=AGENT)  # fmt: skip
 
     def send_draft(self, message_id: str) -> dict[str, Any]:
-        return self._e.send_draft(*self._a(), message_id, actor=AGENT)
+        return _agent_send_result(self._e.send_draft(*self._a(), message_id, actor=AGENT))
 
     def move(self, message_id: str, folder: str) -> None:
         self._e.move(*self._a(), message_id, folder, actor=AGENT)
@@ -231,6 +257,12 @@ class Controller:
         return self._e.inspect_messages(self.scope, run_id, mailbox_id, folder=folder,
                                         page_size=page_size, cursor=cursor, order=order)  # fmt: skip
 
+    def inspect_attachment(self, run_id: str, mailbox_id: str, message_id: str,
+                           attachment_id: str) -> tuple[AttachmentRef, bytes]:  # fmt: skip
+        """Operator read of one attachment of any mailbox in the run (records nothing)."""
+        return self._e.inspect_attachment(self.scope, run_id, mailbox_id, message_id,
+                                          attachment_id)  # fmt: skip
+
     def events_page(self, run_id: str, *, after_sequence: int = 0, limit: int = 100,
                     event_type: str | None = None, actor: str | None = None,
                     epoch: int | None = None) -> tuple[list[dict[str, Any]], int | None]:  # fmt: skip
@@ -275,6 +307,12 @@ class EvaluatorView:
         """Operator mailbox read (records nothing; never an agent action)."""
         return self._e.inspect_messages(self.scope, run_id, mailbox_id, folder=folder,
                                         page_size=page_size, cursor=cursor, order=order)  # fmt: skip
+
+    def inspect_attachment(self, run_id: str, mailbox_id: str, message_id: str,
+                           attachment_id: str) -> tuple[AttachmentRef, bytes]:  # fmt: skip
+        """Operator read of one attachment of any mailbox in the run (records nothing)."""
+        return self._e.inspect_attachment(self.scope, run_id, mailbox_id, message_id,
+                                          attachment_id)  # fmt: skip
 
     def events_page(self, run_id: str, *, after_sequence: int = 0, limit: int = 100,
                     event_type: str | None = None, actor: str | None = None,

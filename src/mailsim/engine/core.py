@@ -66,6 +66,8 @@ EVALUATOR = "evaluator"
 # Budget rule (user decision): only WRITES consume the agent action budget. Reads and polling
 # are free but still recorded as actions (efficiency metrics).
 READ_OPERATIONS = frozenset({"read", "search"})
+# Upper bound of one attachment read (interfaces may pass a lower one, e.g. MCP's base64 cap).
+MAX_ATTACHMENT_READ_BYTES = 25 * 1024 * 1024
 
 
 def counts_against_budget(operation: str) -> bool:
@@ -1370,7 +1372,8 @@ class SimEngine:
                                  a.content_id) for a in rows]  # fmt: skip
 
     def forward(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str, *,
-                to: list[str], text: str = "", actor: str = AGENT) -> dict[str, Any]:  # fmt: skip
+                to: list[str], text: str = "", cc: list[str] | None = None,
+                actor: str = AGENT) -> dict[str, Any]:  # fmt: skip
         def fn(c: Ctx) -> dict[str, Any]:
             orig = self._message(c, mailbox_id, message_id)
             subj = (
@@ -1380,12 +1383,14 @@ class SimEngine:
             )
             quoted = (f"{text}\n\n---------- Forwarded message ----------\n"
                       f"From: {orig.from_['email']}\nSubject: {orig.subject}\n\n{orig.body_text or ''}")  # fmt: skip
-            return self._send(c, mailbox_id, to, [], [], subj, quoted, None, None,
+            return self._send(c, mailbox_id, to, list(cc or []), [], subj, quoted, None, None,
                               [*orig.references, orig.message_id_header], actor, "forward",
                               attachments=self._blob_attachments(c, orig.id))  # fmt: skip
 
-        return self._command(scope, run_id, actor, "forward",
-                             {"message_id": message_id, "to": to, "body_chars": len(text)}, fn,
+        input_: dict[str, Any] = {"message_id": message_id, "to": to, "body_chars": len(text)}
+        if cc:
+            input_["cc"] = list(cc)
+        return self._command(scope, run_id, actor, "forward", input_, fn,
                              mailbox_id=mailbox_id)  # fmt: skip
 
     def insert_message(self, scope: Scope, run_id: str, mailbox_id: str, raw: bytes, *,
@@ -1887,6 +1892,44 @@ class SimEngine:
         return self._read(scope, run_id, actor, "read", {"message_id": message_id, "raw": True},
                           fn, mailbox_id)  # fmt: skip
 
+    def _attachment(self, c: Ctx, mailbox_id: str, message_id: str, attachment_id: str,
+                    max_bytes: int) -> tuple[AttachmentRef, bytes]:  # fmt: skip
+        self._message(c, mailbox_id, message_id)  # mailbox-scoped: 404 for another mailbox's
+        a = c.session.get(m.Attachment, (attachment_id, c.run.id))
+        if a is None or a.message_id != message_id:
+            raise NotFound(f"attachment {attachment_id} not found")
+        if a.size > max_bytes:
+            raise UnsupportedOperation(
+                f"attachment is {a.size} bytes; this read returns at most {max_bytes} bytes",
+                details={"size": a.size, "max_bytes": max_bytes},
+            )
+        ref = AttachmentRef(id=a.id, filename=a.filename, mime_type=a.mime_type, size=a.size,
+                            checksum=a.checksum, blob_ref=a.blob_ref, inline=a.inline,
+                            content_id=a.content_id)  # fmt: skip
+        return ref, self.blobs.get(a.blob_ref)
+
+    def get_attachment(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str,
+                       attachment_id: str, *, max_bytes: int = MAX_ATTACHMENT_READ_BYTES,
+                       actor: str = AGENT) -> tuple[AttachmentRef, bytes]:  # fmt: skip
+        """One attachment of a message of this mailbox: its metadata and bytes (a read).
+        Larger than `max_bytes` -> UNSUPPORTED_OPERATION before the bytes are loaded."""
+        return self._read(
+            scope, run_id, actor, "read",
+            {"message_id": message_id, "attachment_id": attachment_id},
+            lambda c: self._attachment(c, mailbox_id, message_id, attachment_id, max_bytes),
+            mailbox_id,
+        )  # fmt: skip
+
+    def inspect_attachment(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str,
+                           attachment_id: str, *,
+                           max_bytes: int = MAX_ATTACHMENT_READ_BYTES) -> tuple[AttachmentRef, bytes]:  # fmt: skip
+        """Operator read of an attachment of any mailbox in the run (records nothing)."""
+        with self._sf() as s:
+            run = get_run(s, scope, run_id)
+            c = Ctx(s, run, id_generator(run))
+            self._mailbox(c, mailbox_id)
+            return self._attachment(c, mailbox_id, message_id, attachment_id, max_bytes)
+
     def find_by_message_id(self, scope: Scope, run_id: str, mailbox_id: str, header: str,
                            *, actor: str = AGENT) -> list[CanonicalMessage]:  # fmt: skip
         """Non-draft messages of this mailbox whose Message-ID header is `header` (indexed)."""
@@ -1996,4 +2039,5 @@ class SimEngine:
                              require_running=actor == AGENT, mailbox_id=mailbox_id)  # fmt: skip
 
 
-__all__ = ["AGENT", "CONTROLLER", "EVALUATOR", "SIMULATOR", "ReplayResult", "SimEngine", "TERMINAL"]
+__all__ = ["AGENT", "CONTROLLER", "EVALUATOR", "MAX_ATTACHMENT_READ_BYTES", "SIMULATOR", "ReplayResult",
+           "SimEngine", "TERMINAL"]  # fmt: skip

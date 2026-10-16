@@ -127,7 +127,8 @@ def test_forward_carries_attachments(world):
     assert (
         got[0].subject == "Fwd: Invoice INV-001" and got[0].attachments[0].filename == "INV-001.pdf"
     )
-    assert "Forwarded message" in got[0].body_text and res["external_recipients"] == []
+    assert "Forwarded message" in got[0].body_text
+    assert set(res) == {"message_id", "message_id_header"}  # no delivery details for the agent
     again = agent.forward(agent.get_message(res["message_id"]).id, to=["vendor@example.test"])
     assert agent.get_message(again["message_id"]).subject == "Fwd: Invoice INV-001"
 
@@ -315,8 +316,8 @@ def test_external_ids_imap_uids_drafts_and_order(world):
 
 def test_external_ids_never_resolve_across_mailboxes(world):
     env, ctl, ev, run, agent, fm, vendor, vend = world
-    sent = agent.send(to=["vendor@example.test"], subject="cross", text="x")
-    vendor_copy = sent["delivered_message_ids"][0]
+    agent.send(to=["vendor@example.test"], subject="cross", text="x")
+    vendor_copy = vendor_inbox(env, run, vendor)[-1].id
     gid = next(p["external_id"] for p in ev.state(run)["provider_ids"]
                if p["entity_id"] == vendor_copy and p["provider"] == "gmail")  # fmt: skip
     with pytest.raises(NotFound):
