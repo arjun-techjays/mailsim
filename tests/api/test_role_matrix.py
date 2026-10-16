@@ -49,10 +49,15 @@ ROUTES: list[tuple[str, str, set[str], object, int]] = [
     ("GET", "/v1/runs/{run}/actions", {C, E}, None, 200),
     ("GET", "/v1/runs/{run}/mailboxes", {C, E}, None, 200),
     ("GET", "/v1/runs/{run}/mailboxes/{mbx}/messages", {C, E}, None, 200),
+    ("GET", "/v1/runs/{run}/mailboxes/{mbx}/messages/{attmsg}/attachments/{att}", {C, E}, None,
+     200),
     ("GET", "/v1/mailboxes/{mbx}/messages", {A}, None, 200),
     ("GET", "/v1/mailboxes/{mbx}/messages/{msg}", {A}, None, 200),
     ("GET", "/v1/mailboxes/{mbx}/threads/{thread}", {A}, None, 200),
     ("POST", "/v1/mailboxes/{mbx}/messages/{msg}/reply", {A}, {"text": "ack"}, 201),
+    ("GET", "/v1/mailboxes/{mbx}/messages/{attmsg}/attachments/{att}", {A}, None, 200),
+    ("POST", "/v1/mailboxes/{mbx}/messages/{msg}/forward", {A},
+     {"to": ["Vendor <vendor@example.test>"]}, 201),
     ("POST", "/v1/mailboxes/{mbx}/messages", {A}, {"to": ["vendor@example.test"]}, 201),
     ("PATCH", "/v1/mailboxes/{mbx}/messages/{msg}", {A}, {"add_flags": ["SEEN"]}, 200),
     ("DELETE", "/v1/mailboxes/{mbx}/messages/{msg}", {A}, None, 204),
@@ -94,6 +99,7 @@ def test_matrix_covers_every_route():
         for name, real in (("{project}", "{project_id}"), ("{key}", "{scenario_key}"),
                            ("{ready}", "{run_id}"), ("{run}", "{run_id}"), ("{mbx}", "{mailbox_id}"),
                            ("{msg}", "{message_id}"), ("{thread}", "{thread_id}"),
+                           ("{attmsg}", "{message_id}"), ("{att}", "{attachment_id}"),
                            ("evl_1", "{evaluation_id}"), ("{keyid}", "{key_id}"),
                            ("{ver}", "{version}"), ("{akv}", "{version}")):  # fmt: skip
             template = template.replace(name, real)
@@ -109,11 +115,14 @@ class World:
         self.agent_key, mbx = api.agent(created)
         ready = api.create_run(start=False)["run"]["id"]
         run = created["run"]["id"]
-        first = api.call("GET", f"/v1/mailboxes/{mbx}/messages?folder=inbox", key=self.agent_key,
-                         expect=200).json()["items"][0]  # fmt: skip
+        inbox = api.call("GET", f"/v1/mailboxes/{mbx}/messages?folder=inbox", key=self.agent_key,
+                         expect=200).json()["items"]  # fmt: skip
+        first = inbox[0]
+        with_att = next(m for m in inbox if m["attachments"])
         self.values = {"project": api.project_id, "key": KEY, "run": run, "ready": ready,
                        "mbx": mbx, "msg": first["id"], "thread": first["thread_id"],
-                       "keyid": _key_id(api, self.agent_key), "ver": 1, "akv": 1}  # fmt: skip
+                       "keyid": _key_id(api, self.agent_key), "ver": 1, "akv": 1,
+                       "attmsg": with_att["id"], "att": with_att["attachments"][0]["id"]}  # fmt: skip
         self.keys = {**api.keys, A: self.agent_key}
 
     def url(self, path: str) -> str:

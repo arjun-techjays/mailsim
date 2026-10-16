@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import math
 from datetime import datetime
+from email.utils import getaddresses
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from mailsim.domain.models import CanonicalMessage
 
@@ -115,6 +116,7 @@ class AgentCredential(_M):
     mailbox_id: str
     mailbox_address: str
     run_id: str
+    key_id: str | None = Field(default=None, description="revoke with DELETE /v1/keys/{key_id}")
 
 
 class RunCreated(_M):
@@ -220,10 +222,28 @@ class ClockResult(_M):
 
 
 # ---- agent mailbox ---------------------------------------------------------------------
+def normalise_addresses(values: list[str]) -> list[str]:
+    """Recipient entries -> bare addresses. Each entry may be `addr@x`, `Name <addr@x>`,
+    `"Last, First" <addr@x>` or several of those separated by commas. An entry that holds no
+    parseable address is kept verbatim so the engine rejects it as INVALID_REQUEST."""
+    out: list[str] = []
+    for value in values:
+        found = [addr.strip() for _name, addr in getaddresses([value]) if addr.strip()]
+        out += found or [value]
+    return out
+
+
+Recipients = Annotated[
+    list[str],
+    AfterValidator(normalise_addresses),
+    Field(description='addresses; "Name <addr@example.com>" is accepted (the name is dropped)'),
+]
+
+
 class SendRequest(_M):
-    to: list[str] = Field(default_factory=list)
-    cc: list[str] = Field(default_factory=list)
-    bcc: list[str] = Field(default_factory=list)
+    to: Recipients = Field(default_factory=list)
+    cc: Recipients = Field(default_factory=list)
+    bcc: Recipients = Field(default_factory=list)
     subject: str = ""
     text: str = ""
     html: str | None = None
@@ -232,6 +252,14 @@ class SendRequest(_M):
 class ReplyRequest(_M):
     text: str
     reply_all: bool = False
+
+
+class ForwardRequest(_M):
+    """Forward a message (with its attachments) to new recipients; `text` goes above it."""
+
+    to: Recipients = Field(min_length=1)
+    cc: Recipients = Field(default_factory=list)
+    text: str = ""
 
 
 class MessagePatch(_M):
@@ -243,11 +271,11 @@ class MessagePatch(_M):
 
 
 class SendResult(_M):
+    """The sent copy in the caller's mailbox. How each recipient was handled is not part of
+    the agent-facing result (operators see it in the run's actions and events)."""
+
     message_id: str
     message_id_header: str
-    delivered_message_ids: list[str]
-    external_recipients: list[str]
-    external_mode: str
 
 
 class FolderOut(_M):

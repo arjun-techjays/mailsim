@@ -21,9 +21,9 @@ from tests.mcp.conftest import err, ok, tool_names
 
 pytestmark = pytest.mark.db
 
-AGENT_TOOLS = ["list_messages", "get_message", "get_thread", "search_messages", "send_message",
-               "reply_to_message", "manage_labels", "delete_message", "list_folders",
-               "get_changes"]  # fmt: skip
+AGENT_TOOLS = ["list_messages", "get_message", "get_thread", "search_messages", "get_attachment",
+               "send_message", "reply_to_message", "forward_message", "manage_labels",
+               "delete_message", "list_folders", "get_changes"]  # fmt: skip
 CONTROL_TOOLS = ["inject_incoming_email", "advance_simulation", "trigger_scheduled_event",
                  "reset_run", "start_run", "cancel_run", "replay_run", "list_run_mailboxes",
                  "get_run_status", "get_run_trace"]  # fmt: skip
@@ -114,6 +114,42 @@ def test_agent_writes_and_external_delivery_policy(world):
     }
     types = {e["type"] for e in world.engine.events(world.env.scope, world.run)}
     assert "delivery.sunk" not in types  # deny: nothing stored for the outside world
+
+
+def test_attachment_forward_and_display_name_recipients(world, monkeypatch):
+    a = world.inproc("agent")
+    inv = next(x for x in ok(a, "list_messages", {"folder": "inbox"})["items"] if x["attachments"])
+    att = inv["attachments"][0]
+    got = ok(a, "get_attachment", {"message_id": inv["id"], "attachment_id": att["id"]})
+    data = base64.b64decode(got["content_base64"])
+    assert data.startswith(b"%PDF") and got["size"] == len(data) == att["size"]
+    assert (got["filename"], got["mime_type"]) == (att["filename"], att["mime_type"])
+    assert "blob_ref" not in got
+    missing = err(a, "get_attachment", {"message_id": inv["id"], "attachment_id": "att_nope"})
+    assert missing["code"] == "NOT_FOUND"
+    monkeypatch.setattr(t, "MAX_ATTACHMENT_BYTES", 10)
+    big = err(a, "get_attachment", {"message_id": inv["id"], "attachment_id": att["id"]})
+    assert big["code"] == "UNSUPPORTED_OPERATION" and big["details"]["max_bytes"] == 10
+
+    fwd = ok(a, "forward_message", {"message_id": inv["id"], "to": ["Vendor <vendor@example.test>"],
+                                    "cc": ["Me <FINANCE@example.test>"], "text": "FYI"})  # fmt: skip
+    assert set(fwd) == {"message_id", "message_id_header"}  # nothing about delivery handling
+    sent = ok(a, "get_message", {"message_id": fwd["message_id"]})
+    assert (
+        sent["subject"].startswith("Fwd:") and sent["attachments"][0]["filename"] == att["filename"]
+    )
+    assert [x["email"] for x in sent["to"]] == ["vendor@example.test"]
+    assert [x["email"] for x in sent["cc"]] == ["finance@example.test"]
+    assert (
+        err(a, "forward_message", {"message_id": inv["id"], "to": []})["code"] == "INVALID_REQUEST"
+    )
+    named = ok(a, "send_message", {"to": ['"Vendor, Inc." <vendor@example.test>'], "subject": "n"})
+    assert set(named) == {"message_id", "message_id_header"}
+    reply = ok(a, "reply_to_message", {"message_id": inv["id"], "text": "ack"})
+    assert set(reply) == {"message_id", "message_id_header"}
+    forward = next(x for x in world.engine.actions(world.env.scope, world.run)
+                   if x["operation"] == "forward")  # fmt: skip
+    assert forward["result"]["external_mode"]  # operators still see how it was delivered
 
 
 def test_invalid_arguments_and_unknown_tools(world):

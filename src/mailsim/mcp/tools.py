@@ -18,11 +18,11 @@ from dataclasses import dataclass
 from typing import Annotated, Any, Literal
 
 import mcp_types as types
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 
 from mailsim.api.auth import revoke_agent_keys
 from mailsim.api.pagination import decode_sequence_cursor, encode_sequence_cursor, page_messages
-from mailsim.api.schemas import MAX_RAW_B64_CHARS
+from mailsim.api.schemas import MAX_RAW_B64_CHARS, normalise_addresses
 from mailsim.auth.principal import Role
 from mailsim.domain.errors import InvalidRequest, NotFound, UnsupportedOperation
 from mailsim.domain.models import CanonicalMessage
@@ -60,6 +60,8 @@ MAX_QUERY_CHARS = 1024
 MAX_SUBJECT_CHARS = 16 * 1024
 MAX_BODY_CHARS = 5 * 1024 * 1024
 MAX_CURSOR_CHARS = 1024
+# get_attachment returns the bytes base64-encoded inside the JSON result: keep that bounded.
+MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
 Id = Annotated[str, StringConstraints(min_length=1, max_length=MAX_ID_CHARS)]
 Name = Annotated[str, StringConstraints(max_length=MAX_ID_CHARS)]  # folder, label, flag, ...
@@ -71,6 +73,11 @@ CursorStr = Annotated[str, StringConstraints(max_length=MAX_CURSOR_CHARS)]
 
 def _list(description: str | None = None) -> Any:
     return Field(default_factory=list, max_length=MAX_LIST_ITEMS, description=description)
+
+
+# recipient lists: "Name <addr@example.com>" entries are reduced to the address
+Recipients = Annotated[list[Address], AfterValidator(normalise_addresses)]
+RECIPIENTS_HELP = 'addresses; "Name <addr@example.com>" is accepted'
 
 
 PageSize = Field(default=50, ge=1, le=MAX_PAGE_SIZE, description="items per page")
@@ -103,9 +110,9 @@ class SearchArgs(Args):
 
 
 class SendArgs(Args):
-    to: list[Address] = _list("recipient addresses")
-    cc: list[Address] = _list()
-    bcc: list[Address] = _list()
+    to: Recipients = _list(RECIPIENTS_HELP)
+    cc: Recipients = _list()
+    bcc: Recipients = _list()
     subject: Subject = ""
     text: Body = ""
     html: Body | None = None
@@ -115,6 +122,18 @@ class ReplyArgs(Args):
     message_id: Id
     text: Body
     reply_all: bool = False
+
+
+class ForwardArgs(Args):
+    message_id: Id
+    to: Recipients = Field(min_length=1, max_length=MAX_LIST_ITEMS, description=RECIPIENTS_HELP)
+    cc: Recipients = _list()
+    text: Body = Field(default="", description="written above the forwarded message")
+
+
+class AttachmentArgs(Args):
+    message_id: Id
+    attachment_id: Id = Field(description="`id` of an entry of the message's `attachments`")
 
 
 class ManageLabelsArgs(Args):
@@ -241,6 +260,17 @@ def send_message(mb: AgentMailbox, a: SendArgs, _: Deps) -> JSON:
 
 def reply_to_message(mb: AgentMailbox, a: ReplyArgs, _: Deps) -> JSON:
     return mb.reply(a.message_id, text=a.text, reply_all=a.reply_all)
+
+
+def forward_message(mb: AgentMailbox, a: ForwardArgs, _: Deps) -> JSON:
+    return mb.forward(a.message_id, to=a.to, cc=a.cc, text=a.text)
+
+
+def get_attachment(mb: AgentMailbox, a: AttachmentArgs, _: Deps) -> JSON:
+    ref, data = mb.get_attachment(a.message_id, a.attachment_id, max_bytes=MAX_ATTACHMENT_BYTES)
+    return {"id": ref.id, "filename": ref.filename, "mime_type": ref.mime_type,
+            "size": len(data), "checksum": ref.checksum,
+            "content_base64": base64.b64encode(data).decode("ascii")}  # fmt: skip
 
 
 def manage_labels(mb: AgentMailbox, a: ManageLabelsArgs, _: Deps) -> JSON:
@@ -439,10 +469,19 @@ TOOLS: tuple[ToolSpec, ...] = (
         read_only=True,
     ),
     ToolSpec(
+        "get_attachment",
+        "Download one attachment of a message (ids from the message's `attachments`); the "
+        "bytes come back base64-encoded in content_base64. Attachments larger than 10 MB are "
+        "refused with UNSUPPORTED_OPERATION.",
+        AGENT,
+        AttachmentArgs,
+        get_attachment,
+        read_only=True,
+    ),
+    ToolSpec(
         "send_message",
-        "Send a new message. Delivered only inside the simulation; "
-        "recipients outside it follow the scenario's delivery rule (a rejection is "
-        "EXTERNAL_DELIVERY_BLOCKED). Nothing is ever sent to a real mail server.",
+        "Send a new message. A recipient that is not allowed is rejected with "
+        "EXTERNAL_DELIVERY_BLOCKED.",
         AGENT,
         SendArgs,
         send_message,
@@ -453,6 +492,13 @@ TOOLS: tuple[ToolSpec, ...] = (
         AGENT,
         ReplyArgs,
         reply_to_message,
+    ),
+    ToolSpec(
+        "forward_message",
+        "Forward a message, attachments included, to new recipients (text goes above it).",
+        AGENT,
+        ForwardArgs,
+        forward_message,
     ),
     ToolSpec(
         "manage_labels",

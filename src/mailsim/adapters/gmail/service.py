@@ -197,7 +197,7 @@ class GmailService:
         ref = find_attachment(msg, attachment_id)
         if ref is None:
             raise NotFound(f"attachment {attachment_id} not found")
-        data = self._blobs.get(ref.blob_ref)
+        _, data = self.mb.get_attachment(msg.id, ref.id)
         return {"attachmentId": attachment_id, "size": len(data), "data": b64url(data)}
 
     def resource(self, msg: CanonicalMessage, fmt: str = "full",

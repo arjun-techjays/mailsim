@@ -95,10 +95,10 @@ def test_reply_send_patch_delete_changes(api, agent):
     first = items(api, f"/v1/mailboxes/{mbx}/messages?folder=inbox", key)[0]
     reply = api.call("POST", f"/v1/mailboxes/{mbx}/messages/{first['id']}/reply", key=key,
                      json={"text": "ack", "reply_all": True}, expect=201).json()  # fmt: skip
-    assert reply["external_recipients"] == [] and reply["message_id_header"]
+    assert set(reply) == {"message_id", "message_id_header"} and reply["message_id_header"]
     sent = api.call("POST", f"/v1/mailboxes/{mbx}/messages", key=key, expect=201,
                     json={"to": ["vendor@example.test"], "subject": "s", "text": "t"}).json()  # fmt: skip
-    assert sent["delivered_message_ids"]
+    assert set(sent) == {"message_id", "message_id_header"}
     body = err(api.call("POST", f"/v1/mailboxes/{mbx}/messages", key=key,
                         json={"to": ["ceo@real-company.example"], "subject": "x"}),
                422, "EXTERNAL_DELIVERY_BLOCKED")  # fmt: skip
