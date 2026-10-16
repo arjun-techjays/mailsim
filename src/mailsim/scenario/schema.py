@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import unicodedata
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -118,10 +119,12 @@ class PersonaSpec(_Strict):
         """The name goes into MIME headers: no CR/LF or other control characters, and no
         text that would read as an RFC 2047 encoded word."""
         if v is not None:
-            if any(ord(ch) < 32 or ord(ch) == 127 for ch in v):
-                raise ValueError("name must not contain control characters (CR, LF, ...)")
-            if v.lstrip().startswith("=?"):
-                raise ValueError("name must not start with '=?' (encoded-word syntax)")
+            if any(unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp") for ch in v):
+                raise ValueError("name must not contain control or invisible format characters")
+            if "=?" in v:
+                raise ValueError("name must not contain '=?' (encoded-word syntax)")
+            if not v.strip():
+                raise ValueError("name must not be blank")
         return v
 
 

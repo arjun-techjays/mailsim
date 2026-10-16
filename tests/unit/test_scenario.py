@@ -43,9 +43,11 @@ def test_schema_rejects_unknown_keys_and_bad_version():
 
 
 @pytest.mark.parametrize(("name", "needle"), [
-    ("Eve\r\nBcc: x@evil.test", "control characters"), ("tab\there", "control characters"),
-    ("del\x7f", "control characters"), ("=?utf-8?q?x?=", "encoded-word"),
-    ("x" * 201, "at most 200"),
+    ("Eve\r\nBcc: x@evil.test", "control or invisible"), ("tab\there", "control or invisible"),
+    ("del\x7f", "control or invisible"), ("=?utf-8?q?x?=", "encoded-word"),
+    ("Ann =?utf-8?q?Boss?=", "encoded-word"), ("Ann\u2028Bcc", "control or invisible"),
+    ("Ann\u202eBoss", "control or invisible"), ("Ann\x85", "control or invisible"),
+    ("   ", "blank"), ("x" * 201, "at most 200"),
 ])  # fmt: skip
 def test_persona_display_name_must_be_header_safe(name, needle):
     d = example_dict()
