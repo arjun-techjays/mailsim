@@ -247,3 +247,17 @@ def test_postal_details_are_scrubbed():
     assert "TN 79999" in t and "79999-0000" in t and "P.O. Box 100" in t
     assert {f.kind for f in Scanner().scan_text(raw)} >= {"zip"}
     assert Scanner().scan_text(t) == []
+
+
+def test_hashed_denylist(monkeypatch):
+    # a made-up name, present only as its sha256
+    monkeypatch.setattr(
+        N,
+        "HASHED_DENY",
+        N.HASHED_DENY | {"43c05774aa2ee4b626c7b4989a16312e987898c1ce6a9dfa31a2baf07b6a3d29"},
+    )
+    p = _pseudo(LOTUS_CHAIN)
+    t = p.apply("I am asking Quorvexa to send it.").text
+    assert "Quorvexa" not in t and "{{q:" in t
+    assert [f.kind for f in Scanner().scan_text("asking Quorvexa today")] == ["denylisted-name"]
+    assert "Quorvexa" in unknown_proper_nouns("asking Quorvexa", p.reg)

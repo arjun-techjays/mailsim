@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mailsim.importers import names as N
-from mailsim.importers.pseudonymize import ALNUM_ID, IPV4, PHONE, SSN, ZIP_HQ
+from mailsim.importers.pseudonymize import ALNUM_ID, IPV4, PHONE, SSN, ZIP_HQ, denylisted
 
 _ENRON = re.compile(r"enron", re.IGNORECASE)
 _LOTUS = re.compile(
@@ -94,6 +94,9 @@ class Scanner:
             hit("enron", line[max(0, m.start() - 10) : m.end() + 10])
         for name in self._names(line):
             hit("real-name", name)
+        for tok in re.findall(r"\b[A-Z][a-zA-Z]+\b", line):
+            if denylisted(tok):
+                hit("denylisted-name", tok)
         for tok in re.findall(r"\b[A-Za-z][a-z]+\b", line):
             if tok.lower() in self.surnames:
                 hit("real-surname", tok)

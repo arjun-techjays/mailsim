@@ -49,7 +49,7 @@
       ]
     },
     {
-      "fixture": "fixtures/005-welcome-to-silas.eml",
+      "fixture": "fixtures/005-welcome-to-emeric.eml",
       "topic": "newsletter",
       "thread": 23,
       "suggested_labels": [
@@ -57,7 +57,7 @@
       ]
     },
     {
-      "fixture": "fixtures/006-fw-elodie-tax-mitigation.eml",
+      "fixture": "fixtures/006-fw-noemi-tax-mitigation.eml",
       "topic": "finance",
       "thread": 4,
       "suggested_labels": [
@@ -129,7 +129,7 @@
       ]
     },
     {
-      "fixture": "fixtures/015-noemi-afb-commodity-procurement-requirem.eml",
+      "fixture": "fixtures/015-dorian-afb-commodity-procurement-require.eml",
       "topic": "vendor",
       "thread": 14,
       "suggested_labels": [
@@ -137,7 +137,7 @@
       ]
     },
     {
-      "fixture": "fixtures/016-fw-noemi-afb-commodity-procurement-requi.eml",
+      "fixture": "fixtures/016-fw-dorian-afb-commodity-procurement-requ.eml",
       "topic": "vendor",
       "thread": 14,
       "suggested_labels": [
@@ -185,7 +185,7 @@
       ]
     },
     {
-      "fixture": "fixtures/022-you-re-scheduled-to-meet-w-soren-on-wedn.eml",
+      "fixture": "fixtures/022-you-re-scheduled-to-meet-w-beatrix-on-we.eml",
       "topic": "scheduling",
       "thread": 19,
       "suggested_labels": [

@@ -1052,3 +1052,12 @@ CONTEXT_STOP: frozenset[str] = frozenset(
         "Cell",
     ]
 )
+
+# Real names that the rules cannot catch (e.g. an unusual first name the corpus also writes in
+# lower case), stored only as sha256(lower-cased token) so the repository never holds them in
+# clear text. Matching capitalised tokens are pseudonymized and flagged by the scanner.
+HASHED_DENY: frozenset[str] = frozenset(
+    {
+        "d0bb22efaa420a9f274d5ae2bfb867f8138932fbcadf7137f11ff4da7e994e0e",
+    }
+)

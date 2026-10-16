@@ -135,9 +135,9 @@ scenario:
     - fixture: fixtures/006-please-join-corvane-training-sessions-11.eml
     - fixture: fixtures/007-ethink-stuff-for-sale.eml
     - fixture: fixtures/008-i-just-wanted-to-thank-you-for-taking.eml
-    - fixture: fixtures/009-alma-is-going-to-be-in-japan-on.eml
+    - fixture: fixtures/009-ulla-is-going-to-be-in-japan-on.eml
     - fixture: fixtures/010-the-following-is-our-close-schedule-for-.eml
-    - fixture: fixtures/011-greer-alert-legislators-propose-tax-on-e.eml
+    - fixture: fixtures/011-niall-alert-legislators-propose-tax-on-e.eml
     - fixture: fixtures/012-i-am-sure-this-is-a-joke.eml
     - fixture: fixtures/013-fw-camille-everly.eml
     - fixture: fixtures/014-update-vpn-ipass-remote-access.eml
@@ -150,16 +150,16 @@ scenario:
     - fixture: fixtures/021-re-retail-markets-conference.eml
     - fixture: fixtures/022-fw-if-the-phone-company-ran-a-restaurant.eml
     - fixture: fixtures/023-puget-energy.eml
-    - fixture: fixtures/024-fw-isak.eml
+    - fixture: fixtures/024-fw-lucan.eml
     - fixture: fixtures/025-to-hiring-managers-and-assistants-please.eml
     - fixture: fixtures/026-yes-i-had-already-approved-them-for-trad.eml
     - fixture: fixtures/027-the-report-named-var-and-peak-position-r.eml
     - fixture: fixtures/028-re-puget-energy.eml
     - fixture: fixtures/029-this-is-to-remind-you-that-various-anony.eml
     - fixture: fixtures/030-re-puget-energy.eml
-    - fixture: fixtures/031-elias.eml
+    - fixture: fixtures/031-bram.eml
     - fixture: fixtures/032-fenella-exchange-deal-march-2024.eml
-    - fixture: fixtures/033-re-elias.eml
+    - fixture: fixtures/033-re-bram.eml
     - fixture: fixtures/034-re-fenella-exchange-deal-march-2024.eml
     - fixture: fixtures/035-urgent-confidential-payment-today.eml
     - fixture: fixtures/036-updated-remittance-details-invoice-ns-20.eml

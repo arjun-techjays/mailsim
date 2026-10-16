@@ -101,7 +101,7 @@
       ]
     },
     {
-      "fixture": "fixtures/011-fw-imogen-computer-financial-practices.eml",
+      "fixture": "fixtures/011-fw-adrian-computer-financial-practices.eml",
       "topic": "finance",
       "thread": 17,
       "suggested_labels": [
@@ -109,7 +109,7 @@
       ]
     },
     {
-      "fixture": "fixtures/012-white-ulla-board.eml",
+      "fixture": "fixtures/012-white-juno-board.eml",
       "topic": "board",
       "thread": 1,
       "suggested_labels": [
@@ -117,7 +117,7 @@
       ]
     },
     {
-      "fixture": "fixtures/013-re-white-ulla-board.eml",
+      "fixture": "fixtures/013-re-white-juno-board.eml",
       "topic": "board",
       "thread": 1,
       "suggested_labels": [
@@ -245,7 +245,7 @@
       ]
     },
     {
-      "fixture": "fixtures/029-not-much-back-from-briony-but-he-did.eml",
+      "fixture": "fixtures/029-not-much-back-from-niall-but-he-did.eml",
       "topic": "ops",
       "thread": 22,
       "suggested_labels": [

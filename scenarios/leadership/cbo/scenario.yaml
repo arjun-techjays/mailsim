@@ -134,7 +134,7 @@ scenario:
     - fixture: fixtures/017-december-20-2025.eml
     - fixture: fixtures/018-i-talked-to-keira-penhallow-on-thursday-.eml
     - fixture: fixtures/019-here-s-the-proposal.eml
-    - fixture: fixtures/020-fw-elodie-company-rfp.eml
+    - fixture: fixtures/020-fw-fenella-company-rfp.eml
     - fixture: fixtures/021-this-past-week-we-experienced-technical-.eml
     - fixture: fixtures/022-termination-of-ellery-energy-services-in.eml
     - fixture: fixtures/023-online-auction-benefiting-march-of-dimes.eml

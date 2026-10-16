@@ -251,6 +251,11 @@ BLOCK = frozenset(
 )
 
 
+def denylisted(token: str) -> bool:
+    """True for a token whose sha256(lower case) is in `names.HASHED_DENY`."""
+    return hashlib.sha256(token.lower().encode()).hexdigest() in N.HASHED_DENY
+
+
 def stable_hash(*parts: object) -> int:
     """Seeded, process-independent 64-bit hash (sha256) used for every deterministic choice."""
     data = "\x1f".join(str(p) for p in parts).encode()
@@ -629,6 +634,8 @@ class Pseudonymizer:
         return whole if out == tok else out + suffix
 
     def _single_token(self, tok: str, m: re.Match[str], text: str, local: set[int]) -> str:
+        if denylisted(tok):
+            return f"{{{{q:{self._alloc(self.first_ids, tok)}:f}}}}"
         if tok in N.PROPER_ALLOW or tok in BLOCK:
             return tok
         low = tok.lower()
@@ -747,6 +754,7 @@ def unknown_proper_nouns(text: str, registry: Registry) -> list[str]:
         if tok.isupper() and len(tok) <= 4:
             continue
         out.append(tok)
+    out += [t for t in re.findall(r"\b[A-Z][a-zA-Z]+\b", bare) if denylisted(t)]
     # charset-mangled names ("G_nther", "Fran?ois") can never be checked against a vocabulary
     out += re.findall(r"\b[A-Z][a-z]*[_?][a-z]+\b", bare)
     return sorted(set(out))

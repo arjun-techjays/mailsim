@@ -123,9 +123,9 @@ scenario:
     - fixture: fixtures/008-re-december-13-17.eml
     - fixture: fixtures/009-the-report-named-east-p-l-totals.eml
     - fixture: fixtures/010-re-december-13-17.eml
-    - fixture: fixtures/011-fw-imogen-computer-financial-practices.eml
-    - fixture: fixtures/012-white-ulla-board.eml
-    - fixture: fixtures/013-re-white-ulla-board.eml
+    - fixture: fixtures/011-fw-adrian-computer-financial-practices.eml
+    - fixture: fixtures/012-white-juno-board.eml
+    - fixture: fixtures/013-re-white-juno-board.eml
     - fixture: fixtures/014-spa-pseg-transaction.eml
     - fixture: fixtures/015-re-spa-pseg-transaction.eml
     - fixture: fixtures/016-fw-succession-plan.eml
@@ -141,7 +141,7 @@ scenario:
     - fixture: fixtures/026-as-the-merger-between-stellaris-corvane-.eml
     - fixture: fixtures/027-click-on-the-website-below-for-the-news.eml
     - fixture: fixtures/028-prc-meetings-begin-on-monday-november-20.eml
-    - fixture: fixtures/029-not-much-back-from-briony-but-he-did.eml
+    - fixture: fixtures/029-not-much-back-from-niall-but-he-did.eml
     - fixture: fixtures/030-mgu.eml
     - fixture: fixtures/031-ltr-to-rohan-desai-site-specific-referen.eml
     - fixture: fixtures/032-re-mgu.eml

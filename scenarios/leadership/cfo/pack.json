@@ -85,7 +85,7 @@
       ]
     },
     {
-      "fixture": "fixtures/009-alma-is-going-to-be-in-japan-on.eml",
+      "fixture": "fixtures/009-ulla-is-going-to-be-in-japan-on.eml",
       "topic": "newsletter",
       "thread": 24,
       "suggested_labels": [
@@ -101,7 +101,7 @@
       ]
     },
     {
-      "fixture": "fixtures/011-greer-alert-legislators-propose-tax-on-e.eml",
+      "fixture": "fixtures/011-niall-alert-legislators-propose-tax-on-e.eml",
       "topic": "finance",
       "thread": 6,
       "suggested_labels": [
@@ -205,7 +205,7 @@
       ]
     },
     {
-      "fixture": "fixtures/024-fw-isak.eml",
+      "fixture": "fixtures/024-fw-lucan.eml",
       "topic": "board",
       "thread": 12,
       "suggested_labels": [
@@ -261,7 +261,7 @@
       ]
     },
     {
-      "fixture": "fixtures/031-elias.eml",
+      "fixture": "fixtures/031-bram.eml",
       "topic": "finance",
       "thread": 1,
       "suggested_labels": [
@@ -277,7 +277,7 @@
       ]
     },
     {
-      "fixture": "fixtures/033-re-elias.eml",
+      "fixture": "fixtures/033-re-bram.eml",
       "topic": "finance",
       "thread": 1,
       "suggested_labels": [
