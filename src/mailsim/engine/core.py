@@ -77,6 +77,21 @@ class Ctx:
     session: Session
     run: m.Run
     gen: IdGenerator
+    _names: dict[str, str] | None = None
+
+    def persona_names(self) -> dict[str, str]:
+        """email -> display name of the scenario's personas that have one (PersonaSpec.name).
+        Cosmetic: used for MIME From/To/Cc only; matching always uses the address."""
+        if self._names is None:
+            sv = self.session.get(m.ScenarioVersion, self.run.scenario_version_id)
+            personas = ((sv.spec.get("scenario") or {}).get("personas") or []) if sv else []
+            self._names = {str(p["email"]).lower(): str(p["name"]) for p in personas
+                           if p.get("name") and p.get("email")}  # fmt: skip
+        return self._names
+
+    def named(self, addr: Address) -> Address:
+        name = addr.name or self.persona_names().get(addr.email)
+        return Address(email=addr.email, name=name) if name else addr
 
     @property
     def now(self) -> datetime:
@@ -933,9 +948,9 @@ class SimEngine:
                 try:
                     raw = build_mime(
                         message_id=c.gen.message_id_header(c.config["domain"]),
-                        from_=_addr(message["from"]),
-                        to=[_addr(a) for a in message["to"]],
-                        cc=[_addr(a) for a in message.get("cc", [])],
+                        from_=c.named(_addr(message["from"])),
+                        to=[c.named(_addr(a)) for a in message["to"]],
+                        cc=[c.named(_addr(a)) for a in message.get("cc", [])],
                         subject=message.get("subject", ""),
                         date=c.now,
                         text=message.get("text"),
@@ -961,11 +976,21 @@ class SimEngine:
     def tick(self, scope: Scope, run_id: str) -> dict[str, Any]:
         return self._command(scope, run_id, CONTROLLER, "tick", {}, lambda c: self._advance(c, 0))
 
-    def advance(self, scope: Scope, run_id: str, seconds: float) -> dict[str, Any]:
-        return self._command(scope, run_id, CONTROLLER, "advance", {"seconds": seconds if math.isfinite(seconds) else str(seconds)},
-                             lambda c: self._advance(c, seconds))  # fmt: skip
+    def advance(self, scope: Scope, run_id: str, seconds: float, *,
+                stop_at: datetime | None = None) -> dict[str, Any]:  # fmt: skip
+        """Move the clock by `seconds`, firing due scheduled events at their due times.
 
-    def _advance(self, c: Ctx, seconds: float) -> dict[str, Any]:
+        `stop_at` pauses the move early (the whole `seconds` is still validated, so an
+        over-limit advance fails before anything moves): the persona runtime uses it to stop
+        at each persona reply's due time and stamp the reply then (`virtual_time` says where
+        the clock stopped)."""
+        input_: dict[str, Any] = {"seconds": seconds if math.isfinite(seconds) else str(seconds)}
+        if stop_at is not None:
+            input_["stop_at"] = iso(stop_at)
+        return self._command(scope, run_id, CONTROLLER, "advance", input_,
+                             lambda c: self._advance(c, seconds, stop_at))  # fmt: skip
+
+    def _advance(self, c: Ctx, seconds: float, stop_at: datetime | None = None) -> dict[str, Any]:
         if not math.isfinite(seconds) or seconds < 0 or seconds > 10 * 365 * 86400:
             raise InvalidRequest("seconds must be a finite, non-negative duration")
         start = c.run.start_time
@@ -976,6 +1001,8 @@ class SimEngine:
             raise SimulationLimitExceeded(
                 f"virtual duration limit of {limit}s exceeded", details={"limit": limit}
             )
+        if stop_at is not None:
+            target = max(c.now, min(target, parse_ts(stop_at)))
         items = c.session.execute(
             select(m.ScheduledEvent).where(m.ScheduledEvent.run_id == c.run.id)
         ).scalars()
@@ -1015,8 +1042,8 @@ class SimEngine:
         )
         raw = build_mime(
             message_id=c.gen.message_id_header(c.config["domain"]),
-            from_=Address(email=personas[spec["from"]]),
-            to=[Address(email=personas[r]) for r in recipients],
+            from_=c.named(Address(email=personas[spec["from"]])),
+            to=[c.named(Address(email=personas[r])) for r in recipients],
             subject=spec["subject"],
             date=c.now,
             text=spec["body"],
@@ -1098,7 +1125,8 @@ class SimEngine:
             policy = DeliveryPolicy(c.config["external_delivery"])
             plan = policy.plan([a.email for a in rcpts], self._emails(c))
             raw = build_mime(message_id=c.gen.message_id_header(c.config["domain"]),
-                             from_=Address(email=persona.email), to=rcpts, subject=subject,
+                             from_=c.named(Address(email=persona.email)),
+                             to=[c.named(a) for a in rcpts], subject=subject,
                              date=c.now, text=text, in_reply_to=irt, references=refs or None)  # fmt: skip
             delivered = [
                 self._insert_raw(c, mbid, raw, event_type="message.delivered", folder_type="inbox",
@@ -1262,7 +1290,8 @@ class SimEngine:
             )
         header = c.gen.message_id_header(c.config["domain"])
         raw = build_mime(
-            message_id=header, from_=Address(email=mb.email), to=to_a, cc=cc_a, subject=subject,
+            message_id=header, from_=c.named(Address(email=mb.email)),
+            to=[c.named(a) for a in to_a], cc=[c.named(a) for a in cc_a], subject=subject,
             date=c.now, text=text, html=html, in_reply_to=in_reply_to, references=references,
             attachments=attachments,
         )  # fmt: skip
@@ -1300,7 +1329,8 @@ class SimEngine:
         mb = self._mailbox(c, mailbox_id)
         raw = build_mime(
             message_id=c.gen.message_id_header(c.config["domain"]),
-            from_=Address(email=mb.email), to=[_addr(a) for a in d.to], cc=[_addr(a) for a in d.cc],
+            from_=c.named(Address(email=mb.email)), to=[c.named(_addr(a)) for a in d.to],
+            cc=[c.named(_addr(a)) for a in d.cc],
             subject=d.subject, date=c.now, text=d.text, html=d.html, in_reply_to=d.in_reply_to,
             references=d.references or None, attachments=d.attachments or None,
         )  # fmt: skip

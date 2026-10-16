@@ -12,9 +12,10 @@ from mailsim.api import schemas as s
 from mailsim.api.deps import Controller, Inspector
 from mailsim.api.errors import ErrorEnvelope
 from mailsim.api.idempotency import idempotent
-from mailsim.api.routers._common import controller, inspector, run_personas
+from mailsim.api.routers._common import controller, inspector, persona_runtime
 from mailsim.domain.errors import InvalidRequest, PermissionDenied, UnsupportedOperation
 from mailsim.engine.facades import EvaluatorView
+from mailsim.personas.runtime import advance_clock, tick_clock
 
 router = APIRouter(prefix="/v1/runs/{run_id}", tags=["simulator"],
                    responses={"default": {"model": ErrorEnvelope}})  # fmt: skip
@@ -69,10 +70,8 @@ def advance(
 ) -> Response:
     def run() -> s.ClockResult:
         ctl = controller(request, principal)
-        result = ctl.advance(run_id, body.seconds)
-        return s.ClockResult.model_validate(
-            {**result, "persona_replies": run_personas(request, ctl, run_id)}
-        )
+        return s.ClockResult.model_validate(advance_clock(ctl, persona_runtime(request, ctl),
+                                                          run_id, body.seconds))  # fmt: skip
 
     return idempotent(request, principal, idempotency_key, body.model_dump(mode="json"), 200, run)
 
@@ -80,10 +79,7 @@ def advance(
 @router.post("/scheduler/tick", response_model=s.ClockResult)
 def tick(request: Request, run_id: str, principal: Controller) -> s.ClockResult:
     ctl = controller(request, principal)
-    result = ctl.tick(run_id)
-    return s.ClockResult.model_validate(
-        {**result, "persona_replies": run_personas(request, ctl, run_id)}
-    )
+    return s.ClockResult.model_validate(tick_clock(ctl, persona_runtime(request, ctl), run_id))
 
 
 @router.get("/state", response_model=dict[str, Any])

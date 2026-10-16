@@ -11,6 +11,7 @@ permission, mailbox and budget guards (spec 8.4 roles).
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any
 
 from mailsim.auth.principal import Principal, Role
@@ -195,8 +196,11 @@ class Controller:
                event_id: str | None = None) -> dict[str, Any]:  # fmt: skip
         return self._e.inject(self.scope, run_id, mailbox_id, message, event_id=event_id)
 
-    def advance(self, run_id: str, seconds: float) -> dict[str, Any]:
-        return self._e.advance(self.scope, run_id, seconds)
+    def advance(self, run_id: str, seconds: float, *,
+                stop_at: datetime | None = None) -> dict[str, Any]:  # fmt: skip
+        """`stop_at` pauses early (persona replies are stamped at their due time); the full
+        `seconds` is validated against the run's limits first."""
+        return self._e.advance(self.scope, run_id, seconds, stop_at=stop_at)
 
     def tick(self, run_id: str) -> dict[str, Any]:
         return self._e.tick(self.scope, run_id)

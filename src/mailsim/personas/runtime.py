@@ -35,6 +35,7 @@ most ``MAX_THREAD_DEPTH`` messages deep.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -54,6 +55,7 @@ from mailsim.scenario.schema import BehaviorSpec, ScriptRule
 
 log = logging.getLogger("mailsim.personas")
 MAX_THREAD_DEPTH = 20
+MAX_ADVANCE_SECONDS = 10 * 365 * 86400  # the engine's own bound on one advance
 Msg = dict[str, Any]
 
 
@@ -112,6 +114,48 @@ class _StepState:
         return (_sender(msg), msg.get("subject"), msg.get("in_reply_to")) in self.generated_sigs
 
 
+def advance_clock(ctl: Controller, runtime: PersonaRuntime | None, run_id: str,
+                  seconds: float) -> dict[str, Any]:  # fmt: skip
+    """Advance the run's clock by `seconds`, answering persona replies AT their due time.
+
+    The clock moves in steps: to the next persona reply's due time (scheduled events due on
+    the way fire at their own due times, in order), the runtime answers what is due there,
+    and so on up to the target. Every reply is therefore stamped at its due virtual time and
+    lands in the log in time order with the scheduled events. Deterministic: the stops depend
+    only on the recorded state. Returns {fired, virtual_time, persona_replies}.
+    """
+    vt = ctl.run_info(run_id).get("virtual_time") if runtime is not None else None
+    if (
+        runtime is None
+        or vt is None
+        or not (math.isfinite(seconds) and 0 <= seconds <= MAX_ADVANCE_SECONDS)
+    ):  # no runtime, or a request the engine refuses with the proper error
+        result = ctl.advance(run_id, seconds)
+        return {**result, "persona_replies": 0 if runtime is None else len(runtime.step(run_id))}
+    now = parse_ts(vt)
+    target = now + timedelta(seconds=seconds)
+    fired: list[str] = []
+    replies = 0
+    stepped_at: datetime | None = None
+    while True:
+        due = runtime.next_due(run_id, after=stepped_at)
+        stop = target if due is None or due >= target else max(due, now)
+        result = ctl.advance(run_id, (target - now).total_seconds(), stop_at=stop)
+        fired += result["fired"]
+        now = parse_ts(result["virtual_time"])
+        replies += len(runtime.step(run_id))
+        stepped_at = now
+        if now >= target:
+            return {"fired": fired, "virtual_time": result["virtual_time"],
+                    "persona_replies": replies}  # fmt: skip
+
+
+def tick_clock(ctl: Controller, runtime: PersonaRuntime | None, run_id: str) -> dict[str, Any]:
+    """Fire what is due now (no clock movement), then answer the persona replies due now."""
+    result = ctl.tick(run_id)
+    return {**result, "persona_replies": 0 if runtime is None else len(runtime.step(run_id))}
+
+
 class PersonaRuntime:
     def __init__(self, controller: Controller, gateway: LLMGateway) -> None:
         self.controller = controller
@@ -137,8 +181,29 @@ class PersonaRuntime:
             log.info("persona step stopped: run %s is no longer active", run_id)
         return done
 
-    def _persona_step(self, run_id: str, persona: dict[str, Any], behavior: BehaviorSpec,
-                      st: _StepState, now: datetime) -> list[dict[str, Any]]:  # fmt: skip
+    def next_due(self, run_id: str, *, after: datetime | None = None) -> datetime | None:
+        """Earliest due time of a reply this runtime would send (strictly later than `after`,
+        if given), or None. Lets the clock stop exactly there (`advance_clock`)."""
+        state = self.controller.state(run_id)
+        run = state["run"]
+        if run["status"] != RunStatus.RUNNING or not run.get("virtual_time"):
+            return None
+        agent = self.controller.agent_mailbox_owner(run_id)
+        st = _StepState(state, self.controller.persona_generations(run_id))
+        best: datetime | None = None
+        for persona in st.personas:
+            pid, behavior = persona["id"], st.behaviors[persona["id"]]
+            if pid == agent or behavior.mode == "silent" or pid not in st.mailboxes:
+                continue
+            for due, *_ in self._pending(persona, behavior, st):
+                if (after is None or due > after) and (best is None or due < best):
+                    best = due
+        return best
+
+    def _pending(self, persona: dict[str, Any], behavior: BehaviorSpec,
+                 st: _StepState) -> list[tuple[datetime, Msg, int | None, list[Msg]]]:  # fmt: skip
+        """(due time, message, scripted rule index, thread) of every message this persona will
+        answer, oldest message first, whether or not it is due yet."""
         pid, me = persona["id"], st.emails[persona["id"]]
         own = [x for x in st.messages if x["mailbox_id"] == st.mailboxes[pid]
                and (_sender(x) in st.reachable or _sender(x) == me)]  # fmt: skip
@@ -150,7 +215,7 @@ class PersonaRuntime:
             if g["type"] == "persona.generated"
             and (g.get("generation") or {}).get("mode") == "scripted"
         }  # fmt: skip
-        out: list[dict[str, Any]] = []
+        out: list[tuple[datetime, Msg, int | None, list[Msg]]] = []
         for msg in sorted((x for x in own if _sender(x) != me), key=_key):
             if msg["message_id_header"] in answered or msg["id"] in failed:
                 continue
@@ -169,14 +234,21 @@ class PersonaRuntime:
                 if delay is None:
                     delay = behavior.response_delay_seconds
             else:  # llm
-                if st.llm_stopped or _sender(msg) in st.llm_emails:
+                if _sender(msg) in st.llm_emails:
                     continue
                 delay = behavior.response_delay_seconds
-            if _ts(msg) + timedelta(seconds=delay) > now:
-                continue
             thread = sorted((x for x in own if x["thread_id"] == msg["thread_id"]
                              and _key(x) <= _key(msg)), key=_key)  # fmt: skip
             if len(thread) > MAX_THREAD_DEPTH or all(st.runtime_authored(x) for x in thread):
+                continue
+            out.append((_ts(msg) + timedelta(seconds=delay), msg, rule_index, thread))
+        return out
+
+    def _persona_step(self, run_id: str, persona: dict[str, Any], behavior: BehaviorSpec,
+                      st: _StepState, now: datetime) -> list[dict[str, Any]]:  # fmt: skip
+        out: list[dict[str, Any]] = []
+        for due, msg, rule_index, thread in self._pending(persona, behavior, st):
+            if due > now or (rule_index is None and st.llm_stopped):
                 continue
             result = self._attempt(run_id, persona, behavior, msg, thread, st, rule_index)
             if result is not None:
