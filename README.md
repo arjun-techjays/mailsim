@@ -50,6 +50,41 @@ builds (`GET /v1/scenarios/{key}/accuracy`). The OpenAPI document is `openapi/op
 LLM provider outages surface as `UPSTREAM_UNAVAILABLE` (HTTP 503, `details.retryable`).
 Expired idempotency records are swept on each claim; `python -m mailsim.serve sweep` purges all.
 
+## Answer keys, evaluations and replays
+
+* **Answer-key references are checked** at validate (`POST .../answer-keys/validate`) and at
+  publish (also for inline scenario assertions). Unknown names are errors with dotted paths
+  (`answer_key.assertions.3.check.where.folder`), never a silent PASS or a forever-INCONCLUSIVE:
+  folders (`inbox sent drafts trash archive`, any case), flags (`SEEN ANSWERED FLAGGED DELETED
+  DRAFT`), operations per `actor` (agent: the scenario agent operations; simulator:
+  `persona.reply persona.failed`; controller: `create_run start cancel error reset inject tick
+  advance replay`), outcomes (`ok`, `any` or an error code), protocol `error_codes`, and the
+  persona mailboxes and event ids (`evaluate_at.event`, temporal `first`/`then`) of **every**
+  scenario version the key is compatible with (`scenario_versions`, all when omitted). Labels
+  are free-form and not checked.
+* **YAML booleans.** Only `true`/`false` are booleans; `on`/`off`/`yes`/`no` stay strings
+  (YAML 1.2 rules), so a persona script's `on:` key and `checks_default: on` work unquoted.
+  Where a boolean is expected (`once: yes`), those strings are still accepted.
+  `checks_default` also accepts `true`/`false`.
+* **Evaluation errors.** `POST /v1/runs/{id}/evaluations` answers 404 when the requested
+  `answer_key_version` does not exist and 409 CONFLICT when it (or every key) is not compatible
+  with the run's scenario version (`details.answer_key_version`, `details.scenario_versions`,
+  `details.run_scenario_version`).
+* **Builds.** Runs created without `agent_build` store null; `/accuracy` groups them as
+  `(no build)` (a reserved name: run creation refuses it, and blank names). A build literally
+  named `unspecified` is an ordinary build.
+* **Replays** (`POST /v1/runs/{id}/replay`) copy the recorded event log into a new run with
+  `replay_of` set; the copy ends `REPLAYED` (or keeps the original's final status when the
+  original had already ended) and takes no further commands. A replay has no agent actions, so
+  it is never graded: evaluating it answers 409 (`details.replay_of`: evaluate the original).
+  Replays are left out of `/accuracy` and of `GET /v1/runs` unless `include_replays=true`
+  (or `status=REPLAYED`).
+* **Downloads.** Reports (`.../evaluations/{evaluation_id}/report?format=json|junit|markdown`)
+  download as `<run_id>-<evaluation_id>.<json|xml|md>`. Every blob in `GET /v1/runs/{id}/artifacts`
+  carries a `url` (`GET /v1/runs/{id}/artifacts/{ref}`, controller or evaluator; reports
+  evaluator only) served as an attachment with `X-Content-Type-Options: nosniff` and
+  `Content-Security-Policy: sandbox`.
+
 ## Local development: Claude Code CLI provider and no-auth dashboard
 
 Both are **local-only conveniences, off by default**.
@@ -178,7 +213,7 @@ cli -> engine -> scenario -> store -> (mime | threads | providers) -> domain
 * **Reset** = new epoch on the same run: a `run.reset` event wipes the projection and the
   baseline (seed) events are re-applied. History is kept.
 * **Replay** = re-apply recorded events into a fresh run and compare state hashes; missing blob
-  artifacts are reported, not regenerated.
+  artifacts are reported, not regenerated. The copy is then closed (`REPLAYED`, see above).
 * **No external delivery.** `DeliveryPolicy` is the only place recipients are resolved: simulated
   mailboxes, or the external mode `deny` (default, whole send rejected) / `sink` / `event`.
   There is no SMTP/socket/HTTP client in `src/` (ruff banned-api + AST test), tests patch sockets
@@ -203,6 +238,15 @@ cli -> engine -> scenario -> store -> (mime | threads | providers) -> domain
   threads, change feed) are free but still recorded as actions for efficiency metrics.
 * The audit action log records recipients, counts and sizes but not subjects, bcc or bodies.
 * `actor` is a trusted-caller argument; Phase 2/3 must expose agent-facing facades that hard-code it.
+
+## Troubleshooting
+
+* **PostgreSQL takes minutes to come back after a crash** ("syncing data directory (fsync)" in
+  its log): crash recovery syncs every file of every database first. The Compose service runs
+  with `recovery_init_sync_method=syncfs` (one sync per file system); recreate the container to
+  apply it (`docker compose up -d postgres`). Keep the number of databases down: the test suite
+  drops its per-run helper databases (`<MAILSIM_TEST_DB>_local`, `_migration`) when done; old
+  ones from earlier runs can be dropped by hand (`DROP DATABASE ... WITH (FORCE)`).
 
 See the PR notes: provider id mapping tables, PASSED/FAILED verdicts (need the Phase 2
 evaluator), scheduled events support only `email.receive`, persona runtime is not implemented.

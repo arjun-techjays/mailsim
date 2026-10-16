@@ -265,6 +265,9 @@ export interface paths {
          * List Runs
          * @description Runs in the caller's project, newest first (by creation time, then id); filter by
          *     `scenario_key` and/or `status`; follow `next_cursor` until it is null.
+         *
+         *     Replay runs (`replay_of` set, status REPLAYED) are copies of another run's log, not agent
+         *     runs: they are left out unless `include_replays=true` (or `status=REPLAYED`).
          */
         get: operations["list_runs_v1_runs_get"];
         put?: never;
@@ -359,9 +362,32 @@ export interface paths {
         };
         /**
          * Run Artifacts
-         * @description Trace, raw MIME and attachment blobs; evaluation reports for evaluators only.
+         * @description Trace, raw MIME and attachment blobs; evaluation reports for evaluators only. Blob
+         *     artifacts carry a `url` that downloads them (`GET /v1/runs/{run_id}/artifacts/{ref}`).
          */
         get: operations["run_artifacts_v1_runs__run_id__artifacts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{run_id}/artifacts/{artifact_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run Artifact
+         * @description Download one listed blob artifact (`artifact_id` = its `ref`) as an attachment. Only
+         *     blobs this run lists for the caller are served (reports: evaluators only), with
+         *     `Content-Security-Policy: sandbox` and `X-Content-Type-Options: nosniff`; 404 otherwise.
+         */
+        get: operations["run_artifact_v1_runs__run_id__artifacts__artifact_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -474,7 +500,15 @@ export interface paths {
         /** List Evaluations */
         get: operations["list_evaluations_v1_runs__run_id__evaluations_get"];
         put?: never;
-        /** Evaluate Run */
+        /**
+         * Evaluate Run
+         * @description Grade the recorded run with an answer key (default: the latest compatible version).
+         *
+         *     404 when the run or the requested answer-key version does not exist; 409 CONFLICT when
+         *     the key is not compatible with the run's scenario version (`details.answer_key_version`,
+         *     `details.scenario_versions`, `details.run_scenario_version`) and for replay runs
+         *     (`details.replay_of`: evaluate the original run instead).
+         */
         post: operations["evaluate_run_v1_runs__run_id__evaluations_post"];
         delete?: never;
         options?: never;
@@ -491,7 +525,8 @@ export interface paths {
         };
         /**
          * Evaluation Report
-         * @description Download one evaluation's report (JSON, JUnit XML or Markdown).
+         * @description Download one evaluation's report (JSON, JUnit XML or Markdown) as an attachment named
+         *     `<run_id>-<evaluation_id>.<json|xml|md>`.
          */
         get: operations["evaluation_report_v1_runs__run_id__evaluations__evaluation_id__report_get"];
         put?: never;
@@ -594,7 +629,13 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Replay Run */
+        /**
+         * Replay Run
+         * @description Copy the run's recorded event log into a new run and compare state hashes. The copy
+         *     (`replay_of` = this run) ends REPLAYED (or the original's final status if it had ended):
+         *     it takes no commands, cannot be evaluated (409), and is left out of /accuracy and of the
+         *     runs list unless `include_replays=true`.
+         */
         post: operations["replay_run_v1_runs__run_id__replay_post"];
         delete?: never;
         options?: never;
@@ -855,10 +896,14 @@ export interface paths {
         put?: never;
         /**
          * Validate Answer Key
-         * @description Schema + leak guard for an unsaved answer key. Stores nothing.
+         * @description Schema, references + leak guard for an unsaved answer key. Stores nothing; publishing
+         *     runs the same checks.
          *
          *     Errors: dotted schema paths (`answer_key.assertions.0.check`), `answer_key.scenario` for a
-         *     key of another scenario, `answer_key.scenario_versions` for unknown versions, and
+         *     key of another scenario, `answer_key.scenario_versions` for unknown versions, unknown
+         *     references at their dotted path (`answer_key.assertions.0.check.where.folder`: folders,
+         *     flags, operations per actor, outcome and error codes, persona mailboxes and event ids of
+         *     every compatible scenario version), and
          *     `leak:<scenario version>` when grading prose appears in content the agent can read (the
          *     leaked text is cut to 60 characters). 404 when the scenario does not exist.
          */
@@ -1222,6 +1267,11 @@ export interface components {
             ref: string;
             /** Size */
             size?: number | null;
+            /**
+             * Url
+             * @description download URL of a blob artifact (served as an attachment)
+             */
+            url?: string | null;
         };
         /**
          * AssertionDiff
@@ -2174,7 +2224,10 @@ export interface components {
         };
         /** RunCreate */
         RunCreate: {
-            /** Agent Build */
+            /**
+             * Agent Build
+             * @description label for comparing builds in /accuracy; omit for none (stored as null, reported as "(no build)", which is therefore not a valid name)
+             */
             agent_build?: string | null;
             /**
              * Checks
@@ -2208,13 +2261,19 @@ export interface components {
             epoch: number;
             /** Id */
             id: string;
-            /** Replay Of */
+            /**
+             * Replay Of
+             * @description set on replay runs: the run whose recorded log this run copies (never evaluated)
+             */
             replay_of: string | null;
             /** Scenario Key */
             scenario_key?: string | null;
             /** Scenario Version */
             scenario_version?: number | null;
-            /** Status */
+            /**
+             * Status
+             * @description DRAFT, VALIDATED, READY, RUNNING, PASSED, FAILED, ERROR, CANCELLED or REPLAYED (a closed replay copy)
+             */
             status: string;
             /** Virtual Time */
             virtual_time: string | null;
@@ -2907,6 +2966,7 @@ export interface operations {
                 status?: string | null;
                 cursor?: string | null;
                 page_size?: number;
+                include_replays?: boolean;
             };
             header?: never;
             path?: never;
@@ -3079,6 +3139,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ArtifactOut"][];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    run_artifact_v1_runs__run_id__artifacts__artifact_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                artifact_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": unknown;
                 };
             };
             /** @description Default Response */
