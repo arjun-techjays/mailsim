@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from mailsim.domain.errors import Conflict, InvalidRequest, NotFound, RunNotActive
 from mailsim.domain.ids import new_control_id
+from mailsim.domain.states import NO_BUILD
 from mailsim.engine.facades import EvaluatorView
 from mailsim.evaluation import store
 from mailsim.evaluation.contract import BuildComparison, EvaluationReport, TrialStats, Verdict
@@ -32,8 +33,6 @@ from mailsim.evaluation.reports import FORMATS, render
 from mailsim.evaluation.rules import compare_builds, trial_stats
 from mailsim.store.blob import BlobStore
 from mailsim.store.repos import Scope
-
-UNSPECIFIED_BUILD = "unspecified"
 
 
 def _with_completion(report: EvaluationReport, completion: dict[str, Any]) -> EvaluationReport:
@@ -99,6 +98,13 @@ class EvaluationService:
         if checks not in (None, "on", "off"):
             raise InvalidRequest("checks must be 'on', 'off' or omitted")
         view = self._view(scope)
+        replay_of = view.run_info(run_id).get("replay_of")  # NOT_FOUND outside the scope
+        if replay_of:
+            raise Conflict(
+                f"run {run_id} is a replay of {replay_of}: a replay copies the recorded events "
+                "only (no agent actions) and is never graded; evaluate the original run",
+                details={"run_id": run_id, "replay_of": replay_of},
+            )
         # retries re-grade new events only: an unchanged judgement is never paid for twice
         base = self._judge_factory(run_id) if self._judge_factory else self._judge
         judge = _CachingJudge(base) if base is not None else None
@@ -190,8 +196,9 @@ class EvaluationService:
         """Repeated-trial accuracy per agent build for one key version (default: the latest
         version with stored checks-on evaluations).
 
-        Only comparable evaluations count: checks-off evaluations are excluded (they grade a
-        different question), and each run counts once, by the evaluation that completed it if
+        Only comparable evaluations count: checks-off evaluations and replay runs are excluded
+        (they grade a different question / are copies), runs without a build are grouped under
+        "(no build)", and each run counts once, by the evaluation that completed it if
         any, else its latest checks-on evaluation for that key version. The frozen
         BuildComparison has no field for the excluded count, so it is not reported."""
         with self._sf() as s:
@@ -210,7 +217,7 @@ class EvaluationService:
             per_run[t.run_id] = t
         grouped: dict[str, builtins.list[EvaluationReport]] = {}
         for t in per_run.values():
-            grouped.setdefault(t.agent_build or UNSPECIFIED_BUILD, []).append(t.report)
+            grouped.setdefault(t.agent_build or NO_BUILD, []).append(t.report)
         names = builds if builds is not None else sorted(grouped)
         stats: dict[str, TrialStats] = {
             name: trial_stats([(r.verdict, r.accuracy, r.outcomes) for r in grouped.get(name, [])])
@@ -219,4 +226,4 @@ class EvaluationService:
         return compare_builds(scenario_key, version, stats, baseline)
 
 
-__all__ = ["EvaluationService", "UNSPECIFIED_BUILD"]
+__all__ = ["NO_BUILD", "EvaluationService"]

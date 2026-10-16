@@ -38,7 +38,7 @@ def _open(s: dict[str, Any]) -> None:
             "id": "mailbox-kept",
             "type": "state",
             "requirement": "The mailbox still exists",
-            "check": {"where": {"mailbox": "me"}, "count": {"min": 0}},
+            "check": {"where": {"mailbox": "finance_manager"}, "count": {"min": 0}},
         },
     ]
 

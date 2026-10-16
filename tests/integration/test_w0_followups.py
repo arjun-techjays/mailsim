@@ -5,7 +5,7 @@ import threading
 import pytest
 from sqlalchemy import select
 
-from mailsim.domain.errors import NotFound
+from mailsim.domain.errors import NotFound, RunNotActive
 from mailsim.engine.core import CONTROLLER
 from mailsim.scenario.loader import load_scenario
 from mailsim.scenario.service import create_scenario_version
@@ -31,14 +31,12 @@ def test_replay_reproduces_engine_side_counters(env):
     result = env.engine.replay_run(env.scope, run)
     assert result.matches
     replayed = env.engine.state(env.scope, result.replay_run_id)
+    assert replayed["run"].pop("status") == "REPLAYED" and live["run"].pop("status") == "RUNNING"
     assert replayed == live, "live projection and replay agree, including counters"
-    # a replayed run can be continued exactly like the original
-    after = dict(MAIL, subject="after")
-    for rid in (run, result.replay_run_id):
-        env.engine.inject(env.scope, rid, fm, after)
-    a = env.engine.state(env.scope, run)
-    b = env.engine.state(env.scope, result.replay_run_id)
-    assert a["messages"] == b["messages"] and a["run"]["id_counter"] == b["run"]["id_counter"]
+    # the replay is a closed copy (never a second agent run); the original goes on
+    with pytest.raises(RunNotActive):
+        env.engine.inject(env.scope, result.replay_run_id, fm, dict(MAIL, subject="after"))
+    env.engine.inject(env.scope, run, fm, dict(MAIL, subject="after"))
 
 
 def test_every_event_records_the_id_counter(env, session_factory):

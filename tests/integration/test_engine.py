@@ -497,8 +497,16 @@ def test_replay_reproduces_state_and_detects_missing_blobs(env):
     assert res.replay_run_id != run and res.event_count == len(env.engine.events(env.scope, run))
     assert env.engine.run_info(env.scope, res.replay_run_id)["replay_of"] == run
     replayed = env.engine.state(env.scope, res.replay_run_id)
-    assert replayed == env.engine.state(env.scope, run)
-    assert env.engine.events(env.scope, res.replay_run_id)[0]["type"] == "run.created"
+    live = env.engine.state(env.scope, run)
+    # identical, except that the copy is closed: the replay ends REPLAYED, the original runs on
+    assert (replayed["run"].pop("status"), live["run"].pop("status")) == ("REPLAYED", "RUNNING")
+    assert replayed == live
+    events = env.engine.events(env.scope, res.replay_run_id)
+    assert events[0]["type"] == "run.created"
+    assert (events[-1]["type"], events[-1]["payload"]) == (
+        "run.status_changed", {"from": "RUNNING", "to": "REPLAYED"})  # fmt: skip
+    with pytest.raises(RunNotActive):  # a replay copy takes no further commands
+        env.engine.advance(env.scope, res.replay_run_id, 10)
     # remove an artifact: replay must say so instead of regenerating
     first = inbox(env, run)[0]
     (env.tmp_path / "blobs" / first.raw_blob_ref[:2] / first.raw_blob_ref).unlink()

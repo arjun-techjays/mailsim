@@ -110,7 +110,7 @@ def verify_key(session: Session, raw: str, *, now: datetime | None = None) -> Pr
         # an agent key lives only as long as its run: CANCELLED / PASSED / FAILED / ERROR
         # (however the run got there) ends it, even if no explicit revocation happened
         run = session.get(m.Run, found.run_id)
-        if run is None or run.status in {str(st) for st in TERMINAL}:
+        if run is None or run.status in {str(st) for st in TERMINAL} or run.replay_of is not None:
             raise InvalidCredential("API key revoked")
     return Principal(found.tenant_id, found.project_id, Role(found.role), found.run_id,
                      found.mailbox_id, found.id)  # fmt: skip

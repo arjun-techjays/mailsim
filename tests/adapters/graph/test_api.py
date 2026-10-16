@@ -241,6 +241,10 @@ def test_attachments(world):
     assert one["contentBytes"] == att["contentBytes"] and one["size"] == att["size"]
     raw = world.call("GET", f"/me/messages/{m['id']}/attachments/{att['id']}/$value", 200)
     assert raw.headers["content-type"] == "application/pdf" and raw.content.startswith(b"%PDF")
+    # recorded bytes are a download, never rendered (shared api.downloads headers)
+    assert raw.headers["content-disposition"] == 'attachment; filename="INV-001.pdf"'
+    assert raw.headers["x-content-type-options"] == "nosniff"
+    assert raw.headers["content-security-policy"].startswith("sandbox")
     err(world.call("GET", f"/me/messages/{m['id']}/attachments/AAMknope"), 404,
         "ErrorItemNotFound")  # fmt: skip
 

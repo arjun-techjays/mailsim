@@ -38,7 +38,8 @@ def test_routes_pass_scope_and_arguments(api):
     assert calls[-1] == ("accuracy", (scope, KEY, 2, ["a", "b"], "a"))
     r = api.call("GET", f"/v1/runs/{run}/evaluations/evl_1/report?format=junit", "evaluator",
                  expect=200)  # fmt: skip
-    assert r.content == b"<junit:evl_1>" and r.headers["content-type"] == "application/xml"
+    assert r.content == b"<junit:evl_1>"  # XML is served as a download, never echoed
+    assert r.headers["content-type"] == "application/octet-stream"
     r = api.call("GET", f"/v1/runs/{run}/evaluations/evl_1/report", "evaluator", expect=200)
     assert r.headers["content-type"] == "application/json"
     r = api.call("GET", f"/v1/runs/{run}/evaluations/evl_9/report", "evaluator")

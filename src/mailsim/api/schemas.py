@@ -92,17 +92,23 @@ class RunCreate(_M):
     checks: Literal["on", "off"] | None = Field(
         default=None, description="post-run deterministic checks override (hidden from agent)"
     )
-    agent_build: str | None = Field(default=None, min_length=1, max_length=200)
+    agent_build: str | None = Field(
+        default=None, min_length=1, max_length=200,
+        description="label for comparing builds in /accuracy; omit for none (stored as null, "
+                    "reported as \"(no build)\", which is therefore not a valid name)",
+    )  # fmt: skip
     start: bool = True
 
 
 class RunOut(_M):
     id: str
-    status: str
+    status: str = Field(description="DRAFT, VALIDATED, READY, RUNNING, PASSED, FAILED, ERROR, "
+                                    "CANCELLED or REPLAYED (a closed replay copy)")  # fmt: skip
     epoch: int
     virtual_time: str | None
     agent_actions: int
-    replay_of: str | None
+    replay_of: str | None = Field(description="set on replay runs: the run whose recorded log "
+                                              "this run copies (never evaluated)")  # fmt: skip
     scenario_key: str | None = None
     scenario_version: int | None = None
     agent_build: str | None = None
@@ -160,6 +166,8 @@ class ArtifactOut(_M):
     ref: str
     content_type: str
     size: int | None = None
+    url: str | None = Field(default=None, description="download URL of a blob artifact "
+                                                     "(served as an attachment)")  # fmt: skip
 
 
 class EvaluationRequest(_M):

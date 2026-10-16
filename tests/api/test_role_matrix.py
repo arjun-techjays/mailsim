@@ -37,6 +37,7 @@ ROUTES: list[tuple[str, str, set[str], object, int]] = [
     ("GET", "/v1/runs/{run}/events", {C, E}, None, 200),
     ("POST", "/v1/runs/{run}/replay", {C}, None, 200),
     ("GET", "/v1/runs/{run}/artifacts", {C, E}, None, 200),
+    ("GET", "/v1/runs/{run}/artifacts/{blob}", {C, E}, None, 200),
     ("POST", "/v1/runs/{run}/evaluations", {E}, {}, 201),
     ("GET", "/v1/runs/{run}/evaluations", {E}, None, 200),
     ("GET", "/v1/runs/{run}/results", {E}, None, 200),
@@ -95,7 +96,8 @@ def test_matrix_covers_every_route():
                            ("{ready}", "{run_id}"), ("{run}", "{run_id}"), ("{mbx}", "{mailbox_id}"),
                            ("{msg}", "{message_id}"), ("{thread}", "{thread_id}"),
                            ("evl_1", "{evaluation_id}"), ("{keyid}", "{key_id}"),
-                           ("{ver}", "{version}"), ("{akv}", "{version}")):  # fmt: skip
+                           ("{ver}", "{version}"), ("{akv}", "{version}"),
+                           ("{blob}", "{artifact_id}")):  # fmt: skip
             template = template.replace(name, real)
         listed.add((method, template))
     assert listed == served
@@ -111,9 +113,12 @@ class World:
         run = created["run"]["id"]
         first = api.call("GET", f"/v1/mailboxes/{mbx}/messages?folder=inbox", key=self.agent_key,
                          expect=200).json()["items"][0]  # fmt: skip
+        blob = next(a["ref"] for a in api.call("GET", f"/v1/runs/{run}/artifacts",
+                                               expect=200).json() if a["kind"] == "raw_mime")  # fmt: skip
         self.values = {"project": api.project_id, "key": KEY, "run": run, "ready": ready,
                        "mbx": mbx, "msg": first["id"], "thread": first["thread_id"],
-                       "keyid": _key_id(api, self.agent_key), "ver": 1, "akv": 1}  # fmt: skip
+                       "keyid": _key_id(api, self.agent_key), "ver": 1, "akv": 1,
+                       "blob": blob}  # fmt: skip
         self.keys = {**api.keys, A: self.agent_key}
 
     def url(self, path: str) -> str:
