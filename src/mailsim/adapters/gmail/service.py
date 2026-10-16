@@ -592,7 +592,7 @@ class GmailService:
             since = history_number(decode_cursor(token)[0], "malformed page token")
         feed = self.mb.list_changes(since, limit=page_size(max_results))
         if feed["reset_since"]:
-            raise NotFound("Requested entity was not found: startHistoryId predates a run reset; "
+            raise NotFound("Requested entity was not found: startHistoryId is no longer valid; "
                            "perform a full sync")  # fmt: skip
         changes = [c for c in feed["changes"] if c.get("message_id")]
         current = {

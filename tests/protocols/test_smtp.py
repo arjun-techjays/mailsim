@@ -264,7 +264,7 @@ def test_budget_exhaustion(make_proto):
     s.mail(AGENT)
     s.rcpt(VENDOR)
     code, text = s.data(message())
-    assert code == 554 and b"SIMULATION_LIMIT_EXCEEDED" in text
+    assert (code, text) == (452, b"4.5.3 quota exceeded")
 
 
 def test_starttls(make_proto):

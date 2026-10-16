@@ -267,13 +267,15 @@ Google's shape, plus a `google.rpc.ErrorInfo` detail whose `reason` is the neutr
 | `CONFLICT` | 409 | `conflict` | `ABORTED` |
 | `RUN_NOT_ACTIVE` | 409 | `failedPrecondition` | `FAILED_PRECONDITION` |
 | `EXTERNAL_DELIVERY_BLOCKED` | 400 | `failedPrecondition` | `FAILED_PRECONDITION` |
-| `SIMULATION_LIMIT_EXCEEDED`, `RATE_LIMITED` | 429 | `rateLimitExceeded` | `RESOURCE_EXHAUSTED` |
+| `SIMULATION_LIMIT_EXCEEDED` (ErrorInfo reason `QUOTA_EXCEEDED`), `RATE_LIMITED` | 429 | `rateLimitExceeded` | `RESOURCE_EXHAUSTED` |
 | `UNSUPPORTED_OPERATION` | 501 | `notImplemented` | `UNIMPLEMENTED` |
 | `UPSTREAM_UNAVAILABLE` | 503 | `backendError` | `UNAVAILABLE` |
 | unexpected fault | 500 (no detail) | `backendError` | `INTERNAL` |
 
+Engine budget and run-state errors read neutrally to agents (`api/agent_errors.py`, the same on every interface): `SIMULATION_LIMIT_EXCEEDED` is shown as `QUOTA_EXCEEDED` with the message "action limit reached" and no details; `RUN_NOT_ACTIVE` keeps its code with the message "mailbox is not available". Operators (controller/evaluator routes, actions, events) keep the engine codes and messages.
+
 Note that google-api-python-client retries 429 and 5xx when `num_retries` is set; the budget
-error (`SIMULATION_LIMIT_EXCEEDED`) is raised before the write and costs nothing to retry, but
+error (`QUOTA_EXCEEDED`, "action limit reached") is raised before the write and costs nothing to retry, but
 retrying it never succeeds. Request bodies over the server's size cap are refused by the shared
 middleware with the REST error envelope (400), not the Gmail shape.
 

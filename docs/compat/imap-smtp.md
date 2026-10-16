@@ -194,7 +194,9 @@ delivery), then applies the given flags/keywords; answers `[APPENDUID]`.
 **Errors.** Syntax errors answer `BAD`; engine errors answer `NO [code] ENGINE_CODE: message`
 (`NOT_FOUND` -> `NONEXISTENT`, `PERMISSION_DENIED` -> `NOPERM`, `RUN_NOT_ACTIVE` ->
 `UNAVAILABLE`, `SIMULATION_LIMIT_EXCEEDED`/`RATE_LIMITED` -> `LIMIT`, `INVALID_REQUEST`/
-`UNSUPPORTED_OPERATION` -> `CANNOT`, `CONFLICT` -> `INUSE`).
+`UNSUPPORTED_OPERATION` -> `CANNOT`, `CONFLICT` -> `INUSE`). The budget error reads
+`NO [LIMIT] QUOTA_EXCEEDED: action limit reached`; a run that is not active reads
+`RUN_NOT_ACTIVE: mailbox is not available` (also at LOGIN).
 
 **Framing limits.** Command line 64 KiB (`* BYE` beyond it); synchronizing literals up to
 25 MiB + 64 KiB (larger ones answer `NO [TOOBIG]` without the `+` continuation; an oversized
@@ -232,8 +234,9 @@ addresses that are envelope recipients stay `To`/`Cc`, other envelope recipients
 3. Otherwise -> engine `send` (one action).
 
 Engine errors map to replies carrying the engine code: `EXTERNAL_DELIVERY_BLOCKED`/
-`PERMISSION_DENIED` `550 5.7.1`, `SIMULATION_LIMIT_EXCEEDED` `554 5.3.4`, `RUN_NOT_ACTIVE`
-`554 5.3.2`, `INVALID_REQUEST` `554 5.6.0`, `RATE_LIMITED` `451 4.7.1`, others `451 4.3.0`.
+`PERMISSION_DENIED` `550 5.7.1`, the action budget `452 4.5.3 quota exceeded` (no code),
+`RUN_NOT_ACTIVE` `554 5.3.2 RUN_NOT_ACTIVE: mailbox is not available` (and `535 5.7.8` with the
+same text at AUTH), `INVALID_REQUEST` `554 5.6.0`, `RATE_LIMITED` `451 4.7.1`, others `451 4.3.0`.
 Unexpected failures answer `451 4.3.0 internal error`; details are only logged.
 
 ## Deviations (by design or pending engine support)
@@ -266,3 +269,4 @@ re-read for every SMTP transaction (so a run reset is picked up). It reaches nei
 Greetings and replies are neutral: the SMTP banner is `220 <hostname> ESMTP ready`, the IMAP
 greeting `* OK [CAPABILITY ...] IMAP4rev1 ready`, `ID` answers `("name" "IMAP" "vendor"
 "IMAP")`, and no reply text mentions the simulation or the run's external-delivery mode.
+Engine budget and run-state errors read neutrally to agents (`api/agent_errors.py`, the same on every interface): `SIMULATION_LIMIT_EXCEEDED` is shown as `QUOTA_EXCEEDED` with the message "action limit reached" and no details; `RUN_NOT_ACTIVE` keeps its code with the message "mailbox is not available". Operators (controller/evaluator routes, actions, events) keep the engine codes and messages.

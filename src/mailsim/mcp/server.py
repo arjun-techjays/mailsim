@@ -27,6 +27,7 @@ from mcp.shared.exceptions import MCPError
 from pydantic import ValidationError
 
 from mailsim import __version__
+from mailsim.api.agent_errors import agent_view
 from mailsim.api.auth import InvalidCredential, verify_key
 from mailsim.api.errors import INTERNAL, UNAUTHENTICATED
 from mailsim.auth.principal import Principal, Role
@@ -144,6 +145,8 @@ class McpService:
             return tool_error(str(ErrorCode.INVALID_REQUEST), "invalid tool arguments",
                               {"errors": errors})  # fmt: skip
         except SimError as exc:
+            if principal.role is Role.AGENT:
+                return tool_error(*agent_view(str(exc.code), exc.message, exc.details))
             return tool_error(str(exc.code), exc.message, exc.details)
         except Exception:
             log.exception("MCP tool %s failed", name)

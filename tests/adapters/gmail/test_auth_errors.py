@@ -67,7 +67,8 @@ def test_scenario_permissions_and_budget(env, tmp_path):
     gid = g.gid("Invoice INV-001")
     g.post(f"/messages/{gid}/modify", json={"removeLabelIds": ["INBOX"]})  # move: 1st write
     r = g.call("POST", f"/messages/{gid}/modify", 429, json={"addLabelIds": ["INBOX"]})
-    assert g.error(r) == (429, "SIMULATION_LIMIT_EXCEEDED", "rateLimitExceeded")
+    assert g.error(r) == (429, "QUOTA_EXCEEDED", "rateLimitExceeded")
+    assert r.json()["error"]["message"] == "action limit reached"
     assert r.json()["error"]["status"] == "RESOURCE_EXHAUSTED"
     assert g.get("/messages")["resultSizeEstimate"] == 2  # reads stay free
     assert g.get("/messages", params={"q": "invoice"})["resultSizeEstimate"] == 2

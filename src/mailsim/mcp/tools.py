@@ -530,7 +530,7 @@ TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
         "get_changes",
         "Mailbox change feed after event `since`; resume from next_since "
-        "while has_more. reset_since=true means the run was reset: resynchronise.",
+        "while has_more. reset_since=true means the mailbox was reset: resynchronise.",
         AGENT,
         ChangesArgs,
         get_changes,

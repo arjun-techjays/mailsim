@@ -30,7 +30,11 @@ revoked only explicitly with `DELETE /v1/keys/{key_id}` (or when the run is canc
 completed). Agents download attachment bytes with
 `GET /v1/mailboxes/{mailbox_id}/messages/{message_id}/attachments/{attachment_id}` and forward
 with `POST /v1/mailboxes/{mailbox_id}/messages/{message_id}/forward`; operators download with
-`GET /v1/runs/{run_id}/mailboxes/{mailbox_id}/messages/{message_id}/attachments/{attachment_id}`. The dashboard's run page shows every
+`GET /v1/runs/{run_id}/mailboxes/{mailbox_id}/messages/{message_id}/attachments/{attachment_id}`.
+Agent-facing errors never mention the simulation: on the agent mailbox routes and every agent
+interface the action budget error reads `QUOTA_EXCEEDED` / "action limit reached" and an
+inactive run reads `RUN_NOT_ACTIVE` / "mailbox is not available" (operator routes keep
+`SIMULATION_LIMIT_EXCEEDED` and the engine messages). The dashboard's run page shows every
 endpoint for a run (`GET /v1/runs/{run_id}/connection`), tests a key through any interface
 (`POST /v1/runs/{run_id}/connection-tests`) and shows which interface each action came through
 (`GET /v1/runs/{run_id}/activity`).

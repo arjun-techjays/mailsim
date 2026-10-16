@@ -21,6 +21,7 @@ from fastapi.routing import APIRoute
 from starlette.exceptions import HTTPException
 
 from mailsim.adapters.graph.odata import QueryNotSupported
+from mailsim.api.agent_errors import agent_view
 from mailsim.api.errors import request_id
 from mailsim.domain.errors import ErrorCode, SimError
 
@@ -73,7 +74,8 @@ def error_response(request: Request, exc: Exception) -> JSONResponse:
     if isinstance(exc, SimError):
         status, code = GRAPH_ERRORS[exc.code]
         headers = {"Retry-After": "1"} if exc.code == ErrorCode.RATE_LIMITED else None
-        return graph_error(request, status, code, exc.message, headers)
+        _, message, _ = agent_view(str(exc.code), exc.message)  # Graph serves agents only
+        return graph_error(request, status, code, message, headers)
     if isinstance(exc, GraphAuthError):
         return graph_error(request, *UNAUTHENTICATED, str(exc),
                            {"WWW-Authenticate": 'Bearer realm="api"'})  # fmt: skip

@@ -526,7 +526,7 @@ def test_budget_limit(make_proto):
     ok(c.select("INBOX"))
     ok(c.store("1", "+FLAGS", "\\Seen"))
     typ, data = c.store("1", "+FLAGS", "\\Flagged")
-    assert typ == "NO" and data[0].startswith(b"[LIMIT] SIMULATION_LIMIT_EXCEEDED")
+    assert typ == "NO" and data[0] == b"[LIMIT] QUOTA_EXCEEDED: action limit reached"
 
 
 def test_reset_changes_uidvalidity(proto):

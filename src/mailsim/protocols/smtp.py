@@ -31,6 +31,7 @@ from typing import Any
 
 from aiosmtpd.smtp import MISSING, SMTP, AuthResult, Envelope, Session
 
+from mailsim.api.agent_errors import agent_view
 from mailsim.domain.errors import SimError
 from mailsim.domain.models import CanonicalMessage
 from mailsim.engine.context import with_interface
@@ -63,8 +64,11 @@ def _line(text: str) -> str:
 
 
 def smtp_error(exc: SimError) -> str:
+    if exc.code == "SIMULATION_LIMIT_EXCEEDED":  # the agent's view, without a raw code
+        return "452 4.5.3 quota exceeded"
     prefix = _SMTP_ERRORS.get(str(exc.code), "451 4.3.0")
-    return f"{prefix} {exc.code}: {_line(exc.message)}"
+    code, message, _ = agent_view(str(exc.code), exc.message)
+    return f"{prefix} {code}: {_line(message)}"
 
 
 def _valid_address(addr: str) -> bool:

@@ -173,12 +173,13 @@ def test_operation_policy_budget_and_run_state(api, tmp_path):
     api.call("POST", f"/v1/mailboxes/{mbx}/messages/{first['id']}/reply", key=key,
              json={"text": "verify"}, expect=201)  # fmt: skip
     body = err(api.call("PATCH", f"/v1/mailboxes/{mbx}/messages/{first['id']}", key=key,
-                        json={"folder": "inbox"}), 429, "SIMULATION_LIMIT_EXCEEDED")  # fmt: skip
-    assert body["details"] == {"limit": 2}
+                        json={"folder": "inbox"}), 429, "QUOTA_EXCEEDED")  # fmt: skip
+    assert (body["message"], body["details"]) == ("action limit reached", {})
     for _ in range(3):  # reads stay free after the write budget is spent
         items(api, f"/v1/mailboxes/{mbx}/messages", key)
     api.call("POST", f"/v1/runs/{rid}/reset", expect=200)  # READY again: not active
-    err(api.call("GET", f"/v1/mailboxes/{mbx}/messages", key=key), 409, "RUN_NOT_ACTIVE")
+    body = err(api.call("GET", f"/v1/mailboxes/{mbx}/messages", key=key), 409, "RUN_NOT_ACTIVE")
+    assert body["message"] == "mailbox is not available"
     api.call("POST", f"/v1/runs/{rid}/cancel", expect=200)  # cancel revokes the agent key
     err(api.call("GET", f"/v1/mailboxes/{mbx}/messages", key=key), 401, "UNAUTHENTICATED")
 
