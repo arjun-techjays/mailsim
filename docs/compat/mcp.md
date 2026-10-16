@@ -54,8 +54,10 @@ back as `structuredContent` (a JSON object), with the same JSON as text content.
 | `get_message` | `message_id`* | message |
 | `get_thread` | `thread_id`* | `{items: [message]}` |
 | `search_messages` | `query`* (subject, body, sender), `folder`, `page_size`, `cursor` | `{items, next_cursor}` |
-| `send_message` | `to`, `cc`, `bcc` (address lists), `subject`, `text`, `html` | `{message_id, message_id_header, ...}` |
+| `get_attachment` | `message_id`*, `attachment_id`* (an `attachments[].id` of the message) | `{id, filename, mime_type, size, checksum, content_base64}`; over 10 MB: `UNSUPPORTED_OPERATION` with `details.size` / `details.max_bytes` |
+| `send_message` | `to`, `cc`, `bcc` (address lists; `Name <addr@x>` accepted), `subject`, `text`, `html` | `{message_id, message_id_header}` |
 | `reply_to_message` | `message_id`*, `text`*, `reply_all` = false | same as send |
+| `forward_message` | `message_id`*, `to`* (1+ addresses), `cc`, `text` (above the forwarded message) | same as send; the original's attachments are forwarded |
 | `manage_labels` | `message_id`*, `folder` (move), `add_labels`, `remove_labels`, `add_flags`, `remove_flags` | the updated message |
 | `delete_message` | `message_id`* | `{deleted}` |
 | `list_folders` | none | `{items: [{id, name, system_type}]}` |
@@ -66,10 +68,13 @@ A *message* is the canonical message of the REST API (`GET /v1/mailboxes/{id}/me
 labels, flags, attachments, created_at, ...`. Pagination is keyset-based. Under a fixed state,
 following `next_cursor` until it is `null` never skips or repeats an item.
 
-`send_message` and `reply_to_message` deliver only to simulated mailboxes. For recipients
-outside the simulation, the scenario's `delivery.external_delivery` rule applies. `deny`
-gives a tool error `EXTERNAL_DELIVERY_BLOCKED`. `sink` and `event` record the message in the
-sandbox. Real SMTP is never used.
+`send_message`, `reply_to_message` and `forward_message` deliver only to simulated mailboxes.
+For recipients outside the simulation, the scenario's `delivery.external_delivery` rule
+applies. `deny` gives a tool error `EXTERNAL_DELIVERY_BLOCKED`. `sink` and `event` record the
+message in the sandbox. Real SMTP is never used. The agent's result is only the sent copy
+(`message_id`, `message_id_header`) and is the same in every mode: how each recipient was
+handled is visible to operators only (the run's actions and `delivery.*` events). Address
+entries may be `Name <addr@example.com>` (also several, comma-separated); the name is dropped.
 
 `manage_labels` applies its changes as separate audited writes, in this order: move, labels,
 flags. It resolves the folder (`NOT_FOUND`) before the first write. If a later step fails, the

@@ -24,7 +24,13 @@ Implements **Phase 1 (core simulation engine)** of
 `serve` is `uv run python -m mailsim.serve serve`: one command brings up the API and the
 IMAP/SMTP listeners (`--no-protocols` to skip them, `--imap-port` / `--smtp-port` to move them).
 The agent key comes from the run-creation response (shown once) or
-`POST /v1/runs/{run_id}/agent-credentials` (controller key). The dashboard's run page shows every
+`POST /v1/runs/{run_id}/agent-credentials` (controller key). Minting a key does not revoke the
+run's other agent keys (one per interface is fine); the response carries `key_id`, and a key is
+revoked only explicitly with `DELETE /v1/keys/{key_id}` (or when the run is cancelled or
+completed). Agents download attachment bytes with
+`GET /v1/mailboxes/{mailbox_id}/messages/{message_id}/attachments/{attachment_id}` and forward
+with `POST /v1/mailboxes/{mailbox_id}/messages/{message_id}/forward`; operators download with
+`GET /v1/runs/{run_id}/mailboxes/{mailbox_id}/messages/{message_id}/attachments/{attachment_id}`. The dashboard's run page shows every
 endpoint for a run (`GET /v1/runs/{run_id}/connection`), tests a key through any interface
 (`POST /v1/runs/{run_id}/connection-tests`) and shows which interface each action came through
 (`GET /v1/runs/{run_id}/activity`).
