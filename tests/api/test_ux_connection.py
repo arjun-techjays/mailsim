@@ -96,7 +96,9 @@ def test_connection_details_with_adapters_listeners_and_rotated_keys(api, run):
                           "port": 1587, "tls": "starttls", "username": AGENT, "base_url": None,
                           "command": None, "note": None}  # fmt: skip
     assert [(k["revoked"], k["expires_at"]) for k in conn["agent_keys"]] == [
-        (True, "2030-01-01T00:00:00Z"), (False, None)]  # fmt: skip
+        (False, "2030-01-01T00:00:00Z"),
+        (False, None),
+    ]  # fmt: skip  (minting revokes nothing)
 
 
 def test_connection_is_scoped_and_controller_only(api, other_api, run):

@@ -127,15 +127,16 @@ def test_delete_key_is_project_scoped(api, other_api):
     err(api.call("GET", "/v1/scenarios", "evaluator"), 401, "UNAUTHENTICATED")
 
 
-def test_agent_keys_are_revoked_on_mint_cancel_and_completion(api):
+def test_agent_keys_survive_mint_and_are_revoked_on_cancel_and_completion(api):
     api.publish()
     created = api.create_run()
     rid, (key1, mbx) = created["run"]["id"], api.agent(created)
     folders = f"/v1/mailboxes/{mbx}/folders"
     key2 = api.call("POST", f"/v1/runs/{rid}/agent-credentials", expect=201).json()["api_key"]
-    err(api.call("GET", folders, key=key1), 401, "UNAUTHENTICATED")
+    api.call("GET", folders, key=key1, expect=200)  # minting another key revokes nothing
     api.call("GET", folders, key=key2, expect=200)
     api.call("POST", f"/v1/runs/{rid}/cancel", expect=200)
+    err(api.call("GET", folders, key=key1), 401, "UNAUTHENTICATED")
     err(api.call("GET", folders, key=key2), 401, "UNAUTHENTICATED")
 
     created = api.create_run()

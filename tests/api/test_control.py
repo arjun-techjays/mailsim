@@ -233,8 +233,13 @@ def test_agent_credentials_route_issues_a_fresh_working_key(api):
     rid, (key1, mbx) = created["run"]["id"], api.agent(created)
     fresh = api.call("POST", f"/v1/runs/{rid}/agent-credentials", expect=201).json()
     assert fresh["api_key"] != key1 and fresh["mailbox_id"] == mbx
+    assert fresh["key_id"].startswith("key_")
     api.call("GET", f"/v1/mailboxes/{mbx}/folders", key=fresh["api_key"], expect=200)
-    api.call("GET", f"/v1/mailboxes/{mbx}/folders", key=key1, expect=401)  # superseded
+    # minting never revokes: the earlier key keeps working until revoked explicitly
+    api.call("GET", f"/v1/mailboxes/{mbx}/folders", key=key1, expect=200)
+    api.call("DELETE", f"/v1/keys/{fresh['key_id']}", expect=204)
+    api.call("GET", f"/v1/mailboxes/{mbx}/folders", key=fresh["api_key"], expect=401)
+    api.call("GET", f"/v1/mailboxes/{mbx}/folders", key=key1, expect=200)
 
 
 def test_events_pagination_is_complete_and_ordered(api):
