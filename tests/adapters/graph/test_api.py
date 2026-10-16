@@ -207,6 +207,33 @@ def test_filter_and_search(world):
         "ErrorNotSupported")  # fmt: skip
 
 
+def test_kql_search(world):
+    world.inject("kql-one", text="urgent bank change")
+    subjects = lambda **q: sorted(m["subject"] for m in world.messages(**q))  # noqa: E731
+    assert subjects(**{"$search": '"subject:invoice"'}) == [
+        "Invoice INV-001",
+        "Re: Invoice INV-001",
+    ]
+    assert subjects(**{"$search": '"from:vendor AND hasAttachments:true"'}) == ["Invoice INV-001"]
+    assert subjects(**{"$search": '"body:urgent OR subject:\\"INV-001\\""'}) == [
+        "Invoice INV-001", "Re: Invoice INV-001", "kql-one"]  # fmt: skip
+    assert subjects(**{"$search": '"subject:invoice NOT hasAttachments:true"'}) == [
+        "Re: Invoice INV-001"]  # fmt: skip
+    assert subjects(**{"$search": '"bank subject:kql"'}) == ["kql-one"]  # free text + property
+    assert subjects(**{"$search": '"isRead:false subject:kql"'}) == ["kql-one"]
+    assert subjects(**{"$search": '"received>=2100-01-01"'}) == []
+    assert "kql-one" in subjects(**{"$search": '"received:2000-01-01..2100-01-01"'})
+    assert world.messages("sentitems", **{"$search": '"subject:invoice"'}) == []
+    body = err(world.call("GET", "/me/messages", params={"$search": '"foo:bar"'}), 400,
+               "ErrorInvalidRequest")  # fmt: skip
+    assert "unsupported property" in body["message"]
+    err(world.call("GET", "/me/messages", params={"$search": '"(subject:x"'}), 400,
+        "ErrorInvalidRequest")  # fmt: skip
+    count = world.call("GET", "/me/messages/$count", expect=200,
+                       params={"$search": '"subject:invoice"'})  # fmt: skip
+    assert count.text == "2"
+
+
 def test_get_select_expand_prefer_and_mime(world):
     m = invoice(world)
     assert m["hasAttachments"] and m["internetMessageId"] == "<invoice-001@example.test>"

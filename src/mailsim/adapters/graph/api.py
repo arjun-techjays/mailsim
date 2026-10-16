@@ -24,7 +24,7 @@ from urllib.parse import quote, urlencode
 from fastapi import APIRouter, Body, Depends, Request, Response
 from fastapi.responses import JSONResponse
 
-from mailsim.adapters.graph import odata
+from mailsim.adapters.graph import kql, odata
 from mailsim.adapters.graph import resources as res
 from mailsim.adapters.graph.errors import GraphAuthError, GraphRoute, SyncStateGone
 from mailsim.api.auth import InvalidCredential, verify_key
@@ -476,12 +476,20 @@ def matching(ctx: Ctx, folder: FolderRef | None) -> list[tuple[CanonicalMessage,
     """Messages selected by $search / $filter (unordered). The query is validated before
     the mailbox is read."""
     q = ctx.request.query_params
-    search = odata.parse_search(q["$search"]) if "$search" in q else None
+    search = kql.parse(q["$search"]) if "$search" in q else None
     if search is not None and ("$filter" in q or "$orderby" in q):
         raise odata.QueryNotSupported("$search cannot be combined with $filter or $orderby")
     predicate = odata.compile_filter(q["$filter"]) if "$filter" in q else None
     if search is not None:
-        hits = ctx.mb.search_messages(search)
+        # plain text, or KQL whose positive free-text term narrows the candidates: the
+        # engine search (audited as `search`); KQL on properties only: the folder listing
+        anchor = search.text or search.anchor
+        if anchor is not None:
+            hits = ctx.mb.search_messages(anchor)
+        else:
+            hits = all_messages(ctx.mb, folder.engine_ref if folder else None)
+        if search.node is not None:
+            hits = [m for m in hits if kql.matches(search.node, m)]
         msgs = [m for m in hits if folder is None or res.folder_key(m.folder) == folder.key]
     else:
         msgs = all_messages(ctx.mb, folder.engine_ref if folder else None)
@@ -630,11 +638,10 @@ def get_message(message_id: str, ctx: Context) -> JSONResponse:
 
 @route("GET", "/messages/{message_id}/$value")
 def get_mime(message_id: str, ctx: Context) -> Response:
-    m = ctx.mb.get_message(resolve_message(ctx, message_id))
-    blobs = app_state(ctx.request, "blobs")
-    if m.raw_blob_ref is None:  # pragma: no cover - every inserted message keeps its raw MIME
+    raw = ctx.mb.get_raw(resolve_message(ctx, message_id))
+    if raw is None:  # pragma: no cover - every inserted message keeps its raw MIME
         raise NotFound("this message has no MIME content")
-    return Response(blobs.get(m.raw_blob_ref), media_type="text/plain")
+    return Response(raw, media_type="text/plain")
 
 
 @route("POST", "/messages", 201)
@@ -888,7 +895,8 @@ def list_attachments(message_id: str, ctx: Context) -> JSONResponse:
 @route("GET", "/messages/{message_id}/attachments/{attachment_id}")
 def get_attachment(message_id: str, attachment_id: str, ctx: Context) -> JSONResponse:
     m, i = _attachment(ctx, message_id, attachment_id)
-    doc = attachment_docs(ctx.request, m)[i]
+    ref, data = ctx.mb.get_attachment(m.id, m.attachments[i].id)
+    doc = res.attachment(ref, m, data)
     return ok({"@odata.context": context_url(ctx.request, "users('me')/messages('id')/attachments/$entity"),
                **doc})  # fmt: skip
 
@@ -896,8 +904,8 @@ def get_attachment(message_id: str, attachment_id: str, ctx: Context) -> JSONRes
 @route("GET", "/messages/{message_id}/attachments/{attachment_id}/$value")
 def get_attachment_content(message_id: str, attachment_id: str, ctx: Context) -> Response:
     m, i = _attachment(ctx, message_id, attachment_id)
-    att = m.attachments[i]
-    return Response(app_state(ctx.request, "blobs").get(att.blob_ref), media_type=att.mime_type)
+    ref, data = ctx.mb.get_attachment(m.id, m.attachments[i].id)
+    return Response(data, media_type=ref.mime_type)
 
 
 # ------------------------------------------------------------------- capability discovery
