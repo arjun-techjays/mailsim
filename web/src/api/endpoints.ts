@@ -74,8 +74,10 @@ export function createApi(cfg: ApiConfig) {
     /** Caller identity (older servers without it answer 404/501; callers fall back). */
     me: () => get<MeOut>('/v1/me'),
     /** Runs of the caller's project, newest first. */
-    listRuns: (cursor: string | null, filters: { scenario_key?: string; status?: string; page_size?: number } = {}) =>
-      get<RunPage>('/v1/runs', { cursor, ...filters }),
+    listRuns: (
+      cursor: string | null,
+      filters: { scenario_key?: string; status?: string; page_size?: number; include_replays?: boolean } = {},
+    ) => get<RunPage>('/v1/runs', { cursor, ...filters, include_replays: filters.include_replays ? 'true' : undefined }),
     /** Evaluation report export; returned as text for download. */
     report: (runId: string, evaluationId: string, format: ReportFormat) =>
       apiText(cfg, `${run(runId)}/evaluations/${seg(evaluationId)}/report`, { format }),
@@ -191,6 +193,16 @@ export function createApi(cfg: ApiConfig) {
      */
     attachment: (id: string, mailboxId: string, messageId: string, attachmentId: string) =>
       apiBlob(cfg, `${run(id)}/mailboxes/${seg(mailboxId)}/messages/${seg(messageId)}/attachments/${seg(attachmentId)}`),
+    /**
+     * Download an API-relative file URL the server handed out (ArtifactOut.url). Only same-API
+     * paths under /v1/ are accepted, so a listed URL can never send the key elsewhere.
+     */
+    download: (path: string) => {
+      if (!/^\/v1\/[^?#]*$/.test(path) || path.includes('..')) {
+        return Promise.reject(new Error(`Refusing to download from ${path}: not an API path.`));
+      }
+      return apiBlob(cfg, path);
+    },
     activity: (id: string, afterId: number, limit = 100) =>
       get<ActivityPage>(`${run(id)}/activity`, { after_id: afterId, limit }),
     // ---- end answer keys & mailbox browser (UX-F2)

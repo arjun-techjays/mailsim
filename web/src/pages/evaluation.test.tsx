@@ -197,6 +197,20 @@ describe('Evaluation page', () => {
       expect(screen.queryByTestId('unconfirmed')).toBeNull();
     });
 
+    it('an incompatible answer key and a replay refused by the server are explained (EV-4)', async () => {
+      mockDb.runs.run_demo!.run.scenario_version = 1;
+      const { user } = renderApp('/runs/run_demo/evaluations', sessionFor('evaluator'));
+      await screen.findByRole('option', { name: /^v2/ });
+      await user.selectOptions(screen.getByLabelText('Answer-key version'), '2');
+      await user.click(screen.getByRole('button', { name: 'Run evaluation' }));
+      expect(await screen.findByTestId('evaluation-conflict')).toHaveTextContent('Answer key v2 covers scenario v2, v3, but this run uses scenario v1.');
+      expect(screen.getByRole('link', { name: 'write an answer key that covers it' })).toHaveAttribute('href', '/scenarios/finance.invoice-bank-change/answer-key');
+      // the server is the enforcement point for replays even when the page did not know
+      mockDb.runs.run_demo!.run.replay_of = 'run_orig';
+      await user.click(screen.getByRole('button', { name: 'Run evaluation' }));
+      await waitFor(() => expect(screen.getByTestId('evaluation-conflict')).toHaveTextContent('replays are not evaluated'));
+    });
+
     it('a replay run is not offered for evaluation', async () => {
       mockDb.runs.run_demo!.run.replay_of = 'run_orig';
       renderApp('/runs/run_demo/evaluations', sessionFor('evaluator'));

@@ -114,6 +114,47 @@ describe('Run detail', () => {
     expect(screen.getByTestId('artifacts-table')).toHaveTextContent('unknown');
   });
 
+  it('artifacts download through the API with the operator key; the trace has no file', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:a');
+    URL.revokeObjectURL = vi.fn();
+    const anchors: HTMLAnchorElement[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      anchors.push(this);
+    });
+    const { user } = renderApp('/runs/run_demo?tab=artifacts', sessionFor('evaluator'));
+    const table = await screen.findByTestId('artifacts-table');
+    expect(within(table).getByRole('row', { name: /trace\/run_demo\.jsonl/ })).toHaveTextContent('—');
+    await user.click(within(table).getByRole('button', { name: 'Download blob/att/att_1' }));
+    await waitFor(() => expect(anchors[0]?.download).toBe('att_1'));
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:a');
+  });
+
+  it('artifact downloads: fallback name, errors, and foreign URLs refused', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:a');
+    URL.revokeObjectURL = vi.fn();
+    const anchors: HTMLAnchorElement[] = [];
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+      anchors.push(this);
+    });
+    server.use(
+      http.get('*/v1/runs/:id/artifacts', () =>
+        HttpResponse.json([
+          { kind: 'raw_mime', ref: 'blob/raw/x.eml', content_type: 'message/rfc822', size: 1, url: '/v1/runs/run_demo/artifacts/blob/raw/x.eml' },
+          { kind: 'report', ref: 'r', content_type: 'application/json', size: 1, url: 'https://evil.example/steal' },
+          { kind: 'report', ref: 'gone', content_type: 'application/json', size: 1, url: '/v1/runs/run_demo/artifacts/gone' },
+        ]),
+      ),
+      http.get('*/v1/runs/:id/artifacts/blob/raw/x.eml', () => new HttpResponse(new Uint8Array([1]))),
+    );
+    const { user } = renderApp('/runs/run_demo?tab=artifacts', sessionFor('evaluator'));
+    await user.click(await screen.findByRole('button', { name: 'Download blob/raw/x.eml' }));
+    await waitFor(() => expect(anchors[0]?.download).toBe('x.eml'));
+    await user.click(screen.getByRole('button', { name: 'Download r' }));
+    expect(await screen.findByText(/Refusing to download from https:\/\/evil\.example\/steal/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Download gone' }));
+    expect(await screen.findByText(/Could not download gone/)).toBeInTheDocument();
+  });
+
   it('empty actions/artifacts and their errors', async () => {
     server.use(
       http.get('*/v1/runs/:id/actions', () => HttpResponse.json([])),

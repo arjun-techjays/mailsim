@@ -344,6 +344,33 @@ describe('Answer-key editor edge cases', () => {
     expect(await screen.findByText(/Could not open the answer-key editor/)).toBeInTheDocument();
   });
 
+  it('server reference errors at deep paths are shown on their fields', { timeout: 30_000 }, async () => {
+    server.use(
+      http.post('*/v1/scenarios/:key/answer-keys/validate', () =>
+        HttpResponse.json({
+          ok: false,
+          errors: [
+            { path: 'answer_key.assertions.0.check.where.folder', message: 'unknown folder "outbox"' },
+            { path: 'answer_key.assertions.0.evaluate_at.event', message: 'unknown scenario event "nope"' },
+          ],
+          warnings: [],
+          document: null,
+        }),
+      ),
+    );
+    const { user } = renderApp(NEW, sessionFor('evaluator'));
+    await screen.findByText(/No assertions yet/);
+    await user.click(screen.getByRole('button', { name: 'Add assertion' }));
+    await settle();
+    expect(status()).toHaveTextContent('3 problems to fix'); // + the empty requirement (client)
+    const problems = screen.getByRole('list', { name: 'Problems' });
+    expect(problems).toHaveTextContent('check › where › folder: unknown folder "outbox"');
+    expect(card(0).getByLabelText('Folder')).toHaveAttribute('aria-invalid', 'true');
+    expect(card(0).getByText('unknown folder "outbox"')).toBeInTheDocument();
+    await user.click(within(problems).getByRole('link', { name: /where › folder/ }));
+    expect(card(0).getByLabelText('Folder')).toHaveFocus();
+  });
+
   it('problem links fall back to the closest rendered element', () => {
     document.body.innerHTML = '<input id="ak-version"><h3 id="ak-assertions-1-h" tabindex="-1"></h3><textarea id="ak-yaml"></textarea>';
     expect(focusCandidates('assertions.1.check.where')).toEqual([

@@ -11,6 +11,7 @@ import { pct } from '../components/format';
 import { Badge, Empty, Loading } from '../components/Status';
 import { UnconfirmedNotice } from '../components/UnconfirmedNotice';
 import { isUnconfirmed, useActionKey } from '../hooks/useActionKey';
+import { EvaluationConflict } from '../evaluation/conflicts';
 import { EvaluationReportView } from '../evaluation/ReportView';
 import { usePageTitle } from '../hooks/usePageTitle';
 import { runKeys } from '../run/keys';
@@ -105,7 +106,12 @@ function TriggerForm({ runId, scenarioKey, onCreated }: { runId: string; scenari
           onRetry={() => submit(lastBody.current as EvaluationRequest)}
         />
       ) : (
-        mutation.isError && <ErrorDisplay error={mutation.error} title="Evaluation failed" />
+        mutation.isError && (
+          <>
+            <EvaluationConflict error={mutation.error} scenarioKey={scenarioKey} />
+            <ErrorDisplay error={mutation.error} title="Evaluation failed" />
+          </>
+        )
       )}
     </section>
   );

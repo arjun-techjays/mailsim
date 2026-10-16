@@ -30,7 +30,7 @@ describe('Report downloads', () => {
     await waitFor(() =>
       expect(screen.getByTestId('report-download-status')).toHaveTextContent('Downloaded finance.invoice-bank-change-run_demo-eval_1.xml'),
     );
-    expect(created[0]?.type).toBe('application/xml');
+    expect(created[0]?.type).toBe('application/octet-stream');
     expect(await readBlob(created[0])).toContain('<testsuite');
 
     await user.click(screen.getByRole('button', { name: 'Download Markdown' }));

@@ -2,7 +2,8 @@
 // stays the enforcement point, the dashboard only stops offering calls that must fail.
 import type { RunOut } from '../api/types';
 
-export const TERMINAL_STATUSES: readonly string[] = ['PASSED', 'FAILED', 'ERROR', 'CANCELLED'];
+/** REPLAYED (QA-A3): the terminal status of a replay run. */
+export const TERMINAL_STATUSES: readonly string[] = ['PASSED', 'FAILED', 'ERROR', 'CANCELLED', 'REPLAYED'];
 
 export type RunAction = 'start' | 'cancel' | 'reset' | 'replay' | 'clock' | 'inject';
 
@@ -32,6 +33,9 @@ export function stateHint(status: string): string {
   }
   if (status === 'RUNNING') {
     return 'This run is RUNNING: advance the clock, inject mail, reset or cancel it. Start is not needed again.';
+  }
+  if (status === 'REPLAYED') {
+    return 'This run is a replay (REPLAYED): it only checks that the recorded events rebuild the same state, so only replay remains.';
   }
   if (isTerminal(status)) {
     return `This run is ${status} and cannot change any more: only replay (and evaluation) remain.`;

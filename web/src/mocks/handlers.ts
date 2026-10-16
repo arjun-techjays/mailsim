@@ -235,10 +235,11 @@ export function createHandlers(db: MockDb = createMockDb()) {
       const url = new URL(request.url);
       const scenarioKey = url.searchParams.get('scenario_key');
       const status = url.searchParams.get('status');
+      const includeReplays = url.searchParams.get('include_replays') === 'true';
       const items = Object.values(db.runs)
         .map((r) => r.run)
-        // Replays are left out of run lists by default (they verify determinism, nothing to grade).
-        .filter((r) => !r.replay_of && (!scenarioKey || r.scenario_key === scenarioKey) && (!status || r.status === status))
+        // Replays are left out unless include_replays=true or status=REPLAYED (QA-A3).
+        .filter((r) => (!r.replay_of || includeReplays || status === 'REPLAYED') && (!scenarioKey || r.scenario_key === scenarioKey) && (!status || r.status === status))
         .reverse();
       const page: RunPage = { items, next_cursor: null };
       return ok(page);
@@ -280,6 +281,11 @@ export function createHandlers(db: MockDb = createMockDb()) {
       const again = replayed(request, who);
       if (again) return again;
       const body = (await request.json()) as RunCreate;
+      if (body.agent_build != null && (!body.agent_build.trim() || body.agent_build.trim() === '(no build)')) {
+        return fail(400, 'INVALID_REQUEST', 'agent_build must not be blank or "(no build)"', {
+          errors: [{ loc: ['body', 'agent_build'], msg: 'reserved or blank build id' }],
+        });
+      }
       if (body.scenario_version != null && !s.versions.includes(body.scenario_version)) {
         return fail(400, 'INVALID_REQUEST', 'unknown scenario version', { scenario_version: body.scenario_version });
       }
@@ -385,7 +391,7 @@ export function createHandlers(db: MockDb = createMockDb()) {
       '*/v1/runs/:runId/replay',
       runRoute('controller', (r) => {
         const replayId = `${r.run.id}_replay`;
-        db.runs[replayId] = { ...structuredClone(r), run: { ...structuredClone(r.run), id: replayId, replay_of: r.run.id } };
+        db.runs[replayId] = { ...structuredClone(r), run: { ...structuredClone(r.run), id: replayId, replay_of: r.run.id, status: 'REPLAYED' } };
         const out: ReplayOut = {
           replay_run_id: replayId,
           matches: true,
@@ -436,13 +442,33 @@ export function createHandlers(db: MockDb = createMockDb()) {
     ),
     http.get(
       '*/v1/runs/:runId/artifacts',
-      runRoute('inspector', (r) =>
-        ok([
-          ...r.messages.map((m) => ({ kind: 'raw_mime', ref: m.raw_blob_ref, content_type: 'message/rfc822', size: 1800 })),
-          { kind: 'attachment', ref: 'blob/att/att_1', content_type: 'application/pdf', size: 48213 },
-          { kind: 'trace', ref: `trace/${r.run.id}.jsonl`, content_type: 'application/x-ndjson', size: null },
-        ]),
-      ),
+      runRoute('inspector', (r) => {
+        // ArtifactOut.url (QA-A3): an API path for files, null for the trace.
+        const url = (ref?: string | null) => `/v1/runs/${r.run.id}/artifacts/${ref ?? ''}`;
+        return ok([
+          ...r.messages.map((m) => ({ kind: 'raw_mime', ref: m.raw_blob_ref, content_type: 'message/rfc822', size: 1800, url: url(m.raw_blob_ref) })),
+          { kind: 'attachment', ref: 'blob/att/att_1', content_type: 'application/pdf', size: 48213, url: url('blob/att/att_1') },
+          { kind: 'trace', ref: `trace/${r.run.id}.jsonl`, content_type: 'application/x-ndjson', size: null, url: null },
+        ]);
+      }),
+    ),
+    http.get(
+      '*/v1/runs/:runId/artifacts/*',
+      runRoute('inspector', (r, request) => {
+        const ref = decodeURIComponent(new URL(request.url).pathname.split('/artifacts/')[1] ?? '');
+        const known = ref === 'blob/att/att_1' || r.messages.some((m) => m.raw_blob_ref === ref);
+        if (!known) return fail(404, 'NOT_FOUND', `artifact ${ref} not found`);
+        const name = ref.split('/').pop() as string;
+        return new HttpResponse(new TextEncoder().encode(`mock artifact ${ref}\n`), {
+          headers: {
+            'content-type': ref.endsWith('.eml') ? 'message/rfc822' : 'application/pdf',
+            'content-disposition': `attachment; filename="${name}"`,
+            'x-content-type-options': 'nosniff',
+            'content-security-policy': 'sandbox',
+            'cache-control': 'private, no-store',
+          },
+        });
+      }),
     ),
     http.get('*/v1/runs/:runId/state', runRoute('inspector', (r) => ok(snapshot(r)))),
     http.get('*/v1/runs/:runId/actions', runRoute('inspector', (r) => ok(r.actions))),
@@ -550,10 +576,17 @@ export function createHandlers(db: MockDb = createMockDb()) {
       runRoute('evaluator', async (r, request, _params, who) => {
         const again = replayed(request, who);
         if (again) return again;
+        if (r.run.replay_of) {
+          return fail(409, 'CONFLICT', 'replay runs are not evaluated; evaluate the original run', { replay_of: r.run.replay_of });
+        }
         const body = (await request.json()) as EvaluationRequest;
         const version = body.answer_key_version ?? 2;
         if (![1, 2].includes(version)) {
           return fail(404, 'NOT_FOUND', `answer key version ${version} not found`);
+        }
+        // EV-4: in the mock, answer key v2 only covers scenario versions 2 and 3.
+        if (r.run.scenario_version === 1 && version === 2) {
+          return fail(409, 'CONFLICT', 'answer key is not compatible with the run', { answer_key_version: 2, scenario_versions: [2, 3], run_scenario_version: 1 });
         }
         db.counters.eval += 1;
         const report = buildReport(r.run.id, `eval_${db.counters.eval}`, {

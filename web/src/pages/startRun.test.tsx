@@ -191,6 +191,19 @@ describe('Start run', () => {
       expect(await screen.findByRole('link', { name: 'Go to run run_n' })).toBeInTheDocument();
     });
 
+    it('rejects the reserved "(no build)" label client-side', async () => {
+      const { user } = renderApp('/scenarios/finance.invoice-bank-change/start', sessionFor('controller'));
+      await user.type(await screen.findByLabelText('Agent build id'), ' (No Build) ');
+      await user.click(screen.getByRole('button', { name: 'Create run' }));
+      expect(screen.getByLabelText('Agent build id')).toHaveAttribute('aria-invalid', 'true');
+      expect(screen.getByLabelText('Agent build id')).toHaveAccessibleDescription(/leave the field empty/);
+      expect(screen.queryByTestId('agent-credentials')).toBeNull();
+      await user.clear(screen.getByLabelText('Agent build id'));
+      await user.click(screen.getByRole('button', { name: 'Create run' }));
+      expect(await screen.findByTestId('agent-credentials')).toBeInTheDocument();
+      expect(screen.getByLabelText('Agent build id')).not.toHaveAttribute('aria-invalid');
+    });
+
     it('other errors are shown as before (no recovery offer)', async () => {
       server.use(
         http.post('*/v1/scenarios/:key/runs', () =>

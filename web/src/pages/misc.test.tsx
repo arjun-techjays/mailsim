@@ -1,7 +1,7 @@
 import { screen, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { rememberRun } from '../auth/storage';
-import { server } from '../test/server';
+import { mockDb, server } from '../test/server';
 import { renderApp, sessionFor } from '../test/utils';
 
 describe('Runs page', () => {
@@ -29,6 +29,17 @@ describe('Runs page', () => {
     expect(within(table).getByRole('link', { name: 'run_demo' })).toBeInTheDocument();
     expect(table).toHaveTextContent('finance.invoice-bank-change v3');
     expect(table).toHaveTextContent('READY');
+  });
+
+  it('replays are listed only on request (include_replays=true)', async () => {
+    mockDb.runs.run_demo_replay = { ...structuredClone(mockDb.runs.run_demo!), run: { ...mockDb.runs.run_demo!.run, id: 'run_demo_replay', replay_of: 'run_demo', status: 'REPLAYED' } };
+    const { user } = renderApp('/runs', sessionFor('evaluator'));
+    const table = await screen.findByTestId('runs-table');
+    expect(within(table).queryByRole('link', { name: 'run_demo_replay' })).toBeNull();
+    await user.click(screen.getByLabelText(/Include replay runs/));
+    const row = await screen.findByRole('row', { name: /run_demo_replay/ });
+    expect(row).toHaveTextContent('Replay of run_demo');
+    expect(row).toHaveTextContent('REPLAYED');
   });
 
 

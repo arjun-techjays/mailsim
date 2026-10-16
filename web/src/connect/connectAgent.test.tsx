@@ -229,6 +229,35 @@ describe('Connect your agent', () => {
     expect(screen.queryByRole('button', { name: /Revoke the other/ })).toBeNull();
   });
 
+  it('a minted credential naming its key_id is matched by id (whatever the key format)', async () => {
+    const row = { key_id: 'key_new', prefix: 'zzzzzzzzzzzz', created_at: 'T0', expires_at: null, revoked: false };
+    let minted = false;
+    server.use(
+      http.post('*/v1/runs/:runId/agent-credentials', () => {
+        minted = true;
+        return HttpResponse.json({ api_key: 'opaque-key', mailbox_id: 'mbx_finance', mailbox_address: 'finance@acme.test', run_id: 'run_demo', key_id: 'key_new' }, { status: 201 });
+      }),
+      http.get('*/v1/runs/:runId/connection', () =>
+        HttpResponse.json({
+          run_id: 'run_demo',
+          run_status: 'RUNNING',
+          mailbox_id: 'mbx_finance',
+          mailbox_address: 'finance@acme.test',
+          persona_id: 'finance',
+          interfaces: [],
+          agent_keys: minted ? [row, { ...row, key_id: 'key_old', prefix: 'yyyyyyyyyyyy' }] : [],
+        }),
+      ),
+    );
+    const { user } = await openConnect();
+    await user.click(screen.getByRole('button', { name: 'Mint a new agent key' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('The run has no active agent key yet.');
+    await user.click(screen.getByRole('button', { name: 'Mint key' }));
+    const keyRow = await screen.findByRole('rowheader', { name: 'key_new' });
+    await waitFor(() => expect(within(keyRow.closest('tr') as HTMLElement).getByTestId('held-marker')).toBeInTheDocument());
+    expect(screen.getByTestId('minted-notice')).toHaveTextContent('other agent key still works');
+  });
+
   it('mint with several other keys and with none', async () => {
     mockDb.keys.mk_agent_second = { role: 'agent', project: 'prj_main', runId: 'run_demo', mailboxId: 'mbx_finance' };
     const { user } = await openConnect();

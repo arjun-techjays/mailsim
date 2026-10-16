@@ -48,6 +48,13 @@ test.describe('run detail navigation', () => {
     await view.getByRole('button', { name: 'Show headers' }).click();
     await view.getByTestId('raw-mime-link').click();
     await expect(page.getByTestId('highlighted-artifact')).toContainText('blob/raw/msg_invoice_1.eml');
+    // artifacts download as files (ArtifactOut.url); the trace has none
+    const [file] = await Promise.all([
+      page.waitForEvent('download'),
+      page.getByTestId('highlighted-artifact').getByRole('button', { name: 'Download blob/raw/msg_invoice_1.eml' }).click(),
+    ]);
+    expect(file.suggestedFilename()).toBe('msg_invoice_1.eml');
+    await expect(page.getByTestId('artifacts-table').getByRole('row', { name: /trace\// })).not.toContainText('Download');
 
     // other mailbox
     await run.tab('Mailboxes');

@@ -149,8 +149,14 @@ export function StartRunPage() {
     setDismissedRun(null);
     mutation.mutate(body);
   };
+  const [buildError, setBuildError] = useState('');
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
+    if (build.trim().toLowerCase() === '(no build)') {
+      setBuildError('“(no build)” is how runs without a build id are labelled; leave the field empty for that.');
+      return;
+    }
+    setBuildError('');
     submit({
       scenario_version: version ? Number(version) : null,
       checks: checks || null,
@@ -223,7 +229,23 @@ export function StartRunPage() {
           </fieldset>
           <div className="field">
             <label htmlFor="build">Agent build id</label>
-            <input id="build" value={build} maxLength={200} onChange={(e) => setBuild(e.target.value)} placeholder="e.g. agent-v2" />
+            <input
+              id="build"
+              value={build}
+              maxLength={200}
+              onChange={(e) => setBuild(e.target.value)}
+              placeholder="e.g. agent-v2"
+              aria-invalid={!!buildError || undefined}
+              aria-describedby={buildError ? 'build-err build-help' : 'build-help'}
+            />
+            <p id="build-help" className="hint">
+              Compare builds groups runs by this id; runs without one are grouped as “(no build)”.
+            </p>
+            {buildError && (
+              <p id="build-err" className="field-error">
+                {buildError}
+              </p>
+            )}
           </div>
           <label className="checkbox">
             <input type="checkbox" checked={start} onChange={(e) => setStart(e.target.checked)} />

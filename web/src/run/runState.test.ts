@@ -25,6 +25,9 @@ describe('run state rules (UI-6)', () => {
       expect(stateHint(s)).toContain('only replay (and evaluation) remain');
     }
     expect(isTerminal('READY')).toBe(false);
+    expect(isTerminal('REPLAYED')).toBe(true);
+    expect(canDo('REPLAYED', 'start')).toBe(false);
+    expect(stateHint('REPLAYED')).toContain('This run is a replay (REPLAYED)');
   });
 
   it('detects replays from replay_of or kind, and handles their absence', () => {

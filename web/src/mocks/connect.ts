@@ -23,7 +23,7 @@ export const MOCK_API_ORIGIN = 'http://127.0.0.1:8000';
 export const MOCK_IMAP_PORT = 1143;
 export const MOCK_SMTP_PORT = 1587;
 const INTERFACES: AgentInterface[] = ['rest', 'gmail', 'graph', 'mcp_http', 'mcp_stdio', 'imap', 'smtp'];
-const TERMINAL = ['PASSED', 'FAILED', 'ERROR', 'CANCELLED'];
+const TERMINAL = ['PASSED', 'FAILED', 'ERROR', 'CANCELLED', 'REPLAYED'];
 
 interface KeyMeta extends AgentKeyInfo {
   secret: string;
