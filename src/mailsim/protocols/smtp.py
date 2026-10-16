@@ -10,8 +10,9 @@ Session rules
   offered when the listener has a TLS context.
 - MAIL FROM must be the authenticated mailbox.
 - RCPT TO is decided per recipient: simulated mailboxes are accepted; recipients outside the
-  simulation are rejected with 550 when the run denies external delivery, else accepted and
-  handled by the engine's sink/event policy (never delivered).
+  simulation are rejected with 550 when the run denies external delivery (and audited as an
+  EXTERNAL_DELIVERY_BLOCKED `send` attempt), else accepted and handled by the engine's
+  sink/event policy (never delivered).
 - DATA is parsed with `mailsim.mime`; the envelope decides who receives it (header To/Cc that
   are also envelope recipients stay To/Cc, the remaining envelope recipients become Bcc).
   A message whose In-Reply-To (else newest References entry) names a message in the mailbox
@@ -177,11 +178,20 @@ class SandboxHandler:
             return "452 4.5.3 too many recipients"
         policy = await asyncio.to_thread(self.auth.recipient_policy, agent)
         if not policy.allows(addr):
+            # a refused recipient is still an attempt: audit it (nothing is delivered)
+            await asyncio.to_thread(self._audit_blocked, agent, addr)
             return (f"550 5.7.1 <{addr}> EXTERNAL_DELIVERY_BLOCKED: recipient is outside the "
                     "simulated environment and external delivery is not permitted")  # fmt: skip
         envelope.rcpt_tos.append(addr)
         envelope.rcpt_options.extend(rcpt_options)
         return "250 2.1.5 OK"
+
+    @staticmethod
+    def _audit_blocked(agent: AgentSession, addr: str) -> None:
+        try:
+            with_interface("smtp", agent.mailbox.record_external_blocked)([addr])
+        except Exception:  # the 550 answer stands even if the audit record fails
+            log.exception("SMTP blocked-recipient audit failed")
 
     async def handle_DATA(self, server: SMTP, session: Session, envelope: Envelope) -> str:
         agent = await self._live(server, session)

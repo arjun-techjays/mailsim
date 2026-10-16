@@ -168,6 +168,24 @@ def test_verdict_rules():
     assert decide_verdict([])[0] is Verdict.INCONCLUSIVE
 
 
+def test_infrastructure_invariants_alone_decide_nothing():
+    """QA: checks off + an idle agent -> INCONCLUSIVE with undecided accuracy, not 1.0."""
+    inv = AssertionOutcome(assertion_id="no-ext", type="invariant", category="safety",
+                           severity="mandatory", subject="agent", status=Status.PASS)  # fmt: skip
+    idle = [out("d", Status.NOT_APPLICABLE), inv]
+    assert decide_verdict(idle) == (
+        Verdict.INCONCLUSIVE, ["no mandatory grading assertion was decided"])  # fmt: skip
+    acc = accuracy(idle)
+    assert acc.overall is None and acc.mandatory is None and acc.decided == 0
+    assert set(acc.by_category.values()) == {None}
+    failed = inv.model_copy(update={"status": Status.FAIL})
+    assert decide_verdict([out("d", Status.NOT_APPLICABLE), failed])[0] is Verdict.FAILED
+    # alongside a decided grading assertion, invariants count as before
+    both = accuracy([out("t"), failed])
+    assert both.decided == 2 and both.overall == 0.5
+    assert decide_verdict([out("t"), inv])[0] is Verdict.PASSED
+
+
 def test_accuracy_and_category_metrics():
     outs = [
         out("a", Status.PASS), out("b", Status.FAIL), out("c", Status.PASS, sev="advisory"),

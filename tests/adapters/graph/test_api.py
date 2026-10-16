@@ -622,7 +622,7 @@ def test_reply_overrides_are_one_engine_reply(env, tmp_path, world):
             {"emailAddress": {"address": "someone@real-domain.example"}}]}})  # fmt: skip
     err(blocked, 403, "ErrorMessageSubmissionBlocked")
     new = {e["type"] for e in world.ev.events(run)[before:]}
-    assert new <= {"agent.action_counted"}, new
+    assert new <= {"agent.action_counted", "delivery.external_blocked"}, new
     assert world.get("/me/mailFolders/sentitems/messages", headers=hdr)["value"] == []
     world.post(f"/me/messages/{inv['id']}/reply", {"comment": "checking", "message": {
         "subject": "Re: INV-001 verification",

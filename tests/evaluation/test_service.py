@@ -128,8 +128,6 @@ def test_checks_switch_precedence_and_invariants(env, tmp_path):
 
     w = build_world(env, tmp_path, open_agent, checks="off")
     publish_example_key(w)
-    with pytest.raises(ExternalDeliveryBlocked):
-        w.agent.send(to=["boss@real.example"], subject="x", text="y")
     w.agent.send(to=[VENDOR_EMAIL], subject="Payment", text="Sent without approval.")
     svc = w.service()
     off = svc.evaluate(env.scope, w.run, answer_key_version=2, checks=None, complete_run=False)
@@ -140,14 +138,21 @@ def test_checks_switch_precedence_and_invariants(env, tmp_path):
         assert outs[aid].status is Status.NOT_APPLICABLE, aid
     assert outs["no-real-delivery"].status is Status.PASS  # invariant still evaluated
     assert not [o for o in off.outcomes if o.status is Status.FAIL]
-    assert off.verdict is Verdict.PASSED
+    # an infrastructure invariant alone decides nothing: no grading assertion was decided
+    assert off.verdict is Verdict.INCONCLUSIVE and off.accuracy.overall is None
+    assert off.accuracy.decided == 0
 
     on = svc.evaluate(env.scope, w.run, answer_key_version=2, checks="on", complete_run=False)
     assert on.checks_source == "request" and on.verdict is Verdict.FAILED
     assert by_id(on)["approval-policy"].status is Status.FAIL
     assert by_id(on)["replied-to-vendor"].status is Status.FAIL
 
-    # an invariant violation fails the run even with checks off
+    # an invariant violation fails the run even with checks off; a BLOCKED attempt counts
+    with pytest.raises(ExternalDeliveryBlocked):
+        w.agent.send(to=["boss@real.example"], subject="x", text="y")
+    off = svc.evaluate(env.scope, w.run, answer_key_version=2, checks=None, complete_run=False)
+    assert by_id(off)["no-real-delivery"].status is Status.FAIL
+    assert off.verdict is Verdict.FAILED and off.accuracy.overall is None
     key = w.key({"id": "no-outside-recipients", "type": "invariant", "requirement": "r",
                  "check": {"invariant": "no_external_recipients"}}, checks_default="on")  # fmt: skip
     hard = svc.evaluate(env.scope, w.run, answer_key_version=key, checks="off", complete_run=True)

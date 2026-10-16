@@ -244,6 +244,10 @@ class SimEngine:
             except NotFound:
                 return
             seq_start = run.next_seq
+            if isinstance(exc, ExternalDeliveryBlocked):
+                # a blocked attempt is still an attempt: evidence for the delivery invariants
+                # (nothing is delivered; the payload names the refused recipients only)
+                append(s, run, self._blocked_event(run, actor, operation, exc))
             if count:
                 append(
                     s,
@@ -270,6 +274,35 @@ class SimEngine:
                     seq_end=run.next_seq - 1,
                 )
             )
+
+    @staticmethod
+    def _blocked_event(run: m.Run, actor: str, operation: str,
+                       exc: ExternalDeliveryBlocked) -> Event:  # fmt: skip
+        listed = exc.details.get("recipients")
+        recipients = [str(r) for r in listed] if isinstance(listed, list) else []
+        return Event("delivery.external_blocked",
+                     {"recipients": recipients, "mode": str(run.config.get("external_delivery")),
+                      "handled": "blocked"},
+                     actor=actor, operation=operation, outcome=str(exc.code))  # fmt: skip
+
+    def record_external_blocked(self, scope: Scope, run_id: str, mailbox_id: str,
+                                recipients: list[str], *, actor: str = AGENT) -> None:  # fmt: skip
+        """Record a send attempt that an interface refused before it reached a command (SMTP
+        `RCPT TO` outside the simulation): an EXTERNAL_DELIVERY_BLOCKED `send` action plus its
+        `delivery.external_blocked` evidence event. Nothing is delivered; no budget is used."""
+        exc = ExternalDeliveryBlocked(
+            "recipient(s) outside the simulated environment; external delivery is not permitted",
+            details={"recipients": [r.strip().lower() for r in recipients]},
+        )
+        with self._sf() as s:
+            run = get_run(s, scope, run_id)
+            mb = s.get(m.Mailbox, (mailbox_id, run.id))
+            if mb is None or (
+                actor == AGENT and mb.owner_id != run.config["agent"]["mailbox_owner"]
+            ):
+                raise NotFound(f"mailbox {mailbox_id} not found")
+        self._record_denied(scope, run_id, actor, "send", {"to": exc.details["recipients"],
+                                                           "stage": "envelope"}, exc)  # fmt: skip
 
     def _guard(
         self, ctx: Ctx, actor: str, operation: str, mailbox_id: str | None, require_running: bool

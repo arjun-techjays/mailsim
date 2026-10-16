@@ -93,6 +93,11 @@ class AgentMailbox:
         """{mailbox_id, email, run_id, virtual_time} of this agent's own mailbox (a read)."""
         return self._e.mailbox_info(*self._a(), actor=AGENT)
 
+    def record_external_blocked(self, recipients: list[str]) -> None:
+        """Audit a send the interface refused at the envelope (e.g. SMTP RCPT outside the
+        simulation): an EXTERNAL_DELIVERY_BLOCKED `send` attempt, no delivery, no budget."""
+        self._e.record_external_blocked(*self._a(), recipients, actor=AGENT)
+
     def forward(self, message_id: str, *, to: list[str], text: str = "") -> dict[str, Any]:
         return self._e.forward(*self._a(), message_id, to=to, text=text, actor=AGENT)
 
