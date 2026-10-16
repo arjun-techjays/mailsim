@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +36,25 @@ def recreate_database(name: str) -> str:
         conn.execute(text(f'CREATE DATABASE "{name}"'))
     admin.dispose()
     return _url(name)
+
+
+def drop_database(name: str) -> None:
+    admin = create_engine(ADMIN_URL, isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+    admin.dispose()
+
+
+@contextmanager
+def scratch_database(suffix: str) -> Iterator[str]:
+    """A fresh `<TEST_DB>_<suffix>` database for one test, dropped afterwards (every extra
+    database lengthens PostgreSQL's crash-recovery sync and uses disk)."""
+    name = f"{TEST_DB}_{suffix}"
+    url = recreate_database(name)
+    try:
+        yield url
+    finally:
+        drop_database(name)
 
 
 @pytest.fixture(scope="session")

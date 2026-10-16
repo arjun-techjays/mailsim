@@ -193,20 +193,20 @@ def test_local_operator_bootstraps_an_empty_database(tmp_path):
 
     from mailsim.store.db import run_migrations
     from mailsim.store.models import ApiKey, Project, Tenant
-    from tests.conftest import TEST_DB, recreate_database
+    from tests.conftest import scratch_database
 
-    url = recreate_database(f"{TEST_DB}_local")
-    run_migrations(url)
-    eng = create_engine(url)
-    sf = sessionmaker(eng, expire_on_commit=False)
-    try:
-        op = server.local_operator(sf, {})
-        again = server.local_operator(sf, {})
-        assert op.project_id == again.project_id
-        with sf.begin() as s:
-            assert s.get(Project, op.project_id).name == "local"
-            s.execute(delete(ApiKey))
-            s.execute(delete(Project))
-            s.execute(delete(Tenant))
-    finally:
-        eng.dispose()
+    with scratch_database("local") as url:
+        run_migrations(url)
+        eng = create_engine(url)
+        sf = sessionmaker(eng, expire_on_commit=False)
+        try:
+            op = server.local_operator(sf, {})
+            again = server.local_operator(sf, {})
+            assert op.project_id == again.project_id
+            with sf.begin() as s:
+                assert s.get(Project, op.project_id).name == "local"
+                s.execute(delete(ApiKey))
+                s.execute(delete(Project))
+                s.execute(delete(Tenant))
+        finally:
+            eng.dispose()
