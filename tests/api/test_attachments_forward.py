@@ -82,6 +82,21 @@ def test_agent_downloads_attachment_bytes(api, agent):
     assert r.status_code == 403
 
 
+def test_attachment_over_the_read_cap_is_refused_before_loading(api, agent, monkeypatch):
+    import mailsim.engine.core as core
+
+    rid, mbx, key = agent
+    inv = invoice(api, mbx, key)
+    att = inv["attachments"][0]
+    monkeypatch.setattr(core, "MAX_ATTACHMENT_READ_BYTES", 10)
+    monkeypatch.setattr(api.blobs, "get", lambda ref: pytest.fail("bytes must not be loaded"))
+    url = f"/v1/mailboxes/{mbx}/messages/{inv['id']}/attachments/{att['id']}"
+    body = err(api.call("GET", url, key=key), 501, "UNSUPPORTED_OPERATION")
+    assert body["details"] == {"size": att["size"], "max_bytes": 10}
+    err(api.call("GET", f"/v1/runs/{rid}/mailboxes/{mbx}/messages/{inv['id']}/attachments/"
+                 f"{att['id']}"), 501, "UNSUPPORTED_OPERATION")  # fmt: skip
+
+
 def test_hostile_attachment_is_served_as_a_download(api, agent):
     rid, mbx, key = agent
     inject_html_attachment(api, rid, mbx, 'evil "x"\\/..;é.html')
@@ -90,7 +105,7 @@ def test_hostile_attachment_is_served_as_a_download(api, agent):
     r = api.call("GET", f"/v1/mailboxes/{mbx}/messages/{msg['id']}/attachments/{att['id']}",
                  key=key, expect=200)  # fmt: skip
     assert r.content == b"<script>alert(1)</script>"
-    assert r.headers["content-type"].startswith("text/html")  # stored type, but never rendered
+    assert r.headers["content-type"] == "application/octet-stream"  # active type: never served
     disposition = r.headers["content-disposition"]
     assert '"x"' not in disposition and "\\" not in disposition and "/" not in disposition
     assert att["filename"].endswith(".html") and "/" not in att["filename"]
@@ -180,3 +195,56 @@ def test_sink_mode_is_invisible_to_the_agent(api, tmp_path):
     sunk = [e for e in api.call("GET", f"/v1/runs/{rid}/events?page_size=500", expect=200)
             .json()["items"] if e["type"] == "delivery.sunk"]  # fmt: skip
     assert len(sunk) == 2
+
+
+def test_sink_stores_one_copy_per_send(api, monkeypatch):
+    def sink(s):
+        open_agent(s)
+        s["agent"]["prohibited_operations"] = []
+        s["environment"]["delivery"]["external_delivery"] = "sink"
+
+    api.publish(sink)
+    created = api.create_run()
+    key, mbx = api.agent(created)
+    puts, real_put = [], api.blobs.put
+    monkeypatch.setattr(api.blobs, "put", lambda data: puts.append(real_put(data)) or puts[-1])
+    api.call("POST", f"/v1/mailboxes/{mbx}/messages", key=key, expect=201,
+             json={"to": ["a@real.example", "b@real.example", "c@real.example"],
+                   "subject": "s"})  # fmt: skip
+    events = api.call("GET", f"/v1/runs/{created['run']['id']}/events?page_size=500",
+                      expect=200).json()["items"]  # fmt: skip
+    refs = {e["payload"]["raw_blob_ref"] for e in events if e["type"] == "delivery.sunk"}
+    assert len(refs) == 1
+    assert puts.count(refs.pop()) == 2  # the Sent copy + one sink copy (not one per recipient)
+
+
+def test_recipient_caps_apply_after_display_name_expansion(api, agent):
+    rid, mbx, key = agent
+    url = f"/v1/mailboxes/{mbx}/messages"
+    half = ", ".join(f"u{i}@example.test" for i in range(50))
+    rest = ", ".join(f"u{i}@example.test" for i in range(50, 101))
+    body = err(
+        api.call("POST", url, key=key, json={"to": [half], "cc": [rest], "subject": "s"}),
+        400,
+        "INVALID_REQUEST",
+    )  # fmt: skip  (each list fits; the engine caps the total)
+    assert body["details"] == {"recipients": 101, "max": 100}
+    many = f"{half}, {rest}"
+    err(api.call("POST", url, key=key, json={"to": [many]}), 400, "INVALID_REQUEST")
+    err(api.call("POST", url, key=key, json={"to": ["vendor@example.test"] * 101}), 400,
+        "INVALID_REQUEST")  # fmt: skip
+    inv = invoice(api, mbx, key)
+    body = err(api.call("POST", f"{url}/{inv['id']}/forward", key=key,
+                        json={"to": [half], "cc": [rest]}), 400, "INVALID_REQUEST")  # fmt: skip
+    assert body["details"]["recipients"] == 101
+
+
+def test_live_agent_keys_per_run_are_capped(api, agent):
+    rid, mbx, key = agent
+    minted = [
+        api.call("POST", f"/v1/runs/{rid}/agent-credentials", expect=201).json() for _ in range(15)
+    ]  # 15 + the run's first key = 16 live keys
+    body = err(api.call("POST", f"/v1/runs/{rid}/agent-credentials"), 409, "CONFLICT")
+    assert body["details"] == {"live_agent_keys": 16, "max": 16}
+    api.call("DELETE", f"/v1/keys/{minted[0]['key_id']}", expect=204)
+    api.call("POST", f"/v1/runs/{rid}/agent-credentials", expect=201)

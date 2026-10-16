@@ -75,6 +75,14 @@ message in the sandbox. Real SMTP is never used. The agent's result is only the 
 (`message_id`, `message_id_header`) and is the same in every mode: how each recipient was
 handled is visible to operators only (the run's actions and `delivery.*` events). Address
 entries may be `Name <addr@example.com>` (also several, comma-separated); the name is dropped.
+A display name containing a comma must be quoted (`"Smith, John" <j@example.com>`): unquoted,
+`Smith, John <j@example.com>` is read as two entries and `Smith` is rejected as an invalid
+address. One message has at most 100 distinct recipients (to + cc + bcc, after expansion;
+`INVALID_REQUEST` otherwise), on every interface.
+
+The agent session's MCP identity is neutral: server name `mail`, title `Mail` and a short
+mailbox-tools instruction. Controller and evaluator sessions keep the `mailsim` identity and
+the operator instructions.
 
 `manage_labels` applies its changes as separate audited writes, in this order: move, labels,
 flags. It resolves the folder (`NOT_FOUND`) before the first write. If a later step fails, the

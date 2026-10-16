@@ -7,15 +7,14 @@ store services directly, always scoped to the principal's tenant + project.
 
 from __future__ import annotations
 
-import re
 from typing import Any
-from urllib.parse import quote
 
 from fastapi import Request, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from mailsim.api import schemas as s
+from mailsim.api.downloads import safe_download_headers
 from mailsim.auth.principal import Principal
 from mailsim.domain.errors import NotFound, PermissionDenied, UnsupportedOperation
 from mailsim.domain.models import AttachmentRef
@@ -134,38 +133,17 @@ def scenario_version(
 
 
 # ---- attachment downloads ----------------------------------------------------------------
-_MEDIA_TYPE = re.compile(r"^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}/[a-z0-9][a-z0-9!#$&^_.+-]{0,126}$")
-_ASCII_SAFE = re.compile(r"[^A-Za-z0-9 !#$&+,.;=@^_`{}~()\[\]-]")
 ATTACHMENT_RESPONSE: dict[int | str, dict[str, Any]] = {
     200: {
         "description": "The attachment bytes, always as a download (`Content-Disposition: "
-        "attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`).",
+        "attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`). "
+        "Active types (HTML, SVG, XML, scripts, ...) are served as application/octet-stream.",
         "content": {"application/octet-stream": {"schema": {"type": "string",
                                                              "format": "binary"}}},
     }
 }  # fmt: skip
 
 
-def content_disposition(filename: str) -> str:
-    """`attachment` with an ASCII fallback `filename` and the exact UTF-8 name as `filename*`
-    (RFC 6266 / RFC 5987). Control characters, quotes, backslashes and path separators never
-    reach the header."""
-    name = "".join(ch for ch in filename if ch.isprintable()).replace("/", "_").replace("\\", "_")
-    name = name.strip().strip(".") or "attachment"
-    fallback = _ASCII_SAFE.sub("_", name)[:150] or "attachment"
-    return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(name[:255], safe='')}"
-
-
 def attachment_response(ref: AttachmentRef, data: bytes) -> Response:
     """Bytes of one attachment, served so a browser never renders or sniffs them."""
-    media = ref.mime_type.strip().lower()
-    return Response(
-        content=data,
-        media_type=media if _MEDIA_TYPE.fullmatch(media) else "application/octet-stream",
-        headers={
-            "Content-Disposition": content_disposition(ref.filename),
-            "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": "sandbox",
-            "Cache-Control": "private, no-store",
-        },
-    )
+    return Response(content=data, headers=safe_download_headers(ref.filename, ref.mime_type))

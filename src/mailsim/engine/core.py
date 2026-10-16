@@ -68,6 +68,9 @@ EVALUATOR = "evaluator"
 READ_OPERATIONS = frozenset({"read", "search"})
 # Upper bound of one attachment read (interfaces may pass a lower one, e.g. MCP's base64 cap).
 MAX_ATTACHMENT_READ_BYTES = 25 * 1024 * 1024
+# Distinct recipients (to + cc + bcc) of one agent send, whatever the interface (SMTP's
+# RCPT limit is the same).
+MAX_RECIPIENTS = 100
 
 
 def counts_against_budget(operation: str) -> bool:
@@ -1215,6 +1218,10 @@ class SimEngine:
         to_a, cc_a, bcc_a = [_addr(a) for a in to], [_addr(a) for a in cc], [_addr(a) for a in bcc]
         if not (to_a or cc_a or bcc_a):
             raise InvalidRequest("at least one recipient is required")
+        distinct = len({a.email for a in (*to_a, *cc_a, *bcc_a)})
+        if distinct > MAX_RECIPIENTS:
+            raise InvalidRequest(f"too many recipients ({distinct}; at most {MAX_RECIPIENTS})",
+                                 details={"recipients": distinct, "max": MAX_RECIPIENTS})  # fmt: skip
         policy = DeliveryPolicy(c.config["external_delivery"])
         plan = policy.plan([a.email for a in (*to_a, *cc_a, *bcc_a)], self._emails(c))
         if (
@@ -1223,7 +1230,7 @@ class SimEngine:
             and "external_delivery" in c.config["agent"]["prohibited"]
         ):
             raise ExternalDeliveryBlocked(
-                "agent is prohibited from external delivery",
+                f"delivery to {', '.join(plan.external)} is not permitted",
                 details={"recipients": plan.external},
             )
         header = c.gen.message_id_header(c.config["domain"])
@@ -1244,10 +1251,13 @@ class SimEngine:
                     received_at=c.now, bcc=[], actor=actor, operation=operation,
                 )
             )  # fmt: skip
+        sunk_ref = (
+            self.blobs.put(raw) if plan.external and policy.mode is ExternalMode.SINK else None
+        )  # one stored copy per send, referenced by every delivery.sunk event
         for ext in plan.external:
-            if policy.mode is ExternalMode.SINK:
+            if sunk_ref is not None:
                 c.emit("delivery.sunk",
-                       {"id": c.gen.next("snk"), "recipient": ext, "raw_blob_ref": self.blobs.put(raw),
+                       {"id": c.gen.next("snk"), "recipient": ext, "raw_blob_ref": sunk_ref,
                         "sent_at": iso(c.now)}, actor=actor, operation=operation)  # fmt: skip
             else:
                 c.emit("delivery.external_attempt",
@@ -1893,7 +1903,9 @@ class SimEngine:
                           fn, mailbox_id)  # fmt: skip
 
     def _attachment(self, c: Ctx, mailbox_id: str, message_id: str, attachment_id: str,
-                    max_bytes: int) -> tuple[AttachmentRef, bytes]:  # fmt: skip
+                    max_bytes: int | None) -> tuple[AttachmentRef, bytes]:  # fmt: skip
+        if max_bytes is None:
+            max_bytes = MAX_ATTACHMENT_READ_BYTES
         self._message(c, mailbox_id, message_id)  # mailbox-scoped: 404 for another mailbox's
         a = c.session.get(m.Attachment, (attachment_id, c.run.id))
         if a is None or a.message_id != message_id:
@@ -1909,7 +1921,7 @@ class SimEngine:
         return ref, self.blobs.get(a.blob_ref)
 
     def get_attachment(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str,
-                       attachment_id: str, *, max_bytes: int = MAX_ATTACHMENT_READ_BYTES,
+                       attachment_id: str, *, max_bytes: int | None = None,
                        actor: str = AGENT) -> tuple[AttachmentRef, bytes]:  # fmt: skip
         """One attachment of a message of this mailbox: its metadata and bytes (a read).
         Larger than `max_bytes` -> UNSUPPORTED_OPERATION before the bytes are loaded."""
@@ -1922,7 +1934,7 @@ class SimEngine:
 
     def inspect_attachment(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str,
                            attachment_id: str, *,
-                           max_bytes: int = MAX_ATTACHMENT_READ_BYTES) -> tuple[AttachmentRef, bytes]:  # fmt: skip
+                           max_bytes: int | None = None) -> tuple[AttachmentRef, bytes]:  # fmt: skip
         """Operator read of an attachment of any mailbox in the run (records nothing)."""
         with self._sf() as s:
             run = get_run(s, scope, run_id)
@@ -2039,5 +2051,5 @@ class SimEngine:
                              require_running=actor == AGENT, mailbox_id=mailbox_id)  # fmt: skip
 
 
-__all__ = ["AGENT", "CONTROLLER", "EVALUATOR", "MAX_ATTACHMENT_READ_BYTES", "SIMULATOR", "ReplayResult",
-           "SimEngine", "TERMINAL"]  # fmt: skip
+__all__ = ["AGENT", "CONTROLLER", "EVALUATOR", "MAX_ATTACHMENT_READ_BYTES", "MAX_RECIPIENTS",
+           "SIMULATOR", "ReplayResult", "SimEngine", "TERMINAL"]  # fmt: skip

@@ -20,7 +20,6 @@ from mailsim.engine.core import (
     AGENT,
     CONTROLLER,
     EVALUATOR,
-    MAX_ATTACHMENT_READ_BYTES,
     ReplayResult,
     SimEngine,
 )
@@ -99,9 +98,10 @@ class AgentMailbox:
         return self._e.get_raw(*self._a(), message_id, actor=AGENT)
 
     def get_attachment(self, message_id: str, attachment_id: str, *,
-                       max_bytes: int = MAX_ATTACHMENT_READ_BYTES) -> tuple[AttachmentRef, bytes]:  # fmt: skip
+                       max_bytes: int | None = None) -> tuple[AttachmentRef, bytes]:  # fmt: skip
         """One attachment of one of this mailbox's messages: (metadata, bytes). A read; an
-        attachment larger than `max_bytes` is UNSUPPORTED_OPERATION (bytes never loaded)."""
+        attachment larger than `max_bytes` (default: the engine's 25 MiB) is UNSUPPORTED_OPERATION
+        (bytes never loaded)."""
         return self._e.get_attachment(*self._a(), message_id, attachment_id, max_bytes=max_bytes,
                                       actor=AGENT)  # fmt: skip
 

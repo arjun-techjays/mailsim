@@ -358,3 +358,19 @@ def test_operator_reads_validate_and_page(world):
     items, nxt = ev.events_page(run, limit=2)
     assert len(items) == 2 and nxt == items[-1]["sequence"]
     assert {b["owner_id"] for b in ctl.list_mailboxes(run)} == {"finance_manager", "vendor"}
+
+
+def test_every_agent_send_result_is_only_the_sent_copy(world):
+    env, ctl, ev, run, agent, fm, vendor, _ = world
+    first = agent.list_messages().items[0]
+    draft = agent.create_draft(to=["vendor@example.test"], subject="d", text="x")
+    results = {
+        "send": agent.send(to=["vendor@example.test"], subject="s", text="x"),
+        "reply": agent.reply(first.id, text="ack"),
+        "forward": agent.forward(first.id, to=["vendor@example.test"], cc=["finance@example.test"]),
+        "send_draft": agent.send_draft(draft["message_id"]),
+    }
+    for name, result in results.items():
+        assert set(result) == {"message_id", "message_id_header"}, name
+    logged = [a for a in ev.actions(run) if a["operation"] in ("send", "reply", "forward")]
+    assert all("external_mode" in a["result"] for a in logged)  # operators keep the details

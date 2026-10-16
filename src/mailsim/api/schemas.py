@@ -233,10 +233,16 @@ def normalise_addresses(values: list[str]) -> list[str]:
     return out
 
 
+MAX_RECIPIENTS = 100  # per list before "a, b" expansion; the engine caps the distinct total
 Recipients = Annotated[
-    list[str],
+    list[Annotated[str, Field(max_length=8192)]],
     AfterValidator(normalise_addresses),
-    Field(description='addresses; "Name <addr@example.com>" is accepted (the name is dropped)'),
+    Field(
+        max_length=MAX_RECIPIENTS,
+        description='addresses; "Name <addr@example.com>" is accepted (the name is dropped); '
+        "quote a name that contains a comma ('\"Smith, John\" <j@example.com>'): unquoted "
+        "commas separate addresses. At most 100 distinct recipients per message.",
+    ),
 ]
 
 
