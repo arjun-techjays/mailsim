@@ -1,0 +1,345 @@
+{
+  "scenario": "leadership.ceo-inbox",
+  "target": {
+    "persona": "ceo",
+    "name": "Helena Marsh",
+    "role": "Chief Executive Officer"
+  },
+  "seed": 7,
+  "messages": 40,
+  "threads": 32,
+  "topics": {
+    "board": 10,
+    "deals": 6,
+    "finance": 4,
+    "hr": 2,
+    "legal": 4,
+    "newsletter": 2,
+    "ops": 4,
+    "personal": 2,
+    "scheduling": 6
+  },
+  "fixtures": [
+    {
+      "fixture": "fixtures/001-the-purpose-of-this-survey-is-to-gather.eml",
+      "topic": "board",
+      "thread": 1,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/002-when-you-download-mp3-files-you-should-d.eml",
+      "topic": "board",
+      "thread": 3,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/003-meter-80-3.eml",
+      "topic": "ops",
+      "thread": 21,
+      "suggested_labels": [
+        "Operations"
+      ]
+    },
+    {
+      "fixture": "fixtures/004-please-provide-the-path-to-the-financial.eml",
+      "topic": "ops",
+      "thread": 23,
+      "suggested_labels": [
+        "Operations"
+      ]
+    },
+    {
+      "fixture": "fixtures/005-re-meter-80-3.eml",
+      "topic": "ops",
+      "thread": 21,
+      "suggested_labels": [
+        "Operations"
+      ]
+    },
+    {
+      "fixture": "fixtures/006-executive-committee-weekly-meeting.eml",
+      "topic": "scheduling",
+      "thread": 14,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/007-re-executive-committee-weekly-meeting.eml",
+      "topic": "scheduling",
+      "thread": 14,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/008-here-is-the-ercot-document-that-lays-out.eml",
+      "topic": "deals",
+      "thread": 11,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/009-december-13-17.eml",
+      "topic": "legal",
+      "thread": 19,
+      "suggested_labels": [
+        "Legal"
+      ]
+    },
+    {
+      "fixture": "fixtures/010-re-december-13-17.eml",
+      "topic": "legal",
+      "thread": 19,
+      "suggested_labels": [
+        "Legal"
+      ]
+    },
+    {
+      "fixture": "fixtures/011-the-report-named-east-p-l-totals.eml",
+      "topic": "scheduling",
+      "thread": 13,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/012-dear-power-outage-database-customer.eml",
+      "topic": "ops",
+      "thread": 22,
+      "suggested_labels": [
+        "Operations"
+      ]
+    },
+    {
+      "fixture": "fixtures/013-re-december-13-17.eml",
+      "topic": "legal",
+      "thread": 19,
+      "suggested_labels": [
+        "Legal"
+      ]
+    },
+    {
+      "fixture": "fixtures/014-when-you-get-a-chance-i-have-a.eml",
+      "topic": "deals",
+      "thread": 10,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/015-fenella-energy-field-services-has-reques.eml",
+      "topic": "scheduling",
+      "thread": 15,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/016-fw-succession-plan.eml",
+      "topic": "board",
+      "thread": 2,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/017-i-talked-with-bram-montague-about-the-in.eml",
+      "topic": "finance",
+      "thread": 18,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/018-hope-your-long-weekend-was-a-good-one.eml",
+      "topic": "board",
+      "thread": 5,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/019-enclosed-is-a-new-draft-of-the-lc.eml",
+      "topic": "deals",
+      "thread": 9,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/020-we-can-accept-your-comment-regarding-res.eml",
+      "topic": "deals",
+      "thread": 8,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/021-the-12th-isn-t-good-for-me-b-c-we-re.eml",
+      "topic": "personal",
+      "thread": 27,
+      "suggested_labels": [
+        "Personal"
+      ]
+    },
+    {
+      "fixture": "fixtures/022-the-ogc-meeting-scheduled-for-wednesday-.eml",
+      "topic": "hr",
+      "thread": 25,
+      "suggested_labels": [
+        "People"
+      ]
+    },
+    {
+      "fixture": "fixtures/023-iso-market-participants.eml",
+      "topic": "legal",
+      "thread": 20,
+      "suggested_labels": [
+        "Legal"
+      ]
+    },
+    {
+      "fixture": "fixtures/024-i-apologize-for-the-duplication.eml",
+      "topic": "board",
+      "thread": 7,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/025-super-saturday-is-coming-and-i-am-so.eml",
+      "topic": "hr",
+      "thread": 24,
+      "suggested_labels": [
+        "People"
+      ]
+    },
+    {
+      "fixture": "fixtures/026-at-a-wscc-board-meeting-today-i-reinforc.eml",
+      "topic": "board",
+      "thread": 0,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/027-keira-order-637-issues-related-to-imbala.eml",
+      "topic": "scheduling",
+      "thread": 16,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/028-fw-keira-order-637-issues-related-to-imb.eml",
+      "topic": "scheduling",
+      "thread": 16,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/029-please-respond-to-3-weeks-ago-we-told.eml",
+      "topic": "newsletter",
+      "thread": 28,
+      "suggested_labels": [
+        "Newsletters"
+      ]
+    },
+    {
+      "fixture": "fixtures/030-please-find-attached-this-week-s-publica.eml",
+      "topic": "newsletter",
+      "thread": 29,
+      "suggested_labels": [
+        "Newsletters"
+      ]
+    },
+    {
+      "fixture": "fixtures/031-in-the-name-of-all-the-mscf-students.eml",
+      "topic": "personal",
+      "thread": 26,
+      "suggested_labels": [
+        "Personal"
+      ]
+    },
+    {
+      "fixture": "fixtures/032-quick-note.eml",
+      "topic": "finance",
+      "thread": 17,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/033-re-quick-note.eml",
+      "topic": "finance",
+      "thread": 17,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/034-re-quick-note.eml",
+      "topic": "finance",
+      "thread": 17,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/035-fw-corin-langstrom-is-on-vacation-this-w.eml",
+      "topic": "board",
+      "thread": 6,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/036-ladies-and-gentlemen.eml",
+      "topic": "board",
+      "thread": 4,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/037-ni7771.eml",
+      "topic": "deals",
+      "thread": 12,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/038-re-ni7771.eml",
+      "topic": "deals",
+      "thread": 12,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/039-confidential-board-pre-read-project-lark.eml",
+      "topic": "board",
+      "thread": 30,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/040-larkspur-deck-before-thursday.eml",
+      "topic": "board",
+      "thread": 31,
+      "suggested_labels": [
+        "Board"
+      ]
+    }
+  ],
+  "note": "Folders/labels are suggestions only: scenario schema 1.1 seeds every initial message into the inbox, unread and unlabelled."
+}

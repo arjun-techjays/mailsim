@@ -222,6 +222,13 @@ uv run sim run-reset $R --project $P
 uv run sim run-replay $R --project $P     # exit 0 only if replayed state hash matches
 ```
 
+## Leadership inboxes (pseudonymized Enron corpus)
+
+`scenarios/leadership/` holds CEO, CFO, CBO and Director of Finance inboxes of a fictional
+company, generated from the public Enron corpus by `sim import enron` and
+`sim generate leadership`. They are pseudonymized, topic-routed and threaded, with injected
+risk items and minimal answer keys. See [`docs/leadership-inboxes.md`](docs/leadership-inboxes.md).
+
 ## Architecture (Phase 1)
 
 ```
