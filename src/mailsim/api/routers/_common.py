@@ -7,16 +7,19 @@ store services directly, always scoped to the principal's tenant + project.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
-from fastapi import Request
+from fastapi import Request, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from mailsim.api import schemas as s
+from mailsim.api.downloads import safe_download_headers
 from mailsim.auth.principal import Principal
 from mailsim.domain.errors import NotFound, PermissionDenied, UnsupportedOperation
+from mailsim.domain.models import AttachmentRef
 from mailsim.engine.facades import AgentMailbox, Controller, EvaluatorView, facade_for
+from mailsim.personas.runtime import PersonaRuntime
 from mailsim.store import models as m
 from mailsim.store import repos
 from mailsim.store.blob import BlobStore
@@ -77,16 +80,15 @@ def inspector(request: Request, principal: Principal) -> Controller | EvaluatorV
     return _facade(request, principal, Controller | EvaluatorView)  # type: ignore[arg-type]
 
 
-def run_personas(request: Request, ctl: Controller, run_id: str) -> int:
-    """Run one persona-runtime step after the clock moved (single scheduler loop per run).
+def persona_runtime(request: Request, ctl: Controller) -> PersonaRuntime | None:
+    """The app's persona runtime for this controller (single scheduler loop per run), used by
+    `personas.runtime.advance_clock` to answer persona replies at their due times.
 
     The runtime is optional (`app.state.persona_runtime_factory`); without it personas stay
     silent. Replies are recorded via `Controller.persona_reply`, so replay never calls a model.
     """
     factory = getattr(request.app.state, "persona_runtime_factory", None)
-    if factory is None:
-        return 0
-    return len(factory(ctl).step(run_id))
+    return None if factory is None else cast("PersonaRuntime", factory(ctl))
 
 
 def run_out(request: Request, principal: Principal, run_id: str) -> s.RunOut:
@@ -128,3 +130,20 @@ def scenario_version(
         suffix = f" version {version}" if version is not None else ""
         raise NotFound(f"scenario {key}{suffix} not found")
     return row
+
+
+# ---- attachment downloads ----------------------------------------------------------------
+ATTACHMENT_RESPONSE: dict[int | str, dict[str, Any]] = {
+    200: {
+        "description": "The attachment bytes, always as a download (`Content-Disposition: "
+        "attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`). "
+        "Active types (HTML, SVG, XML, scripts, ...) are served as application/octet-stream.",
+        "content": {"application/octet-stream": {"schema": {"type": "string",
+                                                             "format": "binary"}}},
+    }
+}  # fmt: skip
+
+
+def attachment_response(ref: AttachmentRef, data: bytes) -> Response:
+    """Bytes of one attachment, served so a browser never renders or sniffs them."""
+    return Response(content=data, headers=safe_download_headers(ref.filename, ref.mime_type))

@@ -534,6 +534,14 @@ fieldset {
 .badge-step-unknown {
   color: var(--muted);
 }
+.badge-replayed {
+  color: var(--link);
+}
+.badge-replay {
+  color: var(--link);
+  font-size: 0.5em;
+  vertical-align: middle;
+}
 
 /* ---- mailbox inspector ------------------------------------------------------------------- */
 .inspector {
@@ -781,4 +789,12 @@ progress {
   textarea {
     min-width: 0;
   }
+}
+
+/* A fieldset used only to disable a group of controls at once. */
+fieldset.bare {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
 }

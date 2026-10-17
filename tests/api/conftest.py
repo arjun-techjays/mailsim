@@ -154,3 +154,16 @@ def bare_api(session_factory, tmp_path) -> Api:
 def other_api(session_factory, tmp_path) -> Api:
     """A second, unrelated tenant on the same app database."""
     return Api(session_factory, tmp_path / "other", evaluation_service=FakeEvaluationService())
+
+
+@pytest.fixture()
+def eval_api(session_factory, tmp_path) -> Api:
+    """The real EvaluationService behind the routes (end-to-end grading over HTTP)."""
+    from mailsim.evaluation.service import EvaluationService
+
+    api = Api(session_factory, tmp_path)
+    api.evaluations = EvaluationService(api.engine, session_factory, api.blobs)
+    api.app = create_app(engine=api.engine, session_factory=session_factory, blobs=api.blobs,
+                         evaluation_service=api.evaluations)  # fmt: skip
+    api.client = TestClient(api.app, raise_server_exceptions=False)
+    return api

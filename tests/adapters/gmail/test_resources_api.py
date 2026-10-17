@@ -41,7 +41,7 @@ def test_threads(gm):
 def test_labels_crud(gm):
     labels = gm.get("/labels")["labels"]
     assert [x["id"] for x in labels] == ["INBOX", "SENT", "DRAFT", "TRASH", "UNREAD", "STARRED",
-                                         "MAILSIM_ANSWERED", "MAILSIM_DELETED"]  # fmt: skip
+                                         "ANSWERED", "DELETED"]  # fmt: skip
     created = gm.post("/labels", json={"name": "Vendors", "labelListVisibility": "labelHide"})
     assert created["type"] == "user" and created["labelListVisibility"] == "labelHide"
     lid = created["id"]

@@ -13,7 +13,7 @@ from mailsim.api.limits import BodySizeLimit
 from mailsim.api.local_mode import LoopbackOnly
 from mailsim.api.routers import control, mailbox, simulator, ux
 
-API_TITLE = "mailsim"
+API_TITLE = "Mail API"
 API_VERSION = "1.0.0-wave0"
 
 
@@ -22,7 +22,7 @@ def create_app(**state: Any) -> FastAPI:
     app = FastAPI(
         title=API_TITLE,
         version=API_VERSION,
-        description="Email agent testing simulator. External delivery is impossible by design.",
+        description="Mail API.",
     )
     for key, value in state.items():
         setattr(app.state, key, value)

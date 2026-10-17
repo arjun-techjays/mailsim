@@ -38,7 +38,7 @@ def _open(s: dict[str, Any]) -> None:
             "id": "mailbox-kept",
             "type": "state",
             "requirement": "The mailbox still exists",
-            "check": {"where": {"mailbox": "me"}, "count": {"min": 0}},
+            "check": {"where": {"mailbox": "finance_manager"}, "count": {"min": 0}},
         },
     ]
 
@@ -55,6 +55,9 @@ class StubPersonas:
 
     def step(self, run_id: str) -> list[dict[str, Any]]:
         return [{"run_id": run_id}, {"run_id": run_id}]
+
+    def due_times(self, run_id: str) -> list[Any]:
+        return []  # nothing scheduled: one advance, one step
 
 
 class PassingJudge:

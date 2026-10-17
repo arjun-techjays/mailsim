@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from mailsim.api.agent_errors import agent_view
 from mailsim.domain.errors import ErrorCode, SimError
 
 log = logging.getLogger("mailsim.api")
@@ -35,6 +36,7 @@ HTTP_STATUS: dict[ErrorCode, int] = {
 }
 UNAUTHENTICATED = "UNAUTHENTICATED"  # 401: missing/invalid credential (transport-level)
 INTERNAL = "INTERNAL"  # 500: unexpected server fault; details are never leaked
+AGENT_PATH = "/v1/mailboxes/"  # the agent-only REST routes (api/routers/mailbox.py)
 
 
 class ErrorBody(BaseModel):
@@ -73,7 +75,10 @@ def envelope(request: Request, status: int, code: str, message: str,
 def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(SimError)
     async def _sim(request: Request, exc: SimError) -> JSONResponse:
-        return envelope(request, HTTP_STATUS[exc.code], str(exc.code), exc.message, exc.details)
+        code, message, details = str(exc.code), exc.message, exc.details
+        if request.url.path.startswith(AGENT_PATH):  # agent mailbox routes: the agent's view
+            code, message, details = agent_view(code, message, details)
+        return envelope(request, HTTP_STATUS[exc.code], code, message, details)
 
     @app.exception_handler(RequestValidationError)
     async def _validation(request: Request, exc: RequestValidationError) -> JSONResponse:

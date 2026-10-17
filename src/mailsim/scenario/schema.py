@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import unicodedata
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -106,11 +107,25 @@ class BehaviorSpec(_Strict):
 
 class PersonaSpec(_Strict):
     id: str
-    name: str | None = None  # display name (cosmetic; used in From/To display names)
+    name: str | None = Field(default=None, max_length=200)  # display name in From/To/Cc
     email: str
     role: str
     knowledge: list[str] = Field(default_factory=list)
     behavior: BehaviorSpec = Field(default_factory=BehaviorSpec)
+
+    @field_validator("name")
+    @classmethod
+    def _header_safe_name(cls, v: str | None) -> str | None:
+        """The name goes into MIME headers: no CR/LF or other control characters, and no
+        text that would read as an RFC 2047 encoded word."""
+        if v is not None:
+            if any(unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp") for ch in v):
+                raise ValueError("name must not contain control or invisible format characters")
+            if "=?" in v:
+                raise ValueError("name must not contain '=?' (encoded-word syntax)")
+            if not v.strip():
+                raise ValueError("name must not be blank")
+        return v
 
 
 class RelationshipSpec(_Strict):

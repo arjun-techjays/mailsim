@@ -52,7 +52,7 @@ class McpEndpoint:
             return
         resolve = bearer_resolver(session_factory)
         try:
-            await anyio.to_thread.run_sync(resolve, request)
+            principal = await anyio.to_thread.run_sync(resolve, request)
         except InvalidCredential:
             response = envelope(request, 401, UNAUTHENTICATED, UNAUTHENTICATED_MESSAGE)
             response.headers["WWW-Authenticate"] = "Bearer"
@@ -69,6 +69,7 @@ class McpEndpoint:
             evaluation_service=getattr(state, "evaluation_service", None),
             persona_runtime_factory=getattr(state, "persona_runtime_factory", None),
             interface="mcp_http",
+            role=principal.role,
         )
         manager = StreamableHTTPSessionManager(app=server, stateless=True, json_response=True)
         async with manager.run():

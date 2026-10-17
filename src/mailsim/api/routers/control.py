@@ -16,8 +16,15 @@ from sqlalchemy.orm import Session
 
 from mailsim.api import authoring
 from mailsim.api import schemas as s
-from mailsim.api.auth import issue_key, project_keys, revoke_agent_keys, revoke_scoped_key
+from mailsim.api.auth import (
+    count_live_agent_keys,
+    issue_key,
+    project_keys,
+    revoke_agent_keys,
+    revoke_scoped_key,
+)
 from mailsim.api.deps import Authenticated, Controller, Evaluator, Inspector, not_implemented
+from mailsim.api.downloads import safe_download_headers
 from mailsim.api.errors import ErrorEnvelope
 from mailsim.api.idempotency import idempotent
 from mailsim.api.pagination import decode_sequence_cursor, encode_sequence_cursor
@@ -33,7 +40,7 @@ from mailsim.api.routers._common import (
 from mailsim.auth.principal import Principal, Role
 from mailsim.domain.clock import iso, parse_ts
 from mailsim.domain.errors import Conflict, InvalidRequest, NotFound
-from mailsim.domain.states import TERMINAL
+from mailsim.domain.states import TERMINAL, RunStatus
 from mailsim.engine.facades import EvaluatorView
 from mailsim.engine.pagination import decode_cursor, encode_cursor
 from mailsim.evaluation.contract import BuildComparison, EvaluationReport
@@ -48,6 +55,7 @@ router = APIRouter(prefix="/v1", tags=["control"], responses={"default": {"model
 Idem = Annotated[str | None, Header(alias="Idempotency-Key", max_length=200)]
 REPORT_TYPES = {"json": "application/json", "junit": "application/xml",
                 "markdown": "text/markdown; charset=utf-8"}  # fmt: skip
+REPORT_EXTENSIONS = {"json": "json", "junit": "xml", "markdown": "md"}
 
 
 class EvaluationService(Protocol):
@@ -223,7 +231,9 @@ def create_answer_key(
     request: Request, scenario_key: str, body: s.AnswerKeyCreate, principal: Inspector
 ) -> s.AnswerKeyOut:
     """Publish a hidden answer-key version (controller or evaluator). The response is
-    metadata only."""
+    metadata only. Runs the checks of `.../answer-keys/validate` (400 with `details.issues`);
+    references are checked against the compatible scenario versions that exist now (all of
+    them when `scenario_versions` is omitted); later scenario versions do not re-check it."""
     data = authoring.answer_key_data(body.source, body.document)
     try:
         doc = AnswerKeyDoc.model_validate(data)
@@ -256,15 +266,20 @@ def _revoke_agent_keys(request: Request, principal: Principal, run_id: str) -> N
         revoke_agent_keys(session, principal.tenant_id, principal.project_id, run_id)
 
 
+MAX_LIVE_AGENT_KEYS = 16  # per run; minting more answers 409 until one is revoked
+
+
 def _agent_credential(request: Request, principal: Principal, run_id: str) -> s.AgentCredential:
-    """Issue an agent key bound to the run and the scenario's agent mailbox, revoking every
-    earlier agent key of the run (one live agent credential per run)."""
+    """Issue an agent key bound to the run and the scenario's agent mailbox. Earlier agent keys
+    of the run stay valid: revoking one is explicit (`DELETE /v1/keys/{key_id}`)."""
     ctl = controller(request, principal)
     with sessions(request)() as session:
         run = repos.get_run(session, scope(principal), run_id)
-        if run.status in {str(st) for st in TERMINAL}:
-            raise Conflict(f"run is {run.status}; agent credentials are only issued for live runs",
-                           details={"status": run.status})  # fmt: skip
+        if run.status in {str(st) for st in TERMINAL} or run.replay_of is not None:
+            raise Conflict(f"run is {run.status}{' (a replay)' if run.replay_of else ''}; agent "
+                           "credentials are only issued for live runs",
+                           details={"status": run.status,
+                                    **({"replay_of": run.replay_of} if run.replay_of else {})})  # fmt: skip
         sv = session.get(m.ScenarioVersion, run.scenario_version_id)
         assert sv is not None
         body = sv.spec["scenario"]
@@ -272,13 +287,16 @@ def _agent_credential(request: Request, principal: Principal, run_id: str) -> s.
     address = next(p["email"] for p in body["personas"] if p["id"] == persona).lower()
     mailbox_id = ctl.mailbox_id_for(run_id, persona)
     with sessions(request).begin() as session:
+        live = count_live_agent_keys(session, principal.tenant_id, principal.project_id, run_id)
+        if live >= MAX_LIVE_AGENT_KEYS:
+            raise Conflict(f"run already has {live} live agent keys (at most "
+                           f"{MAX_LIVE_AGENT_KEYS}); revoke one with DELETE /v1/keys/{{key_id}}",
+                           details={"live_agent_keys": live, "max": MAX_LIVE_AGENT_KEYS})  # fmt: skip
         key = issue_key(session, tenant_id=principal.tenant_id, project_id=principal.project_id,
                         role=Role.AGENT, run_id=run_id, mailbox_id=mailbox_id,
                         label=f"agent for {run_id}")  # fmt: skip
-        revoke_agent_keys(session, principal.tenant_id, principal.project_id, run_id,
-                          keep=key.key_id)  # fmt: skip
     return s.AgentCredential(api_key=key.api_key, mailbox_id=mailbox_id,
-                             mailbox_address=address, run_id=run_id)  # fmt: skip
+                             mailbox_address=address, run_id=run_id, key_id=key.key_id)  # fmt: skip
 
 
 @router.post("/scenarios/{scenario_key}/runs", response_model=s.RunCreated, status_code=201)
@@ -311,8 +329,10 @@ def create_run(
 def create_agent_credential(
     request: Request, run_id: str, principal: Controller
 ) -> s.AgentCredential:
-    """Issue a new agent key for a run (e.g. after a lost or redacted response). Earlier agent
-    keys of the run are revoked."""
+    """Issue an additional agent key for a run (e.g. after a lost or redacted response, or one
+    key per interface). Earlier agent keys are NOT revoked: revoke one explicitly with
+    `DELETE /v1/keys/{key_id}`. Cancelling or completing the run revokes all of them. At most
+    16 live agent keys per run: beyond that, 409 CONFLICT until one is revoked."""
     return _agent_credential(request, principal, run_id)
 
 
@@ -336,9 +356,13 @@ def list_runs(
     status: str | None = None,
     cursor: str | None = None,
     page_size: Annotated[int, Query(ge=1, le=500)] = 50,
+    include_replays: bool = False,
 ) -> s.RunPage:
     """Runs in the caller's project, newest first (by creation time, then id); filter by
-    `scenario_key` and/or `status`; follow `next_cursor` until it is null."""
+    `scenario_key` and/or `status`; follow `next_cursor` until it is null.
+
+    Replay runs (`replay_of` set, status REPLAYED) are copies of another run's log, not agent
+    runs: they are left out unless `include_replays=true` (or `status=REPLAYED`)."""
     stmt = (
         select(m.Run, m.ScenarioVersion.version, m.Scenario.key)
         .join(m.ScenarioVersion, m.ScenarioVersion.id == m.Run.scenario_version_id)
@@ -349,6 +373,8 @@ def list_runs(
         stmt = stmt.where(m.Scenario.key == scenario_key)
     if status is not None:
         stmt = stmt.where(m.Run.status == status)
+    if not include_replays and status != RunStatus.REPLAYED:
+        stmt = stmt.where(m.Run.replay_of.is_(None))
     if cursor is not None:
         stamp, last_id = decode_cursor(cursor)
         stmt = stmt.where(tuple_(m.Run.created_at, m.Run.id) < (parse_ts(stamp), last_id))
@@ -438,6 +464,11 @@ def run_events(
 def replay_run(
     request: Request, run_id: str, principal: Controller, idempotency_key: Idem = None
 ) -> Response:
+    """Copy the run's recorded event log into a new run and compare state hashes. The copy
+    (`replay_of` = this run) ends REPLAYED (or the original's final status if it had ended):
+    it takes no commands, cannot be evaluated (409), and is left out of /accuracy and of the
+    runs list unless `include_replays=true`."""
+
     def replay() -> s.ReplayOut:
         r = controller(request, principal).replay_run(run_id)
         return s.ReplayOut(replay_run_id=r.replay_run_id, matches=r.matches,
@@ -447,24 +478,29 @@ def replay_run(
     return idempotent(request, principal, idempotency_key, {}, 200, replay)
 
 
-@router.get("/runs/{run_id}/artifacts", response_model=list[s.ArtifactOut])
-def run_artifacts(request: Request, run_id: str, principal: Inspector) -> list[s.ArtifactOut]:
-    """Trace, raw MIME and attachment blobs; evaluation reports for evaluators only."""
+def _artifacts(request: Request, principal: Principal, run_id: str) -> list[s.ArtifactOut]:
+    """Artifacts of a run; reports only for evaluators."""
     view = inspector(request, principal)
     state = view.state(run_id)  # scope-checked
     out = [s.ArtifactOut(kind="trace", ref=f"/v1/runs/{run_id}/events",
                          content_type="application/json")]  # fmt: skip
+
+    def url(ref: str) -> str:
+        return f"/v1/runs/{run_id}/artifacts/{ref}"
+
     seen: set[str] = set()
     for row in [*state["messages"], *state["sink_messages"]]:
         ref = row["raw_blob_ref"]
         if ref and ref not in seen:
             seen.add(ref)
-            out.append(s.ArtifactOut(kind="raw_mime", ref=ref, content_type="message/rfc822"))
+            out.append(s.ArtifactOut(kind="raw_mime", ref=ref, content_type="message/rfc822",
+                                     url=url(ref)))  # fmt: skip
     for att in state["attachments"]:
         if att["blob_ref"] not in seen:
             seen.add(att["blob_ref"])
             out.append(s.ArtifactOut(kind="attachment", ref=att["blob_ref"],
-                                     content_type=att["mime_type"], size=att["size"]))  # fmt: skip
+                                     content_type=att["mime_type"], size=att["size"],
+                                     url=url(att["blob_ref"])))  # fmt: skip
     if isinstance(view, EvaluatorView):
         with sessions(request)() as session:
             reports = session.execute(
@@ -473,10 +509,65 @@ def run_artifacts(request: Request, run_id: str, principal: Inspector) -> list[s
                 .where(m.Evaluation.run_id == run_id)
                 .order_by(m.ReportRow.created_at, m.ReportRow.id)
             ).scalars()
-            out += [s.ArtifactOut(kind="report", ref=r.blob_ref,
-                                  content_type=REPORT_TYPES.get(r.format, "application/octet-stream"))
+            out += [s.ArtifactOut(kind="report", ref=r.blob_ref, url=url(r.blob_ref),
+                                  content_type=REPORT_TYPES.get(r.format,
+                                                                "application/octet-stream"))
                     for r in reports]  # fmt: skip
     return out
+
+
+@router.get("/runs/{run_id}/artifacts", response_model=list[s.ArtifactOut])
+def run_artifacts(request: Request, run_id: str, principal: Inspector) -> list[s.ArtifactOut]:
+    """Trace, raw MIME and attachment blobs; evaluation reports for evaluators only. Blob
+    artifacts carry a `url` that downloads them (`GET /v1/runs/{run_id}/artifacts/{ref}`)."""
+    return _artifacts(request, principal, run_id)
+
+
+@router.get(
+    "/runs/{run_id}/artifacts/{artifact_id}",
+    response_class=Response,
+    responses={200: {"content": {"application/octet-stream": {}}}},
+)
+def run_artifact(request: Request, run_id: str, artifact_id: str, principal: Inspector) -> Response:
+    """Download one listed blob artifact (`artifact_id` = its `ref`) as an attachment. Only
+    blobs this run lists for the caller are served (reports: evaluators only); 404 otherwise.
+    Served with `Content-Security-Policy: sandbox`, `X-Content-Type-Options: nosniff` and the
+    recorded content type only when it is a passive type (else application/octet-stream)."""
+    evaluator = isinstance(inspector(request, principal), EvaluatorView)
+    found: tuple[str, str] | None = None  # (content type, file name)
+    with sessions(request)() as session:
+        repos.get_run(session, scope(principal), run_id)  # scope-checked
+        for model in (m.Message, m.SinkMessage):
+            if session.scalar(select(model.id).where(model.run_id == run_id,
+                                                     model.raw_blob_ref == artifact_id).limit(1)):  # fmt: skip
+                found = ("message/rfc822", f"{run_id}-{artifact_id[:12]}.eml")
+                break
+        if found is None:
+            att = session.execute(
+                select(m.Attachment.mime_type, m.Attachment.filename)
+                .where(m.Attachment.run_id == run_id, m.Attachment.blob_ref == artifact_id)
+                .limit(1)
+            ).first()
+            if att is not None:
+                found = (att.mime_type, att.filename)
+        if found is None and evaluator:
+            rep = session.execute(
+                select(m.ReportRow.evaluation_id, m.ReportRow.format)
+                .join(m.Evaluation, m.Evaluation.id == m.ReportRow.evaluation_id)
+                .where(m.Evaluation.run_id == run_id, m.ReportRow.blob_ref == artifact_id)
+                .limit(1)
+            ).first()
+            if rep is not None:
+                found = (REPORT_TYPES.get(rep.format, "application/octet-stream"),
+                         report_filename(run_id, rep.evaluation_id, rep.format))  # fmt: skip
+    if found is None:
+        raise NotFound(f"artifact {artifact_id[:80]} not found for run {run_id}")
+    return Response(blobs(request).get(artifact_id),
+                    headers=safe_download_headers(found[1], found[0]))  # fmt: skip
+
+
+def report_filename(run_id: str, evaluation_id: str, fmt: str) -> str:
+    return f"{run_id}-{evaluation_id}.{REPORT_EXTENSIONS.get(fmt, 'bin')}"
 
 
 # ---- evaluations (WS-B service) --------------------------------------------------------
@@ -502,6 +593,12 @@ def evaluate_run(
     principal: Evaluator,
     idempotency_key: Idem = None,
 ) -> Response:
+    """Grade the recorded run with an answer key (default: the latest compatible version).
+
+    404 when the run or the requested answer-key version does not exist; 409 CONFLICT when
+    the key is not compatible with the run's scenario version (`details.answer_key_version`,
+    `details.scenario_versions`, `details.run_scenario_version`) and for replay runs
+    (`details.replay_of`: evaluate the original run instead)."""
     service = _evaluations(request)
 
     def evaluate() -> EvaluationReport:
@@ -540,9 +637,12 @@ def evaluation_report(
     principal: Evaluator,
     fmt: Annotated[Literal["json", "junit", "markdown"], Query(alias="format")] = "json",
 ) -> Response:
-    """Download one evaluation's report (JSON, JUnit XML or Markdown)."""
+    """Download one evaluation's report (JSON, JUnit XML or Markdown) as an attachment named
+    `<run_id>-<evaluation_id>.<json|xml|md>`."""
     service = _evaluations(request)
     sc = scope(principal)
     if evaluation_id not in {r.evaluation_id for r in service.list(sc, run_id)}:
         raise NotFound(f"evaluation {evaluation_id} not found")
-    return Response(service.report_blob(sc, evaluation_id, fmt), media_type=REPORT_TYPES[fmt])
+    name = report_filename(run_id, evaluation_id, fmt)
+    return Response(service.report_blob(sc, evaluation_id, fmt),
+                    headers=safe_download_headers(name, REPORT_TYPES[fmt]))  # fmt: skip

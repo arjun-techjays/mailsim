@@ -16,7 +16,7 @@ from mailsim.api import schemas as s
 from mailsim.api.deps import Agent
 from mailsim.api.errors import ErrorEnvelope
 from mailsim.api.pagination import page_messages
-from mailsim.api.routers._common import agent
+from mailsim.api.routers._common import ATTACHMENT_RESPONSE, agent, attachment_response
 from mailsim.domain.errors import InvalidRequest, NotFound
 from mailsim.domain.models import CanonicalMessage
 from mailsim.engine.facades import AgentMailbox
@@ -66,6 +66,27 @@ def get_thread(
     return agent(request, principal).get_thread(thread_id)
 
 
+@router.get("/messages/{message_id}/attachments/{attachment_id}", response_class=Response,
+            responses=ATTACHMENT_RESPONSE)  # fmt: skip
+def get_attachment(
+    request: Request, mailbox_id: str, message_id: str, attachment_id: str, principal: Agent
+) -> Response:
+    """Download one attachment (ids from the message's `attachments`). Served as a download
+    with its stored media type; never rendered inline. Recorded as a `read`."""
+    ref, data = agent(request, principal).get_attachment(message_id, attachment_id)
+    return attachment_response(ref, data)
+
+
+@router.post("/messages/{message_id}/forward", response_model=s.SendResult, status_code=201)
+def forward(
+    request: Request, mailbox_id: str, message_id: str, body: s.ForwardRequest, principal: Agent
+) -> s.SendResult:
+    """Forward a message, attachments included, to `to` (and `cc`); `text` is written above
+    the forwarded content. Counts as one `forward` operation."""
+    out = agent(request, principal).forward(message_id, to=body.to, cc=body.cc, text=body.text)
+    return s.SendResult.model_validate(out)
+
+
 @router.post("/messages/{message_id}/reply", response_model=s.SendResult, status_code=201)
 def reply(
     request: Request, mailbox_id: str, message_id: str, body: s.ReplyRequest, principal: Agent
@@ -76,8 +97,8 @@ def reply(
 
 @router.post("/messages", response_model=s.SendResult, status_code=201)
 def send(request: Request, mailbox_id: str, body: s.SendRequest, principal: Agent) -> s.SendResult:
-    """Send to simulated mailboxes only. External recipients follow the scenario's rule
-    (deny/sink/event); nothing is ever delivered outside the sandbox."""
+    """Send a new message. Recipients may be bare addresses or `Name <addr@example.com>`; a
+    recipient the run does not allow is rejected with EXTERNAL_DELIVERY_BLOCKED (422)."""
     out = agent(request, principal).send(to=body.to, cc=body.cc, bcc=body.bcc,
                                          subject=body.subject, text=body.text, html=body.html)  # fmt: skip
     return s.SendResult.model_validate(out)

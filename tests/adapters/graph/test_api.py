@@ -15,7 +15,7 @@ from mailsim.adapters.graph import errors as graph_errors
 from mailsim.adapters.graph import resources as res
 from mailsim.domain.errors import RateLimited, UpstreamUnavailable
 from mailsim.domain.models import CanonicalMessage
-from tests.adapters.graph.conftest import BASE, make_app, open_agent
+from tests.adapters.graph.conftest import BASE, open_agent
 from tests.scenarios import write_variant
 
 pytestmark = pytest.mark.db
@@ -207,6 +207,42 @@ def test_filter_and_search(world):
         "ErrorNotSupported")  # fmt: skip
 
 
+def test_kql_search(world):
+    world.inject("kql-one", text="urgent bank change")
+    subjects = lambda **q: sorted(m["subject"] for m in world.messages(**q))  # noqa: E731
+    assert subjects(**{"$search": '"subject:invoice"'}) == [
+        "Invoice INV-001",
+        "Re: Invoice INV-001",
+    ]
+    assert subjects(**{"$search": '"from:vendor AND hasAttachments:true"'}) == ["Invoice INV-001"]
+    assert subjects(**{"$search": '"body:urgent OR subject:\\"INV-001\\""'}) == [
+        "Invoice INV-001", "Re: Invoice INV-001", "kql-one"]  # fmt: skip
+    assert subjects(**{"$search": '"subject:invoice NOT hasAttachments:true"'}) == [
+        "Re: Invoice INV-001"]  # fmt: skip
+    assert subjects(**{"$search": '"bank subject:kql"'}) == ["kql-one"]  # free text + property
+    assert subjects(**{"$search": '"isRead:false subject:kql"'}) == ["kql-one"]
+    assert subjects(**{"$search": '"received>=2100-01-01"'}) == []
+    assert "kql-one" in subjects(**{"$search": '"received:2000-01-01..2100-01-01"'})
+    assert world.messages("sentitems", **{"$search": '"subject:invoice"'}) == []
+    # a phrase alone, two words (AND, any order), a phrase plus a word
+    assert subjects(**{"$search": '"\\"bank change\\""'}) == ["kql-one"]
+    assert subjects(**{"$search": '"\\"change bank\\""'}) == []
+    assert subjects(**{"$search": '"change urgent"'}) == ["kql-one"]
+    assert subjects(**{"$search": '"\\"bank change\\" urgent"'}) == ["kql-one"]
+    assert subjects(**{"$search": '"\\"bank change\\" nothing"'}) == []
+    assert subjects(**{"$search": '"re:meeting"'}) == []  # unknown prefix: plain text
+    body = err(world.call("GET", "/me/messages", params={"$search": '"isRead:maybe"'}), 400,
+               "ErrorInvalidRequest")  # fmt: skip
+    assert "true or false" in body["message"]
+    err(world.call("GET", "/me/messages", params={"$search": '"received:9999-12-31"'}), 400,
+        "ErrorInvalidRequest")  # fmt: skip
+    err(world.call("GET", "/me/messages", params={"$search": '"(subject:x"'}), 400,
+        "ErrorInvalidRequest")  # fmt: skip
+    count = world.call("GET", "/me/messages/$count", expect=200,
+                       params={"$search": '"subject:invoice"'})  # fmt: skip
+    assert count.text == "2"
+
+
 def test_get_select_expand_prefer_and_mime(world):
     m = invoice(world)
     assert m["hasAttachments"] and m["internetMessageId"] == "<invoice-001@example.test>"
@@ -241,18 +277,35 @@ def test_attachments(world):
     assert one["contentBytes"] == att["contentBytes"] and one["size"] == att["size"]
     raw = world.call("GET", f"/me/messages/{m['id']}/attachments/{att['id']}/$value", 200)
     assert raw.headers["content-type"] == "application/pdf" and raw.content.startswith(b"%PDF")
+    # recorded bytes are a download, never rendered (shared api.downloads headers)
+    assert raw.headers["content-disposition"] == 'attachment; filename="INV-001.pdf"'
+    assert raw.headers["x-content-type-options"] == "nosniff"
+    assert raw.headers["content-security-policy"].startswith("sandbox")
     err(world.call("GET", f"/me/messages/{m['id']}/attachments/AAMknope"), 404,
         "ErrorItemNotFound")  # fmt: skip
 
 
-def test_attachment_metadata_without_a_blob_store(env, world):
-    app = make_app(env)
-    app.state.blobs = None
-    client = TestClient(app, raise_server_exceptions=False)
-    client.headers["Authorization"] = f"Bearer {world.key}"
+def test_attachment_resource_without_bytes_has_no_content(world):
+    m = world.mb().list_messages(folder="inbox").items
+    msg = next(x for x in m if x.attachments)
+    doc = res.attachment(msg.attachments[0], msg, None)
+    assert "contentBytes" not in doc and doc["size"] > 0
+
+
+def test_attachment_bytes_are_audited_facade_reads(world):
     m = invoice(world)
-    (att,) = client.get(f"{BASE}/me/messages/{m['id']}/attachments").json()["value"]
-    assert "contentBytes" not in att and att["size"] > 0
+
+    def reads():
+        return [a for a in world.ev.actions(world.run)
+                if a["actor"] == "agent" and "attachment_id" in a["input"]]  # fmt: skip
+
+    (att,) = world.get(f"/me/messages/{m['id']}/attachments")["value"]
+    assert len(reads()) == 1  # the list's contentBytes
+    world.get(f"/me/messages/{m['id']}/attachments/{att['id']}")
+    world.call("GET", f"/me/messages/{m['id']}/attachments/{att['id']}/$value", 200)
+    world.get(f"/me/messages/{m['id']}", params={"$expand": "attachments"})
+    world.get("/me/messages", params={"$expand": "attachments", "$top": 100})
+    assert len(reads()) == 5 and {a["operation"] for a in reads()} == {"read"}
 
 
 # --------------------------------------------------------------------------- folders
@@ -622,7 +675,7 @@ def test_reply_overrides_are_one_engine_reply(env, tmp_path, world):
             {"emailAddress": {"address": "someone@real-domain.example"}}]}})  # fmt: skip
     err(blocked, 403, "ErrorMessageSubmissionBlocked")
     new = {e["type"] for e in world.ev.events(run)[before:]}
-    assert new <= {"agent.action_counted"}, new
+    assert new <= {"agent.action_counted", "delivery.external_blocked"}, new
     assert world.get("/me/mailFolders/sentitems/messages", headers=hdr)["value"] == []
     world.post(f"/me/messages/{inv['id']}/reply", {"comment": "checking", "message": {
         "subject": "Re: INV-001 verification",
@@ -641,3 +694,94 @@ def test_reply_overrides_are_one_engine_reply(env, tmp_path, world):
     headers = {h["name"]: h["value"] for h in sent[0]["internetMessageHeaders"]}
     assert sent[0]["subject"] == "Re: INV-001 verification"
     assert headers["In-Reply-To"] == "<invoice-001@example.test>"
+
+
+# ------------------------------------------------------------- QA-A1 regressions (B-1/B-3/B-5)
+def _agent_outcomes(world, since: int = 0) -> list[tuple[str, str]]:
+    return [(a["operation"], a["outcome"]) for a in world.ctl.actions(world.run)[since:]
+            if a["actor"] == "agent"]  # fmt: skip
+
+
+def test_outlook_draft_flows_record_no_agent_errors(world):
+    """B-1: valid createReply -> send, draft create -> PATCH -> GET and delta over deleted
+    drafts never leave a NOT_FOUND behind (internal draft-id lookups are not agent errors)."""
+    delta = world.get("/me/messages/delta")
+    while "@odata.nextLink" in delta:
+        delta = world.client.get(delta["@odata.nextLink"]).json()
+    n = len(world.ctl.actions(world.run))
+    d = world.post("/me/messages", {"subject": "d", "toRecipients": [
+        {"emailAddress": {"address": "vendor@example.test"}}]})  # fmt: skip
+    world.patch(f"/me/messages/{d['id']}", {"subject": "d2"})
+    world.get(f"/me/messages/{d['id']}")
+    dr = world.post(f"/me/messages/{invoice(world)['id']}/createReply", {"comment": "verify"})
+    world.post(f"/me/messages/{dr['id']}/send", None, 202)
+    changes = world.client.get(delta["@odata.deltaLink"]).json()
+    assert any("@removed" in m for m in changes["value"])  # replaced/sent drafts are gone
+    assert {o for _, o in _agent_outcomes(world, n)} == {"ok"}, _agent_outcomes(world, n)
+    # a genuinely unknown id is still recorded as the agent's error
+    err(world.call("GET", "/me/messages/AAMk-unknown"), 404, "ErrorItemNotFound")
+    assert _agent_outcomes(world)[-1] == ("read", "NOT_FOUND")
+
+
+def test_create_reply_then_send_is_a_reply(world):
+    """B-3: Outlook's createReply -> (PATCH) -> send is ONE engine `reply`: ANSWERED on the
+    original, the send_reply trigger arms, policies see `reply` (not draft + send)."""
+    inv = invoice(world)
+    before = world.ev.events(world.run)[-1]["sequence"]
+    dr = world.post(f"/me/messages/{inv['id']}/createReply", {"comment": "We will verify."})
+    world.patch(f"/me/messages/{dr['id']}", {"body": {"contentType": "text",
+                                                      "content": "Verifying by phone."}})  # fmt: skip
+    world.post(f"/me/messages/{dr['id']}/send", None, 202)
+    writes = [op for op, _ in _agent_outcomes(world) if op not in ("read", "search")]
+    assert writes == ["draft", "draft", "reply"]
+    got = world.get(f"/me/messages/{inv['id']}", params={"$expand": ANSWERED})
+    assert got["singleValueExtendedProperties"][0]["value"] == "102"
+    new = [e for e in world.ev.events(world.run) if e["sequence"] > before]
+    assert [e["payload"]["id"] for e in new if e["type"] == "event.armed"] == [
+        "vendor-bank-change"]  # fmt: skip
+    world.ctl.advance(world.run, 60)
+    assert world.by_subject("Updated bank details")
+    sent = world.messages("sentitems")
+    assert [m["subject"] for m in sent] == ["RE: Invoice INV-001"]
+    assert sent[0]["conversationId"] == inv["conversationId"]
+    # createReplyAll and createForward drafts keep their nature too
+    ra = world.post(f"/me/messages/{inv['id']}/createReplyAll", {})
+    world.post(f"/me/messages/{ra['id']}/send", None, 202)
+    fw = world.post(f"/me/messages/{inv['id']}/createForward", {"toRecipients": [
+        {"emailAddress": {"address": "vendor@example.test"}}]})  # fmt: skip
+    assert fw["hasAttachments"] is True  # Outlook forwards carry the attachments
+    world.post(f"/me/messages/{fw['id']}/send", None, 202)
+    writes = [op for op, _ in _agent_outcomes(world) if op not in ("read", "search")]
+    assert writes[-4:] == ["draft", "reply", "draft", "forward"]
+
+
+def test_received_mail_cannot_be_moved_into_sent_or_drafts(world):
+    """B-5: no forged "sent" evidence by moving / copying received mail."""
+    mid = invoice(world)["id"]
+    for path in ("move", "copy"):
+        for dest in ("sentitems", "drafts"):
+            r = world.call("POST", f"/me/messages/{mid}/{path}", json={"destinationId": dest})
+            err(r, 403, "ErrorAccessDenied")
+    assert world.messages("sentitems") == [] and world.messages("drafts") == []
+
+
+def test_expanded_attachment_bytes_are_capped_per_page(world, monkeypatch):
+    from email.message import EmailMessage
+
+    msg = EmailMessage()
+    msg["From"], msg["To"], msg["Subject"] = "vendor@example.test", "finance@example.test", "pdf2"
+    msg.set_content("second")
+    msg.add_attachment(b"%PDF-2" * 10, maintype="application", subtype="pdf", filename="b.pdf")
+    world.ctl.inject(world.run, world.mailbox, msg.as_bytes())
+    monkeypatch.setattr(graph_api, "MAX_EXPANDED_ATTACHMENT_BYTES", 50)  # one PDF per page
+    params = {"$expand": "attachments", "$filter": "hasAttachments eq true", "$top": 10}
+    first = world.get("/me/messages", params=params)
+    assert len(first["value"]) == 1 and first["value"][0]["attachments"][0]["contentBytes"]
+    r = world.client.get(first["@odata.nextLink"])
+    assert r.status_code == 200, r.text
+    second = r.json()
+    assert len(second["value"]) == 1 and "@odata.nextLink" not in second
+    assert {first["value"][0]["subject"], second["value"][0]["subject"]} == {
+        "Invoice INV-001", "pdf2"}  # fmt: skip
+    monkeypatch.setattr(graph_api, "MAX_EXPANDED_ATTACHMENT_BYTES", 10**6)
+    assert len(world.get("/me/messages", params=params)["value"]) == 2

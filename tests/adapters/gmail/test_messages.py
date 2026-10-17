@@ -133,7 +133,7 @@ def test_send_reply_maps_to_engine_reply(gm):
     ops = gm.actions()
     assert ("reply", "ok") in ops and ("send", "ok") not in ops
     # the original is now answered (sandbox label for the IMAP \\Answered flag)
-    assert "MAILSIM_ANSWERED" in gm.get(f"/messages/{gm.gid(INVOICE)}")["labelIds"]
+    assert "ANSWERED" in gm.get(f"/messages/{gm.gid(INVOICE)}")["labelIds"]
     # the reply went to the vendor's (simulated) mailbox only
     theirs = [m for m in gm.ev.state(gm.run)["messages"] if m["mailbox_id"] == gm.vendor_mb]
     assert [m["subject"] for m in theirs] == ["Re: Invoice INV-001"]
@@ -247,16 +247,15 @@ def test_modify_folders_flags_labels(gm):
     n = len(gm.actions())
     assert set(modify(add=["STARRED", lab], remove=["UNREAD"])) == {"INBOX", "STARRED", lab}
     assert [a for a in gm.actions()[n:] if a[0] != "read"] == []  # no-op costs no writes
-    assert set(modify(add=["UNREAD", "MAILSIM_ANSWERED", "MAILSIM_DELETED"], remove=["STARRED", lab])) == {
-        "INBOX", "UNREAD", "MAILSIM_ANSWERED", "MAILSIM_DELETED"}  # fmt: skip
-    modify(remove=["MAILSIM_ANSWERED", "MAILSIM_DELETED"])
+    assert set(modify(add=["UNREAD", "ANSWERED", "DELETED"], remove=["STARRED", lab])) == {
+        "INBOX", "UNREAD", "ANSWERED", "DELETED"}  # fmt: skip
+    modify(remove=["ANSWERED", "DELETED"])
     assert modify(remove=["INBOX"]) == ["UNREAD"]  # archived
     assert modify(add=["INBOX"]) == ["INBOX", "UNREAD"]
     assert set(modify(add=["TRASH"])) == {"TRASH", "UNREAD"}
     assert set(modify(remove=["TRASH"])) == {"INBOX", "UNREAD"}  # restored to where it was
-    assert set(modify(add=["SENT"])) == {"SENT", "UNREAD"}
-    assert modify(remove=["SENT"]) == ["UNREAD"]
-    assert modify(add=["INBOX"], remove=["SENT"]) == ["INBOX", "UNREAD"]
+    # received mail never becomes "sent" by relabelling (QA B-5: forged evidence)
+    assert modify(add=["SENT"], expect=403)[1] == "PERMISSION_DENIED"
     assert modify(add=["INBOX"]) == ["INBOX", "UNREAD"]  # already there
     assert modify(add=["INBOX", "TRASH"], expect=400)[1] == "INVALID_REQUEST"
     assert modify(add=["STARRED"], remove=["STARRED"], expect=400)[1] == "INVALID_REQUEST"
@@ -287,3 +286,38 @@ def test_trash_untrash_delete_batch(gm):
     assert gm.get("/messages") == {"resultSizeEstimate": 0}
     gm.call("POST", "/messages/batchDelete", 204)
     assert ("delete", "ok") in gm.actions()
+
+
+# ------------------------------------------------------------- QA-A1 regressions (B-1/B-3)
+def test_draft_reply_send_and_history_are_clean_and_one_reply(gm):
+    """B-1: drafts create/update/send + history never record a NOT_FOUND (history looks up
+    replaced drafts internally). B-3: a draft whose In-Reply-To names a mailbox message is
+    sent as ONE `reply` (ANSWERED, send_reply trigger), a plain draft as `send`."""
+    h0 = gm.get("/profile")["historyId"]
+    hdr = "<invoice-001@example.test>"
+    raw = raw_message({"To": "vendor@example.test", "Subject": "Re: Invoice INV-001",
+                       "In-Reply-To": hdr, "References": hdr}, "We will verify.")  # fmt: skip
+    d = gm.post("/drafts", json={"message": {"raw": b64(raw)}})
+    gm.call("PUT", f"/drafts/{d['id']}", json={"message": {"raw": b64(raw)}})
+    sent = gm.post("/drafts/send", json={"id": d["id"]})
+    assert "SENT" in sent["labelIds"]
+    hist = gm.get("/history", params={"startHistoryId": h0})
+    assert hist["history"]
+    plain = gm.post("/drafts", json={"message": {"raw": b64(raw_message(  # unknown parent
+        {"To": "vendor@example.test", "Subject": "fyi", "In-Reply-To": "<nope@x.test>"},
+        "x"))}})  # fmt: skip
+    gm.post("/drafts/send", json={"id": plain["id"]})
+    gm.get("/history", params={"startHistoryId": h0})
+    # drafts.update decides the threading from the NEW message: a reply draft rewritten
+    # without reply headers is a plain send
+    gone = gm.post("/drafts", json={"message": {"raw": b64(raw)}})
+    gm.call("PUT", f"/drafts/{gone['id']}", json={"message": {"raw": b64(raw_message(
+        {"To": "vendor@example.test", "Subject": "no longer a reply"}, "x"))}})  # fmt: skip
+    gm.post("/drafts/send", json={"id": gone["id"]})
+    acts = gm.actions()
+    assert {o for _, o in acts} == {"ok"}, acts
+    writes = [op for op, _ in acts if op not in ("read", "search", "create_run", "start")]
+    assert writes == ["draft", "draft", "reply", "draft", "send", "draft", "draft", "send"]
+    assert "ANSWERED" in gm.get(f"/messages/{gm.gid(INVOICE)}")["labelIds"]
+    armed = [e["payload"]["id"] for e in gm.ev.events(gm.run) if e["type"] == "event.armed"]
+    assert armed == ["vendor-bank-change"]

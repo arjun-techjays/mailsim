@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,13 +30,41 @@ def _url(db: str) -> str:
     return ADMIN_URL.rsplit("/", 1)[0] + "/" + db
 
 
+def _test_db_name(name: str) -> str:
+    """Only plain lowercase test database names are ever dropped or created."""
+    if not re.fullmatch(r"[a-z0-9_]+", name) or "test" not in name:
+        raise ValueError(f"refusing to manage database {name!r}: not a *test* database name")
+    return name
+
+
 def recreate_database(name: str) -> str:
+    _test_db_name(name)
     admin = create_engine(ADMIN_URL, isolation_level="AUTOCOMMIT")
     with admin.connect() as conn:
         conn.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
         conn.execute(text(f'CREATE DATABASE "{name}"'))
     admin.dispose()
     return _url(name)
+
+
+def drop_database(name: str) -> None:
+    _test_db_name(name)
+    admin = create_engine(ADMIN_URL, isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+    admin.dispose()
+
+
+@contextmanager
+def scratch_database(suffix: str) -> Iterator[str]:
+    """A fresh `<TEST_DB>_<suffix>` database for one test, dropped afterwards (every extra
+    database lengthens PostgreSQL's crash-recovery sync and uses disk)."""
+    name = f"{TEST_DB}_{suffix}"
+    url = recreate_database(name)
+    try:
+        yield url
+    finally:
+        drop_database(name)
 
 
 @pytest.fixture(scope="session")

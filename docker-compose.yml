@@ -5,6 +5,10 @@
 services:
   postgres:
     image: postgres:16
+    # Crash recovery syncs the data directory before replaying WAL. The default (fsync) opens
+    # and fsyncs every file of every database: minutes with many test databases on a busy
+    # disk. syncfs (PostgreSQL 14+, Linux) syncs each file system once instead.
+    command: ["postgres", "-c", "recovery_init_sync_method=syncfs"]
     environment:
       POSTGRES_USER: mailsim
       POSTGRES_PASSWORD: mailsim

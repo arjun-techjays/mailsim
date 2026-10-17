@@ -1,4 +1,4 @@
-import { apiRequest, apiText, type ApiConfig, type RequestOptions } from './client';
+import { apiBlob, apiRequest, apiText, buildUrl, longTimeoutMs, type ApiConfig, type RequestOptions } from './client';
 import type {
   // connect & status (UX-F3)
   AgentCredential,
@@ -49,6 +49,27 @@ import type {
 
 const seg = encodeURIComponent;
 
+/**
+ * `path` (as listed by the server) re-expressed relative to the API base, or an error when it
+ * would leave the API: another origin, outside `<base path>/v1/`, or encoded dot segments.
+ */
+export function apiRelativePath(baseUrl: string, path: string, here: string = window.location.href): string {
+  const refuse = () => new Error(`Refusing to download from ${path}: not a file of this API.`);
+  if (!path.startsWith('/') || /%2e/i.test(path) || /[\\]/.test(path)) throw refuse();
+  // An empty base URL means "this dashboard's origin" (the dev/preview proxy), path prefix none.
+  const base = new URL(baseUrl.trim() || '/', here);
+  const basePath = base.pathname.replace(/\/+$/, '');
+  const target = new URL(buildUrl(baseUrl, path), here);
+  const inside = target.origin === base.origin && target.pathname.startsWith(`${basePath}/v1/`);
+  if (!inside || target.search || target.hash) throw refuse();
+  return target.pathname.slice(basePath.length);
+}
+
+/** One user action's retry identity: reuse `idempotencyKey` for every attempt of that action. */
+export interface ActionOptions {
+  idempotencyKey?: string;
+}
+
 export interface EventFilters {
   type?: string;
   actor?: string;
@@ -69,8 +90,10 @@ export function createApi(cfg: ApiConfig) {
     /** Caller identity (older servers without it answer 404/501; callers fall back). */
     me: () => get<MeOut>('/v1/me'),
     /** Runs of the caller's project, newest first. */
-    listRuns: (cursor: string | null, filters: { scenario_key?: string; status?: string; page_size?: number } = {}) =>
-      get<RunPage>('/v1/runs', { cursor, ...filters }),
+    listRuns: (
+      cursor: string | null,
+      filters: { scenario_key?: string; status?: string; page_size?: number; include_replays?: boolean } = {},
+    ) => get<RunPage>('/v1/runs', { cursor, ...filters, include_replays: filters.include_replays ? 'true' : undefined }),
     /** Evaluation report export; returned as text for download. */
     report: (runId: string, evaluationId: string, format: ReportFormat) =>
       apiText(cfg, `${run(runId)}/evaluations/${seg(evaluationId)}/report`, { format }),
@@ -80,8 +103,14 @@ export function createApi(cfg: ApiConfig) {
       get<ScenarioOut[]>('/v1/scenarios', filters, signal),
     getScenario: (key: string) => get<ScenarioOut>(`/v1/scenarios/${seg(key)}`),
     listAnswerKeys: (key: string) => get<AnswerKeyOut[]>(`/v1/scenarios/${seg(key)}/answer-keys`),
-    createRun: (key: string, body: RunCreate) =>
-      post<RunCreated>(`/v1/scenarios/${seg(key)}/runs`, body, true),
+    /** Slow (seeds every mailbox): long timeout; pass one Idempotency-Key per user action. */
+    createRun: (key: string, body: RunCreate, opts: ActionOptions = {}) =>
+      apiRequest<RunCreated>(cfg, 'POST', `/v1/scenarios/${seg(key)}/runs`, {
+        body,
+        idempotent: true,
+        idempotencyKey: opts.idempotencyKey,
+        timeoutMs: longTimeoutMs(),
+      }),
     accuracy: (key: string, params: { answerKeyVersion?: number; builds?: string[]; baseline?: string }) =>
       get<BuildComparison>(`/v1/scenarios/${seg(key)}/accuracy`, {
         answer_key_version: params.answerKeyVersion,
@@ -111,8 +140,14 @@ export function createApi(cfg: ApiConfig) {
 
     // evaluation (evaluator role)
     listEvaluations: (id: string) => get<EvaluationReport[]>(`${run(id)}/evaluations`),
-    evaluate: (id: string, body: EvaluationRequest) =>
-      post<EvaluationReport>(`${run(id)}/evaluations`, body, true),
+    /** Slow (LLM-judged assertions): long timeout; pass one Idempotency-Key per user action. */
+    evaluate: (id: string, body: EvaluationRequest, opts: ActionOptions = {}) =>
+      apiRequest<EvaluationReport>(cfg, 'POST', `${run(id)}/evaluations`, {
+        body,
+        idempotent: true,
+        idempotencyKey: opts.idempotencyKey,
+        timeoutMs: longTimeoutMs(),
+      }),
 
     // ---- connect & status (UX-F3)
     /** Server mode, LLM provider, served interfaces and IMAP/SMTP listener status. */
@@ -122,7 +157,7 @@ export function createApi(cfg: ApiConfig) {
     /** Real call through one interface with the given agent key, made by the server. */
     testConnection: (id: string, body: ConnectionTestRequest) =>
       post<ConnectionTestResult>(`${run(id)}/connection-tests`, body),
-    /** Mints a new agent key (shown once); the server revokes the run's earlier agent keys. */
+    /** Mints a new agent key (shown once). Earlier agent keys stay valid until revoked explicitly. */
     mintAgentKey: (id: string) => post<AgentCredential>(`${run(id)}/agent-credentials`),
     revokeKey: (keyId: string) => apiRequest<void>(cfg, 'DELETE', `/v1/keys/${seg(keyId)}`),
     // ---- builder (UX-F1): scenario authoring (namespaced to avoid merge collisions)
@@ -168,6 +203,24 @@ export function createApi(cfg: ApiConfig) {
         page_size: params.pageSize,
         order: params.order,
       }),
+    /**
+     * Operator download of one attachment (controller or evaluator; not an agent action). The
+     * bytes are only ever handed to the browser as a download, never rendered.
+     */
+    attachment: (id: string, mailboxId: string, messageId: string, attachmentId: string) =>
+      apiBlob(cfg, `${run(id)}/mailboxes/${seg(mailboxId)}/messages/${seg(messageId)}/attachments/${seg(attachmentId)}`),
+    /**
+     * Download a file URL the server handed out (ArtifactOut.url). It must resolve, on the API's
+     * own origin, to a path under `<API base path>/v1/` (after URL normalisation; encoded dot
+     * segments refused), so a listed URL can never send the key anywhere else.
+     */
+    download: (path: string) => {
+      try {
+        return apiBlob(cfg, apiRelativePath(cfg.baseUrl, path));
+      } catch (e) {
+        return Promise.reject(e);
+      }
+    },
     activity: (id: string, afterId: number, limit = 100) =>
       get<ActivityPage>(`${run(id)}/activity`, { after_id: afterId, limit }),
     // ---- end answer keys & mailbox browser (UX-F2)

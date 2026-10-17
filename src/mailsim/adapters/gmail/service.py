@@ -42,7 +42,7 @@ from mailsim.domain.errors import (
     UnsupportedOperation,
 )
 from mailsim.domain.models import Address, CanonicalMessage
-from mailsim.engine.facades import AgentMailbox
+from mailsim.engine.facades import AgentMailbox, DraftThreading
 from mailsim.engine.pagination import decode_cursor, encode_cursor
 from mailsim.mime.build import build_mime
 from mailsim.mime.parse import ParsedMessage, parse_mime
@@ -197,7 +197,7 @@ class GmailService:
         ref = find_attachment(msg, attachment_id)
         if ref is None:
             raise NotFound(f"attachment {attachment_id} not found")
-        data = self._blobs.get(ref.blob_ref)
+        _, data = self.mb.get_attachment(msg.id, ref.id)
         return {"attachmentId": attachment_id, "size": len(data), "data": b64url(data)}
 
     def resource(self, msg: CanonicalMessage, fmt: str = "full",
@@ -307,7 +307,7 @@ class GmailService:
             raise InvalidRequest("a label cannot be both added and removed")
         for label_id in (*add, *remove):
             if lb.check_label_id(label_id) == "unmodelled":
-                raise UnsupportedOperation(f"label {label_id} is not modelled by this sandbox")
+                raise UnsupportedOperation(f"label {label_id} is not supported")
         if "DRAFT" in add or "DRAFT" in remove:
             raise InvalidRequest("Invalid label: DRAFT changes only through the drafts API")
         folder = self._target_folder(msg, add, remove)
@@ -358,8 +358,9 @@ class GmailService:
     def _parse(raw: bytes) -> tuple[ParsedMessage, str]:
         parsed = parse_mime(raw)
         if parsed.attachments:
-            raise UnsupportedOperation("attachments are not supported when composing through this "
-                                       "sandbox profile (send, drafts)")  # fmt: skip
+            raise UnsupportedOperation(
+                "attachments are not supported when composing (send, drafts)"
+            )
         text = (
             parsed.body_text
             if parsed.body_text is not None
@@ -413,7 +414,7 @@ class GmailService:
         of those beyond the insert itself is a separate write."""
         for label_id in label_ids:
             if lb.check_label_id(label_id) == "unmodelled":
-                raise UnsupportedOperation(f"label {label_id} is not modelled by this sandbox")
+                raise UnsupportedOperation(f"label {label_id} is not supported")
         if "DRAFT" in label_ids:
             raise InvalidRequest("Invalid label: DRAFT (create drafts through the drafts API)")
         folder = next((lb.LABEL_FOLDER[x] for x in ("TRASH", "INBOX", "SENT") if x in label_ids),
@@ -444,19 +445,28 @@ class GmailService:
         return {"id": gmail_draft_id(msg), "message": body}
 
     def create_draft(self, raw: bytes, thread_id: str | None) -> CanonicalMessage:
+        """A draft whose In-Reply-To (or References) names a message of the mailbox answers it
+        (as in `send`): drafts.send then is ONE engine `reply`, not a plain `send`."""
         parsed, content = self._draft_content(raw)
         self._check_thread(thread_id)
+        orig = self._reply_target(parsed)
         out = self.mb.create_draft(**content, in_reply_to=parsed.in_reply_to,
-                                   references=parsed.references or None)  # fmt: skip
+                                   references=parsed.references or None,
+                                   reply_to=orig.id if orig is not None else None)  # fmt: skip
         self._changed()
         return self.mb.get_message(out["message_id"])
 
     def update_draft(self, gdid: str, raw: bytes) -> CanonicalMessage:
         """Replace the draft's content; the draft id stays, the message id changes (as in
-        Gmail). Reply headers carry over from the original draft."""
+        Gmail). The new message's In-Reply-To / References decide its threading and which
+        message it answers, as in drafts.create."""
         current = self.draft(gdid)
-        _, content = self._draft_content(raw)
-        out = self.mb.update_draft(current.id, **content, keep_attachments=False)
+        parsed, content = self._draft_content(raw)
+        orig = self._reply_target(parsed)
+        threading = DraftThreading(parsed.in_reply_to, tuple(parsed.references),
+                                   orig.id if orig is not None else None)  # fmt: skip
+        out = self.mb.update_draft(current.id, **content, keep_attachments=False,
+                                   threading=threading)  # fmt: skip
         self._changed()
         return self.mb.get_message(out["message_id"])
 
@@ -573,12 +583,6 @@ class GmailService:
 
     # ------------------------------------------------------------------------- history
 
-    def _current(self, message_id: str) -> CanonicalMessage | None:
-        try:
-            return self.mb.get_message(message_id)
-        except NotFound:
-            return None
-
     def history(self, start: str | None, max_results: int | None, token: str | None,
                 label_id: str | None, history_types: list[str]) -> dict[str, Any]:  # fmt: skip
         since = history_number(start, "startHistoryId is required (a non-negative integer)")
@@ -591,12 +595,12 @@ class GmailService:
             since = history_number(decode_cursor(token)[0], "malformed page token")
         feed = self.mb.list_changes(since, limit=page_size(max_results))
         if feed["reset_since"]:
-            raise NotFound("Requested entity was not found: startHistoryId predates a run reset; "
+            raise NotFound("Requested entity was not found: startHistoryId is no longer valid; "
                            "perform a full sync")  # fmt: skip
         changes = [c for c in feed["changes"] if c.get("message_id")]
-        current = {
-            mid: self._current(mid) for mid in dict.fromkeys(str(c["message_id"]) for c in changes)
-        }
+        ids = list(dict.fromkeys(str(c["message_id"]) for c in changes))
+        present = self.mb.present_messages(ids)  # deleted ones are absent, not agent errors
+        current: dict[str, CanonicalMessage | None] = {mid: present.get(mid) for mid in ids}
         wanted = set(history_types)
         records = []
         for change in changes:

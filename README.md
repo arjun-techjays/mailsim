@@ -24,7 +24,17 @@ Implements **Phase 1 (core simulation engine)** of
 `serve` is `uv run python -m mailsim.serve serve`: one command brings up the API and the
 IMAP/SMTP listeners (`--no-protocols` to skip them, `--imap-port` / `--smtp-port` to move them).
 The agent key comes from the run-creation response (shown once) or
-`POST /v1/runs/{run_id}/agent-credentials` (controller key). The dashboard's run page shows every
+`POST /v1/runs/{run_id}/agent-credentials` (controller key). Minting a key does not revoke the
+run's other agent keys (one per interface is fine); the response carries `key_id`, and a key is
+revoked only explicitly with `DELETE /v1/keys/{key_id}` (or when the run is cancelled or
+completed). Agents download attachment bytes with
+`GET /v1/mailboxes/{mailbox_id}/messages/{message_id}/attachments/{attachment_id}` and forward
+with `POST /v1/mailboxes/{mailbox_id}/messages/{message_id}/forward`; operators download with
+`GET /v1/runs/{run_id}/mailboxes/{mailbox_id}/messages/{message_id}/attachments/{attachment_id}`.
+Agent-facing errors never mention the simulation: on the agent mailbox routes and every agent
+interface the action budget error reads `QUOTA_EXCEEDED` / "action limit reached" and an
+inactive run reads `RUN_NOT_ACTIVE` / "mailbox is not available" (operator routes keep
+`SIMULATION_LIMIT_EXCEEDED` and the engine messages). The dashboard's run page shows every
 endpoint for a run (`GET /v1/runs/{run_id}/connection`), tests a key through any interface
 (`POST /v1/runs/{run_id}/connection-tests`) and shows which interface each action came through
 (`GET /v1/runs/{run_id}/activity`).
@@ -49,6 +59,56 @@ step), then evaluate after the run (`POST /v1/runs/{id}/evaluations`, evaluator 
 builds (`GET /v1/scenarios/{key}/accuracy`). The OpenAPI document is `openapi/openapi.json`.
 LLM provider outages surface as `UPSTREAM_UNAVAILABLE` (HTTP 503, `details.retryable`).
 Expired idempotency records are swept on each claim; `python -m mailsim.serve sweep` purges all.
+
+## Answer keys, evaluations and replays
+
+* **Answer-key references are checked** at validate (`POST .../answer-keys/validate`) and at
+  publish (also for inline scenario assertions). Unknown names are errors with dotted paths
+  (`answer_key.assertions.3.check.where.folder`), never a silent PASS or a forever-INCONCLUSIVE:
+  folders (`inbox sent drafts trash archive`, any case), flags (`SEEN ANSWERED FLAGGED DELETED
+  DRAFT`), operations per `actor` (agent: the scenario agent operations; simulator:
+  `persona.reply persona.failed`; controller: `create_run start cancel error reset inject tick
+  advance replay`), outcomes (`ok`, `any` or an error code), protocol `error_codes`, and the
+  persona mailboxes and event ids (`evaluate_at.event`, temporal `first`/`then`) of **every**
+  scenario version the key is compatible with (`scenario_versions`, all when omitted). Labels
+  are free-form and not checked. A key that covers all versions (`scenario_versions` omitted)
+  is checked against the versions that exist **when it is published**: publishing a later
+  scenario version does not re-check stored keys (a name missing from that version then grades
+  as it always did, e.g. `no mailbox for persona` or INCONCLUSIVE). List `scenario_versions`
+  explicitly, or publish a new key version, when a new scenario version renames things.
+* **YAML booleans.** Only `true`/`false` are booleans; `on`/`off`/`yes`/`no` stay strings
+  (YAML 1.2 rules), so a persona script's `on:` key and `checks_default: on` work unquoted.
+  Where a boolean is expected (`once: yes`), those strings are still accepted.
+  `checks_default` also accepts `true`/`false`.
+* **Evaluation errors.** `POST /v1/runs/{id}/evaluations` answers 404 when the requested
+  `answer_key_version` does not exist and 409 CONFLICT when it (or every key) is not compatible
+  with the run's scenario version (`details.answer_key_version`, `details.scenario_versions`,
+  `details.run_scenario_version`).
+* **Builds.** Runs created without `agent_build` store null; `/accuracy` groups them as
+  `(no build)` (a reserved name: run creation refuses it, and blank names). A build literally
+  named `unspecified` is an ordinary build.
+* **Replays** (`POST /v1/runs/{id}/replay`) copy the recorded event log into a new run with
+  `replay_of` set; the copy ends `REPLAYED` (or keeps the original's final status when the
+  original had already ended) and takes no further commands. A replay has no agent actions, so
+  it is never graded: evaluating it answers 409 (`details.replay_of`: evaluate the original).
+  Replays are left out of `/accuracy` and of `GET /v1/runs` unless `include_replays=true`
+  (or `status=REPLAYED`).
+* **Downloads.** Reports (`.../evaluations/{evaluation_id}/report?format=json|junit|markdown`)
+  download as `<run_id>-<evaluation_id>.<json|xml|md>`. Every blob in `GET /v1/runs/{id}/artifacts`
+  carries a `url` (`GET /v1/runs/{id}/artifacts/{ref}`, controller or evaluator; reports
+  evaluator only) served as an attachment with `X-Content-Type-Options: nosniff` and
+  `Content-Security-Policy: sandbox`.
+
+## Release notes
+
+* **QA-A3 (evaluation, validation, runs).** Answer keys with unknown references are refused
+  (validate and publish). New run status `REPLAYED`; replay runs are not evaluated and are
+  hidden from `/accuracy` and the runs list by default (`include_replays=true`). Incompatible
+  answer keys answer 409. Report and artifact downloads are attachments
+  (`GET /v1/runs/{id}/artifacts/{ref}`); only passive content types are echoed, everything
+  else (HTML, SVG, XML, scripts) is `application/octet-stream`. **Breaking:** `/accuracy`
+  reports runs without a build as `(no build)` (was `unspecified`): `builds=unspecified` no
+  longer selects them, use `builds=(no build)`.
 
 ## Local development: Claude Code CLI provider and no-auth dashboard
 
@@ -162,6 +222,13 @@ uv run sim run-reset $R --project $P
 uv run sim run-replay $R --project $P     # exit 0 only if replayed state hash matches
 ```
 
+## Leadership inboxes (pseudonymized Enron corpus)
+
+`scenarios/leadership/` holds CEO, CFO, CBO and Director of Finance inboxes of a fictional
+company, generated from the public Enron corpus by `sim import enron` and
+`sim generate leadership`. They are pseudonymized, topic-routed and threaded, with injected
+risk items and minimal answer keys. See [`docs/leadership-inboxes.md`](docs/leadership-inboxes.md).
+
 ## Architecture (Phase 1)
 
 ```
@@ -178,7 +245,7 @@ cli -> engine -> scenario -> store -> (mime | threads | providers) -> domain
 * **Reset** = new epoch on the same run: a `run.reset` event wipes the projection and the
   baseline (seed) events are re-applied. History is kept.
 * **Replay** = re-apply recorded events into a fresh run and compare state hashes; missing blob
-  artifacts are reported, not regenerated.
+  artifacts are reported, not regenerated. The copy is then closed (`REPLAYED`, see above).
 * **No external delivery.** `DeliveryPolicy` is the only place recipients are resolved: simulated
   mailboxes, or the external mode `deny` (default, whole send rejected) / `sink` / `event`.
   There is no SMTP/socket/HTTP client in `src/` (ruff banned-api + AST test), tests patch sockets
@@ -187,6 +254,28 @@ cli -> engine -> scenario -> store -> (mime | threads | providers) -> domain
   adds listeners; Phase 1 proves the in-process guarantee and ships the deny-by-default network.
 * **Tenancy.** Application-scoped (`Scope(tenant, project)` on every repository/engine call;
   out-of-scope resources are `NOT_FOUND`). Row-level security is deferred to Phase 2 with auth.
+
+## Release notes: engine semantics (QA-A1)
+
+Re-grading a run recorded before this change can give a different result:
+
+* **Blocked external attempts count.** A send refused for a recipient outside the simulation
+  (deny mode, prohibited external delivery, SMTP `RCPT TO` answered 550) is an attempt:
+  `no_external_delivery_attempts` / `no_external_recipients` fail on it (older recordings are
+  graded from the EXTERNAL_DELIVERY_BLOCKED action). Both invariants count only the AGENT's
+  attempts; a persona's or the controller's do not. An envelope refusal is a budgeted `send`
+  action (`delivery.external_blocked` event); an SMTP session is closed (421) after 20 of them.
+  The bundled finance answer key is now **version 3** (`no-real-delivery` reworded).
+* **`folder: sent` is provenance, not placement.** Only messages created by a real send count as
+  sent (and only real drafts as drafts); agents can no longer move or copy received mail into
+  Sent or Drafts (PERMISSION_DENIED).
+* **Checks off with nothing decided is INCONCLUSIVE.** When a key has mandatory grading
+  assertions and none of them was decided (all NOT_APPLICABLE), invariants alone no longer make
+  the run PASSED and accuracy is blank. Invariant-only keys are graded as before.
+* A reply or forward drafted first (Graph createReply/createForward, Gmail drafts with
+  In-Reply-To) is sent as ONE `reply` / `forward` (ANSWERED, `send_reply` triggers, policies).
+* Persona replies are stamped at their due virtual time; one advance may record several
+  `advance` actions (one per stop).
 
 ## Known limitations / deliberate deviations
 
@@ -203,6 +292,15 @@ cli -> engine -> scenario -> store -> (mime | threads | providers) -> domain
   threads, change feed) are free but still recorded as actions for efficiency metrics.
 * The audit action log records recipients, counts and sizes but not subjects, bcc or bodies.
 * `actor` is a trusted-caller argument; Phase 2/3 must expose agent-facing facades that hard-code it.
+
+## Troubleshooting
+
+* **PostgreSQL takes minutes to come back after a crash** ("syncing data directory (fsync)" in
+  its log): crash recovery syncs every file of every database first. The Compose service runs
+  with `recovery_init_sync_method=syncfs` (one sync per file system); recreate the container to
+  apply it (`docker compose up -d postgres`). Keep the number of databases down: the test suite
+  drops its per-run helper databases (`<MAILSIM_TEST_DB>_local`, `_migration`) when done; old
+  ones from earlier runs can be dropped by hand (`DROP DATABASE ... WITH (FORCE)`).
 
 See the PR notes: provider id mapping tables, PASSED/FAILED verdicts (need the Phase 2
 evaluator), scheduled events support only `email.receive`, persona runtime is not implemented.

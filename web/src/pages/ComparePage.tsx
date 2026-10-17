@@ -72,7 +72,10 @@ function ComparisonView({ data }: { data: BuildComparison }) {
           })}
         </tbody>
       </table>
-      <p className="hint">Variance and standard deviation are n/a for builds with fewer than two runs.</p>
+      <p className="hint">
+        Variance and standard deviation are n/a for builds with fewer than two runs. “(no build)” groups runs started
+        without a build id; type it in Builds to select them.
+      </p>
       <h2>Per-assertion pass rate</h2>
       {assertions.length === 0 ? (
         <Empty>No per-assertion data.</Empty>

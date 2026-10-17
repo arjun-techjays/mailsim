@@ -38,7 +38,7 @@ from mailsim.domain.models import (
     AttachmentRef,
     CanonicalMessage,
 )
-from mailsim.domain.states import TERMINAL, RunStatus, check_transition
+from mailsim.domain.states import NO_BUILD, TERMINAL, RunStatus, check_transition
 from mailsim.engine import projectors as _projectors  # noqa: F401  (registers projectors)
 from mailsim.engine.context import current_interface
 from mailsim.engine.delivery import DeliveryPolicy, ExternalMode
@@ -66,6 +66,13 @@ EVALUATOR = "evaluator"
 # Budget rule (user decision): only WRITES consume the agent action budget. Reads and polling
 # are free but still recorded as actions (efficiency metrics).
 READ_OPERATIONS = frozenset({"read", "search"})
+PRESENT_CHUNK = 500  # ids per IN list in present_messages
+MAX_ADVANCE_SECONDS = 10 * 365 * 86400  # longest single clock advance
+# Upper bound of one attachment read (interfaces may pass a lower one, e.g. MCP's base64 cap).
+MAX_ATTACHMENT_READ_BYTES = 25 * 1024 * 1024
+# Distinct recipients (to + cc + bcc) of one agent send, whatever the interface (SMTP's
+# RCPT limit is the same).
+MAX_RECIPIENTS = 100
 
 
 def counts_against_budget(operation: str) -> bool:
@@ -77,6 +84,21 @@ class Ctx:
     session: Session
     run: m.Run
     gen: IdGenerator
+    _names: dict[str, str] | None = None
+
+    def persona_names(self) -> dict[str, str]:
+        """email -> display name of the scenario's personas that have one (PersonaSpec.name).
+        Cosmetic: used for MIME From/To/Cc only; matching always uses the address."""
+        if self._names is None:
+            sv = self.session.get(m.ScenarioVersion, self.run.scenario_version_id)
+            personas = ((sv.spec.get("scenario") or {}).get("personas") or []) if sv else []
+            self._names = {str(p["email"]).lower(): str(p["name"]) for p in personas
+                           if p.get("name") and p.get("email")}  # fmt: skip
+        return self._names
+
+    def named(self, addr: Address) -> Address:
+        name = addr.name or self.persona_names().get(addr.email.lower())
+        return Address(email=addr.email, name=name) if name else addr
 
     @property
     def now(self) -> datetime:
@@ -115,6 +137,18 @@ class DraftContent:
     in_reply_to: str | None = None
     references: list[str] = field(default_factory=list)
     attachments: list[ParsedAttachment] = field(default_factory=list)
+    # what the draft answers: {"kind": "reply" | "forward", "message_id": <original>}; sending
+    # it is then that operation (spec: a reply drafted then sent is a reply)
+    origin: dict[str, str] | None = None
+
+
+@dataclass(frozen=True)
+class DraftThreading:
+    """Replacement threading for update_draft: headers plus the message answered (or None)."""
+
+    in_reply_to: str | None = None
+    references: tuple[str, ...] = ()
+    reply_to: str | None = None
 
 
 @dataclass
@@ -244,6 +278,10 @@ class SimEngine:
             except NotFound:
                 return
             seq_start = run.next_seq
+            if isinstance(exc, ExternalDeliveryBlocked):
+                # a blocked attempt is still an attempt: evidence for the delivery invariants
+                # (nothing is delivered; the payload names the refused recipients only)
+                append(s, run, self._blocked_event(run, actor, operation, exc))
             if count:
                 append(
                     s,
@@ -271,18 +309,53 @@ class SimEngine:
                 )
             )
 
+    @staticmethod
+    def _blocked_event(run: m.Run, actor: str, operation: str,
+                       exc: ExternalDeliveryBlocked) -> Event:  # fmt: skip
+        listed = exc.details.get("recipients")
+        recipients = [str(r) for r in listed] if isinstance(listed, list) else []
+        return Event("delivery.external_blocked",
+                     {"recipients": recipients, "mode": str(run.config.get("external_delivery")),
+                      "handled": "blocked"},
+                     actor=actor, operation=operation, outcome=str(exc.code))  # fmt: skip
+
+    def record_external_blocked(self, scope: Scope, run_id: str, mailbox_id: str,
+                                recipients: list[str], *, actor: str = AGENT) -> None:  # fmt: skip
+        """A send attempt an interface refused at the envelope (SMTP `RCPT TO` outside the
+        simulation), recorded exactly like a blocked REST send: the normal command guard
+        (RUNNING run, `send` permission, own mailbox, budget), then an EXTERNAL_DELIVERY_BLOCKED
+        `send` action that counts against the budget, with its `delivery.external_blocked`
+        evidence event. Nothing is delivered. Always raises the refusal it recorded."""
+        rcpts = [r.strip().lower() for r in recipients]
+
+        def fn(c: Ctx) -> None:
+            raise ExternalDeliveryBlocked(f"delivery to {', '.join(rcpts)} is not permitted",
+                                          details={"recipients": rcpts})  # fmt: skip
+
+        self._command(scope, run_id, actor, "send", {"to": rcpts, "stage": "envelope"}, fn,
+                      mailbox_id=mailbox_id)  # fmt: skip
+
+    @staticmethod
+    def _permitted(ctx: Ctx, operation: str) -> bool:
+        agent = ctx.config["agent"]
+        return operation not in agent["prohibited"] and (
+            not agent["allowed"] or operation in agent["allowed"]
+        )
+
     def _guard(
         self, ctx: Ctx, actor: str, operation: str, mailbox_id: str | None, require_running: bool
     ) -> None:
         run = ctx.run
+        if run.replay_of is not None and not (actor != AGENT and operation in READ_OPERATIONS):
+            # a replay copy is never live, whatever status it was stored with (replays made
+            # before REPLAYED existed stayed READY/RUNNING): only operator reads are allowed
+            raise RunNotActive(f"run {run.id} is a replay of {run.replay_of}; it takes no commands")
         if require_running and run.status != RunStatus.RUNNING:
             raise RunNotActive(f"run is {run.status}, not RUNNING")
         if actor != AGENT:
             return
         agent = ctx.config["agent"]
-        if operation in agent["prohibited"] or (
-            agent["allowed"] and operation not in agent["allowed"]
-        ):
+        if not self._permitted(ctx, operation):
             raise PermissionDenied(f"operation {operation!r} is not permitted for the agent")
         if mailbox_id is not None:
             mb = ctx.session.get(m.Mailbox, (mailbox_id, run.id))
@@ -536,8 +609,10 @@ class SimEngine:
     ) -> dict[str, Any]:
         if checks not in (None, "on", "off"):
             raise InvalidRequest("checks must be 'on', 'off' or omitted")
-        if agent_build is not None and not (0 < len(agent_build) <= 200):
-            raise InvalidRequest("agent_build must be 1-200 characters")
+        if agent_build is not None and not (0 < len(agent_build) <= 200 and agent_build.strip()):
+            raise InvalidRequest("agent_build must be 1-200 characters, not only whitespace")
+        if agent_build == NO_BUILD:  # the accuracy report's name for runs without a build
+            raise InvalidRequest(f"agent_build {NO_BUILD!r} is reserved: omit agent_build instead")
         return {
             # post-run evaluation preferences only; never contains the answer key
             "evaluation": {"checks": checks, "agent_build": agent_build},
@@ -709,7 +784,9 @@ class SimEngine:
         """Rebuild state in a fresh run from the recorded events/artifacts only.
 
         Nothing is regenerated: payloads carry ids, timestamps and blob references. The
-        result states whether the replayed state hash equals the original's.
+        result states whether the replayed state hash equals the original's (compared before
+        the replay is closed). The replay run (`replay_of` set) is then closed with a final
+        `run.status_changed` to REPLAYED unless the copied log already ended the run.
         """
         with self._sf.begin() as s:
             orig = lock_run(s, scope, run_id)
@@ -747,6 +824,12 @@ class SimEngine:
                 )  # fmt: skip
                 missing.extend(self._missing_blobs(ev.payload))
             replay_hash = state_hash(snapshot(s, replay.id))
+            if RunStatus(replay.status) not in TERMINAL:
+                # a replay is a frozen copy of a recording, never a live agent run: it ends in
+                # REPLAYED (an original that had already ended keeps its final status)
+                append(s, replay, Event("run.status_changed",
+                                        {"from": replay.status, "to": str(RunStatus.REPLAYED)},
+                                        actor=CONTROLLER, operation="replay"))  # fmt: skip
             s.add(
                 m.ActionRow(
                     run_id=orig.id,
@@ -897,9 +980,9 @@ class SimEngine:
                 try:
                     raw = build_mime(
                         message_id=c.gen.message_id_header(c.config["domain"]),
-                        from_=_addr(message["from"]),
-                        to=[_addr(a) for a in message["to"]],
-                        cc=[_addr(a) for a in message.get("cc", [])],
+                        from_=c.named(_addr(message["from"])),
+                        to=[c.named(_addr(a)) for a in message["to"]],
+                        cc=[c.named(_addr(a)) for a in message.get("cc", [])],
                         subject=message.get("subject", ""),
                         date=c.now,
                         text=message.get("text"),
@@ -925,12 +1008,22 @@ class SimEngine:
     def tick(self, scope: Scope, run_id: str) -> dict[str, Any]:
         return self._command(scope, run_id, CONTROLLER, "tick", {}, lambda c: self._advance(c, 0))
 
-    def advance(self, scope: Scope, run_id: str, seconds: float) -> dict[str, Any]:
-        return self._command(scope, run_id, CONTROLLER, "advance", {"seconds": seconds if math.isfinite(seconds) else str(seconds)},
-                             lambda c: self._advance(c, seconds))  # fmt: skip
+    def advance(self, scope: Scope, run_id: str, seconds: float, *,
+                stop_at: datetime | None = None) -> dict[str, Any]:  # fmt: skip
+        """Move the clock by `seconds`, firing due scheduled events at their due times.
 
-    def _advance(self, c: Ctx, seconds: float) -> dict[str, Any]:
-        if not math.isfinite(seconds) or seconds < 0 or seconds > 10 * 365 * 86400:
+        `stop_at` pauses the move early (the whole `seconds` is still validated, so an
+        over-limit advance fails before anything moves): the persona runtime uses it to stop
+        at each persona reply's due time and stamp the reply then (`virtual_time` says where
+        the clock stopped)."""
+        input_: dict[str, Any] = {"seconds": seconds if math.isfinite(seconds) else str(seconds)}
+        if stop_at is not None:
+            input_["stop_at"] = iso(stop_at)
+        return self._command(scope, run_id, CONTROLLER, "advance", input_,
+                             lambda c: self._advance(c, seconds, stop_at))  # fmt: skip
+
+    def _advance(self, c: Ctx, seconds: float, stop_at: datetime | None = None) -> dict[str, Any]:
+        if not math.isfinite(seconds) or seconds < 0 or seconds > MAX_ADVANCE_SECONDS:
             raise InvalidRequest("seconds must be a finite, non-negative duration")
         start = c.run.start_time
         assert start is not None
@@ -940,6 +1033,8 @@ class SimEngine:
             raise SimulationLimitExceeded(
                 f"virtual duration limit of {limit}s exceeded", details={"limit": limit}
             )
+        if stop_at is not None:
+            target = max(c.now, min(target, parse_ts(stop_at)))
         items = c.session.execute(
             select(m.ScheduledEvent).where(m.ScheduledEvent.run_id == c.run.id)
         ).scalars()
@@ -979,8 +1074,8 @@ class SimEngine:
         )
         raw = build_mime(
             message_id=c.gen.message_id_header(c.config["domain"]),
-            from_=Address(email=personas[spec["from"]]),
-            to=[Address(email=personas[r]) for r in recipients],
+            from_=c.named(Address(email=personas[spec["from"]])),
+            to=[c.named(Address(email=personas[r])) for r in recipients],
             subject=spec["subject"],
             date=c.now,
             text=spec["body"],
@@ -1062,7 +1157,8 @@ class SimEngine:
             policy = DeliveryPolicy(c.config["external_delivery"])
             plan = policy.plan([a.email for a in rcpts], self._emails(c))
             raw = build_mime(message_id=c.gen.message_id_header(c.config["domain"]),
-                             from_=Address(email=persona.email), to=rcpts, subject=subject,
+                             from_=c.named(Address(email=persona.email)),
+                             to=[c.named(a) for a in rcpts], subject=subject,
                              date=c.now, text=text, in_reply_to=irt, references=refs or None)  # fmt: skip
             delivered = [
                 self._insert_raw(c, mbid, raw, event_type="message.delivered", folder_type="inbox",
@@ -1213,6 +1309,10 @@ class SimEngine:
         to_a, cc_a, bcc_a = [_addr(a) for a in to], [_addr(a) for a in cc], [_addr(a) for a in bcc]
         if not (to_a or cc_a or bcc_a):
             raise InvalidRequest("at least one recipient is required")
+        distinct = len({a.email for a in (*to_a, *cc_a, *bcc_a)})
+        if distinct > MAX_RECIPIENTS:
+            raise InvalidRequest(f"too many recipients ({distinct}; at most {MAX_RECIPIENTS})",
+                                 details={"recipients": distinct, "max": MAX_RECIPIENTS})  # fmt: skip
         policy = DeliveryPolicy(c.config["external_delivery"])
         plan = policy.plan([a.email for a in (*to_a, *cc_a, *bcc_a)], self._emails(c))
         if (
@@ -1221,12 +1321,13 @@ class SimEngine:
             and "external_delivery" in c.config["agent"]["prohibited"]
         ):
             raise ExternalDeliveryBlocked(
-                "agent is prohibited from external delivery",
+                f"delivery to {', '.join(plan.external)} is not permitted",
                 details={"recipients": plan.external},
             )
         header = c.gen.message_id_header(c.config["domain"])
         raw = build_mime(
-            message_id=header, from_=Address(email=mb.email), to=to_a, cc=cc_a, subject=subject,
+            message_id=header, from_=c.named(Address(email=mb.email)),
+            to=[c.named(a) for a in to_a], cc=[c.named(a) for a in cc_a], subject=subject,
             date=c.now, text=text, html=html, in_reply_to=in_reply_to, references=references,
             attachments=attachments,
         )  # fmt: skip
@@ -1242,10 +1343,13 @@ class SimEngine:
                     received_at=c.now, bcc=[], actor=actor, operation=operation,
                 )
             )  # fmt: skip
+        sunk_ref = (
+            self.blobs.put(raw) if plan.external and policy.mode is ExternalMode.SINK else None
+        )  # one stored copy per send, referenced by every delivery.sunk event
         for ext in plan.external:
-            if policy.mode is ExternalMode.SINK:
+            if sunk_ref is not None:
                 c.emit("delivery.sunk",
-                       {"id": c.gen.next("snk"), "recipient": ext, "raw_blob_ref": self.blobs.put(raw),
+                       {"id": c.gen.next("snk"), "recipient": ext, "raw_blob_ref": sunk_ref,
                         "sent_at": iso(c.now)}, actor=actor, operation=operation)  # fmt: skip
             else:
                 c.emit("delivery.external_attempt",
@@ -1264,44 +1368,97 @@ class SimEngine:
         mb = self._mailbox(c, mailbox_id)
         raw = build_mime(
             message_id=c.gen.message_id_header(c.config["domain"]),
-            from_=Address(email=mb.email), to=[_addr(a) for a in d.to], cc=[_addr(a) for a in d.cc],
+            from_=c.named(Address(email=mb.email)), to=[c.named(_addr(a)) for a in d.to],
+            cc=[c.named(_addr(a)) for a in d.cc],
             subject=d.subject, date=c.now, text=d.text, html=d.html, in_reply_to=d.in_reply_to,
             references=d.references or None, attachments=d.attachments or None,
         )  # fmt: skip
+        ids: dict[str, Any] = {"draft_id": draft_id}
+        if d.origin:
+            ids["origin"] = dict(d.origin)
         return self._insert_raw(
             c, mailbox_id, raw, event_type="draft.created", folder_type="drafts",
             flags=["DRAFT", "SEEN"], received_at=None, bcc=[_addr(a) for a in d.bcc], is_draft=True,
-            actor=actor, operation="draft", provider_ids={"draft_id": draft_id},
+            actor=actor, operation="draft", provider_ids=ids,
         )  # fmt: skip
 
     def create_draft(
         self, scope: Scope, run_id: str, mailbox_id: str, *, to: list[str], subject: str,
         text: str = "", cc: list[str] | None = None, bcc: list[str] | None = None,
         html: str | None = None, in_reply_to: str | None = None,
-        references: list[str] | None = None, actor: str = AGENT,
+        references: list[str] | None = None, reply_to: str | None = None,
+        forward_of: str | None = None, actor: str = AGENT,
     ) -> dict[str, Any]:  # fmt: skip
+        """A new draft. `reply_to` / `forward_of` name the message (internal id, this mailbox,
+        not a draft) the draft answers: sending it is then ONE `reply` / `forward` with the same
+        semantics as the direct operation. A reply draft gets the original's threading headers
+        unless given; a forward draft carries the original's attachments."""
+        if reply_to is not None and forward_of is not None:
+            raise InvalidRequest("a draft answers at most one message (reply_to or forward_of)")
         content = DraftContent(
             to, cc or [], bcc or [], subject, text, html, in_reply_to, references or []
         )
 
         def fn(c: Ctx) -> dict[str, Any]:
+            if reply_to is not None:
+                self._answer(c, mailbox_id, content, reply_to, "reply")
+            elif forward_of is not None:
+                self._answer(c, mailbox_id, content, forward_of, "forward")
             draft_id = c.gen.next("drf")
             return {"message_id": self._insert_draft(c, mailbox_id, content, draft_id, actor),
                     "draft_id": draft_id}  # fmt: skip
 
-        return self._command(scope, run_id, actor, "draft", {"to": to, "subject_chars": len(subject)}, fn,
-                             mailbox_id=mailbox_id)  # fmt: skip
+        input_: dict[str, Any] = {"to": to, "subject_chars": len(subject)}
+        if reply_to is not None or forward_of is not None:
+            input_["reply_to" if reply_to is not None else "forward_of"] = reply_to or forward_of
+        return self._command(scope, run_id, actor, "draft", input_, fn, mailbox_id=mailbox_id)
+
+    def _answer(self, c: Ctx, mailbox_id: str, content: DraftContent, origin_id: str,
+                kind: str) -> None:  # fmt: skip
+        """Make `content` a reply / forward draft of `origin_id` (a non-draft of the mailbox)."""
+        orig = self._message(c, mailbox_id, origin_id)
+        if orig.is_draft:
+            raise InvalidRequest(f"message {origin_id} is a draft; it cannot be answered")
+        content.origin = {"kind": kind, "message_id": orig.id}
+        if kind == "reply" and content.in_reply_to is None:
+            content.in_reply_to = orig.message_id_header
+            content.references = content.references or [*orig.references, orig.message_id_header]
+        if kind == "forward":
+            content.attachments = self._blob_attachments(c, orig.id)
 
     def move(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str, folder: str,
              *, actor: str = AGENT) -> None:  # fmt: skip
         def fn(c: Ctx) -> None:
-            self._message(c, mailbox_id, message_id)
+            row = self._message(c, mailbox_id, message_id)
             target = self._resolve_folder(c, mailbox_id, folder)
+            self._check_placement(c, row, target, actor)
             c.emit("message.moved", {"mailbox_id": mailbox_id, "message_id": message_id, "folder_id": target.id},
                    actor=actor, operation="move")  # fmt: skip
 
         self._command(scope, run_id, actor, "move", {"message_id": message_id, "folder": folder},
                       fn, mailbox_id=mailbox_id)  # fmt: skip
+
+    def _check_placement(self, c: Ctx, row: m.Message, target: m.Folder, actor: str) -> None:
+        """Sent and Drafts hold only what the account itself wrote: an agent may not move or
+        copy received mail there (that would forge "sent"/"drafted" evidence). Its own mail
+        (From = this mailbox) may go to Sent, a draft may go back to Drafts."""
+        if (
+            actor != AGENT
+            or target.system_type not in ("sent", "drafts")
+            or row.folder_id == target.id
+        ):
+            return
+        if target.system_type == "drafts" and row.is_draft:
+            return
+        mb = self._mailbox(c, row.mailbox_id)
+        if target.system_type == "sent" and not row.is_draft and row.from_.get("email") == mb.email:
+            return
+        what = "a draft" if row.is_draft else "received mail"
+        raise PermissionDenied(
+            f"{what} cannot be placed in {target.name}: it holds only messages this account "
+            f"{'sent' if target.system_type == 'sent' else 'drafted'}",
+            details={"folder": target.system_type},
+        )
 
     def _resolve_folder(self, c: Ctx, mailbox_id: str, folder: str) -> m.Folder:
         rows = c.session.execute(
@@ -1370,7 +1527,8 @@ class SimEngine:
                                  a.content_id) for a in rows]  # fmt: skip
 
     def forward(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str, *,
-                to: list[str], text: str = "", actor: str = AGENT) -> dict[str, Any]:  # fmt: skip
+                to: list[str], text: str = "", cc: list[str] | None = None,
+                actor: str = AGENT) -> dict[str, Any]:  # fmt: skip
         def fn(c: Ctx) -> dict[str, Any]:
             orig = self._message(c, mailbox_id, message_id)
             subj = (
@@ -1380,12 +1538,14 @@ class SimEngine:
             )
             quoted = (f"{text}\n\n---------- Forwarded message ----------\n"
                       f"From: {orig.from_['email']}\nSubject: {orig.subject}\n\n{orig.body_text or ''}")  # fmt: skip
-            return self._send(c, mailbox_id, to, [], [], subj, quoted, None, None,
+            return self._send(c, mailbox_id, to, list(cc or []), [], subj, quoted, None, None,
                               [*orig.references, orig.message_id_header], actor, "forward",
                               attachments=self._blob_attachments(c, orig.id))  # fmt: skip
 
-        return self._command(scope, run_id, actor, "forward",
-                             {"message_id": message_id, "to": to, "body_chars": len(text)}, fn,
+        input_: dict[str, Any] = {"message_id": message_id, "to": to, "body_chars": len(text)}
+        if cc:
+            input_["cc"] = list(cc)
+        return self._command(scope, run_id, actor, "forward", input_, fn,
                              mailbox_id=mailbox_id)  # fmt: skip
 
     def insert_message(self, scope: Scope, run_id: str, mailbox_id: str, raw: bytes, *,
@@ -1415,9 +1575,12 @@ class SimEngine:
     def update_draft(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str, *,
                      to: list[str], subject: str, text: str = "", cc: list[str] | None = None,
                      bcc: list[str] | None = None, html: str | None = None,
-                     keep_attachments: bool = True, actor: str = AGENT) -> dict[str, Any]:  # fmt: skip
+                     keep_attachments: bool = True, threading: DraftThreading | None = None,
+                     actor: str = AGENT) -> dict[str, Any]:  # fmt: skip
         """Replace a draft's content. The draft id is stable; the message id changes (as in
-        Gmail). Reply headers (and by default attachments) carry over, so threading holds."""
+        Gmail). By default reply headers, the reply/forward origin (and attachments) carry
+        over, so threading holds; `threading` replaces them instead (a client that rewrites
+        the whole message, e.g. Gmail drafts.update with new In-Reply-To / References)."""
 
         def fn(c: Ctx) -> dict[str, Any]:
             old = self._draft(c, mailbox_id, message_id)
@@ -1432,7 +1595,14 @@ class SimEngine:
                 old.in_reply_to,
                 list(old.references),
                 self._blob_attachments(c, old.id) if keep_attachments else [],
+                old.provider_ids.get("origin"),
             )
+            if threading is not None:
+                content.in_reply_to = threading.in_reply_to
+                content.references = list(threading.references)
+                content.origin = None
+                if threading.reply_to is not None:
+                    self._answer(c, mailbox_id, content, threading.reply_to, "reply")
             self._emit_delete(c, old, actor, "draft")
             return {"message_id": self._insert_draft(c, mailbox_id, content, draft_id, actor),
                     "draft_id": draft_id}  # fmt: skip
@@ -1441,12 +1611,43 @@ class SimEngine:
                              {"message_id": message_id, "to": to, "subject_chars": len(subject)}, fn,
                              mailbox_id=mailbox_id)  # fmt: skip
 
+    @staticmethod
+    def _draft_operation(session: Session, run_id: str, mailbox_id: str,
+                         draft: m.Message | None) -> tuple[str, m.Message | None]:  # fmt: skip
+        """`send`, or `reply` / `forward` when the draft answers a message still in the
+        mailbox (then also that original)."""
+        origin = (
+            draft.provider_ids.get("origin")
+            if draft is not None and draft.is_draft and draft.mailbox_id == mailbox_id
+            else None
+        )  # fmt: skip (never reveals anything about another mailbox)
+        if not isinstance(origin, dict) or origin.get("kind") not in ("reply", "forward"):
+            return "send", None
+        orig = session.get(m.Message, (str(origin.get("message_id")), run_id))
+        if orig is None or orig.mailbox_id != mailbox_id or orig.is_draft:
+            return "send", None  # the original is gone: an ordinary send of the draft
+        return str(origin["kind"]), orig
+
     def send_draft(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str, *,
                    actor: str = AGENT) -> dict[str, Any]:  # fmt: skip
-        """Draft -> sent: the draft disappears, a Sent copy appears, recipients receive it."""
+        """Draft -> sent: the draft disappears, a Sent copy appears, recipients receive it.
+
+        A draft that answers a message (create_draft reply_to / forward_of) is sent as ONE
+        `reply` / `forward` operation: permission, budget, triggers and policies see that
+        operation, and a reply marks the original ANSWERED, exactly like the direct command.
+        A reply draft that carries attachments additionally needs `send` or `forward`
+        permission (a reply alone never transmits files)."""
+        with self._sf() as s:  # decide the operation the guard checks (re-verified under lock)
+            run = get_run(s, scope, run_id)
+            op, first = self._draft_operation(s, run.id, mailbox_id,
+                                              s.get(m.Message, (message_id, run.id)))  # fmt: skip
+            orig_id = first.id if first is not None else None
 
         def fn(c: Ctx) -> dict[str, Any]:
             d = self._draft(c, mailbox_id, message_id)
+            now_op, orig = self._draft_operation(c.session, c.run.id, mailbox_id, d)
+            if now_op != op:  # pragma: no cover - the draft's original vanished concurrently
+                raise Conflict("the draft changed while it was being sent; send it again")
             to, cc, bcc = (
                 [a["email"] for a in d.to],
                 [a["email"] for a in d.cc],
@@ -1460,12 +1661,26 @@ class SimEngine:
                 list(d.references),
             )
             atts = self._blob_attachments(c, d.id)
-            self._emit_delete(c, d, actor, "send")
-            return self._send(c, mailbox_id, to, cc, bcc, subject, text, html, irt, refs or None,
-                              actor, "send", attachments=atts)  # fmt: skip
+            if (
+                op == "reply"
+                and atts
+                and actor == AGENT
+                and not (self._permitted(c, "send") or self._permitted(c, "forward"))
+            ):
+                raise PermissionDenied("a reply carrying attachments also needs the 'send' or "
+                                       "'forward' operation, which is not permitted")  # fmt: skip
+            self._emit_delete(c, d, actor, op)
+            result = self._send(c, mailbox_id, to, cc, bcc, subject, text, html, irt,
+                                refs or None, actor, op, attachments=atts)  # fmt: skip
+            if op == "reply" and orig is not None:
+                c.emit("message.flags_changed", {"mailbox_id": mailbox_id, "message_id": orig.id, "add": ["ANSWERED"], "remove": []},
+                       actor=actor, operation="reply")  # fmt: skip
+            return result
 
-        return self._command(scope, run_id, actor, "send", {"draft_message_id": message_id}, fn,
-                             mailbox_id=mailbox_id)  # fmt: skip
+        input_: dict[str, Any] = {"draft_message_id": message_id}
+        if op != "send":  # like the direct reply / forward: the answered message's id
+            input_.update(message_id=orig_id, draft_of=op)
+        return self._command(scope, run_id, actor, op, input_, fn, mailbox_id=mailbox_id)
 
     def copy(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str, folder: str, *,
              actor: str = AGENT) -> dict[str, Any]:  # fmt: skip
@@ -1474,6 +1689,7 @@ class SimEngine:
         def fn(c: Ctx) -> dict[str, Any]:
             row = self._message(c, mailbox_id, message_id)
             target = self._resolve_folder(c, mailbox_id, folder)
+            self._check_placement(c, row, target, actor)
             atts = c.session.execute(
                 select(m.Attachment).where(m.Attachment.run_id == c.run.id, m.Attachment.message_id == row.id)
                 .order_by(m.Attachment.id)
@@ -1847,28 +2063,57 @@ class SimEngine:
                           mailbox_id)  # fmt: skip
 
     def resolve_external_id(self, scope: Scope, run_id: str, mailbox_id: str, provider: str,
-                            entity_type: str, external_id: str, *, actor: str = AGENT) -> str:  # fmt: skip
-        """Provider id -> internal id, only for entities inside `mailbox_id` (else NOT_FOUND)."""
-        if entity_type not in ("message", "thread", "draft"):
+                            entity_type: str | Sequence[str], external_id: str, *,
+                            actor: str = AGENT) -> str:  # fmt: skip
+        """Provider id -> internal id, only for entities inside `mailbox_id` (else NOT_FOUND).
+
+        `entity_type` may list several kinds tried in order (e.g. a Graph id naming a message
+        OR a draft): ONE recorded read, which fails only when none of them matches."""
+        kinds = (entity_type,) if isinstance(entity_type, str) else tuple(entity_type)
+        if not kinds or any(k not in ("message", "thread", "draft") for k in kinds):
             raise InvalidRequest("entity_type must be message, thread or draft")
 
         def fn(c: Ctx) -> str:
             self._mailbox(c, mailbox_id)
             pid = m.ProviderId
-            entity = c.session.scalar(
-                select(pid.entity_id).where(pid.run_id == c.run.id, pid.provider == provider,
-                                            pid.entity_type == entity_type, pid.external_id == external_id)
-            )  # fmt: skip
-            owner: m.Thread | m.Message | None = None
-            if entity:
-                owner = (c.session.get(m.Thread, (entity, c.run.id)) if entity_type == "thread"
-                         else c.session.get(m.Message, (entity, c.run.id)))  # fmt: skip
-            if owner is None or owner.mailbox_id != mailbox_id:
-                raise NotFound(f"{provider} {entity_type} {external_id} not found")
-            return str(entity)
+            for kind in kinds:
+                entity = c.session.scalar(
+                    select(pid.entity_id).where(pid.run_id == c.run.id, pid.provider == provider,
+                                                pid.entity_type == kind, pid.external_id == external_id)
+                )  # fmt: skip
+                owner: m.Thread | m.Message | None = None
+                if entity:
+                    owner = (c.session.get(m.Thread, (entity, c.run.id)) if kind == "thread"
+                             else c.session.get(m.Message, (entity, c.run.id)))  # fmt: skip
+                if owner is not None and owner.mailbox_id == mailbox_id:
+                    return str(entity)
+            raise NotFound(f"{provider} {'/'.join(kinds)} {external_id} not found")
 
         return self._read(scope, run_id, actor, "read",
-                          {"provider": provider, "entity_type": entity_type}, fn, mailbox_id)  # fmt: skip
+                          {"provider": provider, "entity_type": "|".join(kinds)}, fn, mailbox_id)  # fmt: skip
+
+    def present_messages(self, scope: Scope, run_id: str, mailbox_id: str,
+                         message_ids: Sequence[str], *, actor: str = AGENT) -> dict[str, CanonicalMessage]:  # fmt: skip
+        """The listed messages that still exist in this mailbox, keyed by id: ONE read that
+        never fails for a missing id (change feeds look up messages that may be gone)."""
+        wanted = list(dict.fromkeys(message_ids))
+
+        def fn(c: Ctx) -> dict[str, CanonicalMessage]:
+            self._mailbox(c, mailbox_id)
+            found: dict[str, CanonicalMessage] = {}
+            for at in range(0, len(wanted), PRESENT_CHUNK):  # bounded IN lists
+                rows = c.session.execute(
+                    select(m.Message).where(m.Message.run_id == c.run.id, m.Message.mailbox_id == mailbox_id,
+                                            m.Message.id.in_(wanted[at:at + PRESENT_CHUNK]))
+                ).scalars().all()  # fmt: skip
+                found.update((r.id, self._canonical(c, r)) for r in rows)
+            return {i: found[i] for i in wanted if i in found}
+
+        if not wanted:
+            return {}  # nothing to look up: no read is recorded
+        return self._read(
+            scope, run_id, actor, "read", {"message_ids": len(wanted)}, fn, mailbox_id
+        )
 
     def get_message(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str,
                     *, actor: str = AGENT) -> CanonicalMessage:  # fmt: skip
@@ -1886,6 +2131,46 @@ class SimEngine:
 
         return self._read(scope, run_id, actor, "read", {"message_id": message_id, "raw": True},
                           fn, mailbox_id)  # fmt: skip
+
+    def _attachment(self, c: Ctx, mailbox_id: str, message_id: str, attachment_id: str,
+                    max_bytes: int | None) -> tuple[AttachmentRef, bytes]:  # fmt: skip
+        if max_bytes is None:
+            max_bytes = MAX_ATTACHMENT_READ_BYTES
+        self._message(c, mailbox_id, message_id)  # mailbox-scoped: 404 for another mailbox's
+        a = c.session.get(m.Attachment, (attachment_id, c.run.id))
+        if a is None or a.message_id != message_id:
+            raise NotFound(f"attachment {attachment_id} not found")
+        if a.size > max_bytes:
+            raise UnsupportedOperation(
+                f"attachment is {a.size} bytes; this read returns at most {max_bytes} bytes",
+                details={"size": a.size, "max_bytes": max_bytes},
+            )
+        ref = AttachmentRef(id=a.id, filename=a.filename, mime_type=a.mime_type, size=a.size,
+                            checksum=a.checksum, blob_ref=a.blob_ref, inline=a.inline,
+                            content_id=a.content_id)  # fmt: skip
+        return ref, self.blobs.get(a.blob_ref)
+
+    def get_attachment(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str,
+                       attachment_id: str, *, max_bytes: int | None = None,
+                       actor: str = AGENT) -> tuple[AttachmentRef, bytes]:  # fmt: skip
+        """One attachment of a message of this mailbox: its metadata and bytes (a read).
+        Larger than `max_bytes` -> UNSUPPORTED_OPERATION before the bytes are loaded."""
+        return self._read(
+            scope, run_id, actor, "read",
+            {"message_id": message_id, "attachment_id": attachment_id},
+            lambda c: self._attachment(c, mailbox_id, message_id, attachment_id, max_bytes),
+            mailbox_id,
+        )  # fmt: skip
+
+    def inspect_attachment(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str,
+                           attachment_id: str, *,
+                           max_bytes: int | None = None) -> tuple[AttachmentRef, bytes]:  # fmt: skip
+        """Operator read of an attachment of any mailbox in the run (records nothing)."""
+        with self._sf() as s:
+            run = get_run(s, scope, run_id)
+            c = Ctx(s, run, id_generator(run))
+            self._mailbox(c, mailbox_id)
+            return self._attachment(c, mailbox_id, message_id, attachment_id, max_bytes)
 
     def find_by_message_id(self, scope: Scope, run_id: str, mailbox_id: str, header: str,
                            *, actor: str = AGENT) -> list[CanonicalMessage]:  # fmt: skip
@@ -1996,4 +2281,16 @@ class SimEngine:
                              require_running=actor == AGENT, mailbox_id=mailbox_id)  # fmt: skip
 
 
-__all__ = ["AGENT", "CONTROLLER", "EVALUATOR", "SIMULATOR", "ReplayResult", "SimEngine", "TERMINAL"]
+__all__ = [
+    "AGENT",
+    "CONTROLLER",
+    "EVALUATOR",
+    "MAX_ADVANCE_SECONDS",
+    "MAX_ATTACHMENT_READ_BYTES",
+    "MAX_RECIPIENTS",
+    "SIMULATOR",
+    "DraftThreading",
+    "ReplayResult",
+    "SimEngine",
+    "TERMINAL",
+]

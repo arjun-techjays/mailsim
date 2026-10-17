@@ -194,7 +194,9 @@ delivery), then applies the given flags/keywords; answers `[APPENDUID]`.
 **Errors.** Syntax errors answer `BAD`; engine errors answer `NO [code] ENGINE_CODE: message`
 (`NOT_FOUND` -> `NONEXISTENT`, `PERMISSION_DENIED` -> `NOPERM`, `RUN_NOT_ACTIVE` ->
 `UNAVAILABLE`, `SIMULATION_LIMIT_EXCEEDED`/`RATE_LIMITED` -> `LIMIT`, `INVALID_REQUEST`/
-`UNSUPPORTED_OPERATION` -> `CANNOT`, `CONFLICT` -> `INUSE`).
+`UNSUPPORTED_OPERATION` -> `CANNOT`, `CONFLICT` -> `INUSE`). The budget error reads
+`NO [LIMIT] QUOTA_EXCEEDED: action limit reached`; a run that is not active reads
+`RUN_NOT_ACTIVE: mailbox is not available` (also at LOGIN).
 
 **Framing limits.** Command line 64 KiB (`* BYE` beyond it); synchronizing literals up to
 25 MiB + 64 KiB (larger ones answer `NO [TOOBIG]` without the `+` continuation; an oversized
@@ -214,7 +216,7 @@ TLS is configured.
 |-------------|-------------------------------------------------------------------------------|
 | `AUTH`      | required before `MAIL` (`530 5.7.0` otherwise); PLAIN (an authorization identity other than the login is refused) or LOGIN, checked in a worker thread (never on the event loop); `535 5.7.8` on failure; at most 3 `AUTH` per connection (then `421`) and 100 of any command |
 | `MAIL FROM` | must be the authenticated mailbox (`553 5.7.1` otherwise); null sender refused |
-| `RCPT TO`   | per recipient: simulated mailbox -> `250`; outside the simulation -> `550 5.7.1 ... EXTERNAL_DELIVERY_BLOCKED` when the run is in `deny` mode or the agent is prohibited from `external_delivery`, otherwise a plain `250` (the `sink`/`event` policy handles it, never delivered; the mode is not revealed); bad syntax `501 5.1.3`; more than 100 -> `452 4.5.3` |
+| `RCPT TO`   | per recipient: simulated mailbox -> `250`; outside the simulation -> `550 5.7.1 <addr>: relay not permitted` when the run is in `deny` mode or the agent is prohibited from `external_delivery`, otherwise a plain `250` (the `sink`/`event` policy handles it, never delivered; the mode is not revealed); bad syntax `501 5.1.3`; more than 100 -> `452 4.5.3` |
 | `DATA`      | parsed with `mailsim.mime` (25 MiB limit: `552`); `250 2.0.0 OK queued as <Message-ID> id=<message id>` |
 
 Partial rejection works the usual way: rejected recipients get their own 5xx and the message is
@@ -232,15 +234,17 @@ addresses that are envelope recipients stay `To`/`Cc`, other envelope recipients
 3. Otherwise -> engine `send` (one action).
 
 Engine errors map to replies carrying the engine code: `EXTERNAL_DELIVERY_BLOCKED`/
-`PERMISSION_DENIED` `550 5.7.1`, `SIMULATION_LIMIT_EXCEEDED` `554 5.3.4`, `RUN_NOT_ACTIVE`
-`554 5.3.2`, `INVALID_REQUEST` `554 5.6.0`, `RATE_LIMITED` `451 4.7.1`, others `451 4.3.0`.
+`PERMISSION_DENIED` `550 5.7.1`, the action budget `452 4.5.3 quota exceeded` (no code),
+`RUN_NOT_ACTIVE` `554 5.3.2 RUN_NOT_ACTIVE: mailbox is not available` (and `535 5.7.8` with the
+same text at AUTH), `INVALID_REQUEST` `554 5.6.0`, `RATE_LIMITED` `451 4.7.1`, others `451 4.3.0`.
 Unexpected failures answer `451 4.3.0 internal error`; details are only logged.
 
 ## Deviations (by design or pending engine support)
 
 - **Message-ID is assigned by the engine.** The client's `Message-ID`, `Date` and other
   headers are replaced; the assigned `Message-ID` is returned in the `250` DATA reply.
-- **No attachments over SMTP** (`554 5.6.1 UNSUPPORTED_OPERATION`): the agent send operations
+- **No attachments over SMTP** (`554 5.6.1 attachments are not accepted on this submission
+  path`): the agent send operations
   carry text/HTML only. APPEND accepts any MIME.
 - **Replies whose headers resolve to nothing** cost two actions (`draft` + `send`).
 - **APPEND date-time** is accepted and ignored (internal date = virtual clock).
@@ -259,3 +263,10 @@ message bytes with a rebuild via `mailsim.mime.build` when none is stored, `find
 for replies, `mark_seen`, `list_changes`), plus one read-only store lookup the facade does not
 offer: the run's internal addresses and external-delivery decision, reduced to allow/deny and
 re-read for every SMTP transaction (so a run reset is picked up). It reaches neither scenario specs nor answer keys.
+
+## What the agent sees
+
+Greetings and replies are neutral: the SMTP banner is `220 <hostname> ESMTP ready`, the IMAP
+greeting `* OK [CAPABILITY ...] IMAP4rev1 ready`, `ID` answers `("name" "IMAP" "vendor"
+"IMAP")`, and no reply text mentions the simulation or the run's external-delivery mode.
+Engine budget and run-state errors read neutrally to agents (`api/agent_errors.py`, the same on every interface): `SIMULATION_LIMIT_EXCEEDED` is shown as `QUOTA_EXCEEDED` with the message "action limit reached" and no details; `RUN_NOT_ACTIVE` keeps its code with the message "mailbox is not available". Operators (controller/evaluator routes, actions, events) keep the engine codes and messages.

@@ -26,3 +26,44 @@ export function snippet(m: Pick<CanonicalMessage, 'body_text'>): string {
   const t = (m.body_text ?? '').replace(/\s+/g, ' ').trim();
   return t.length > 120 ? `${t.slice(0, 117)}…` : t;
 }
+
+const when = (m: Pick<CanonicalMessage, 'received_at' | 'created_at'>) => m.received_at ?? m.created_at;
+
+/** Compares two timestamps as instants (offsets and precision differ between sources), else as text. */
+function compareTime(a: string, b: string): number {
+  const ta = Date.parse(a);
+  const tb = Date.parse(b);
+  if (!Number.isNaN(ta) && !Number.isNaN(tb)) return ta - tb;
+  return a.localeCompare(b);
+}
+
+type Sortable = Pick<CanonicalMessage, 'id' | 'received_at' | 'created_at' | 'message_id_header' | 'in_reply_to' | 'references'>;
+
+/**
+ * Oldest first, stable: by time, then thread ancestry (a reply after the message it answers, via
+ * In-Reply-To / References, also when both carry the same virtual timestamp), then id.
+ */
+export function chronological<T extends Sortable>(list: readonly T[]): T[] {
+  const byHeader = new Map<string, T>();
+  for (const m of list) if (m.message_id_header) byHeader.set(m.message_id_header, m);
+  const depths = new Map<string, number>();
+  const depth = (m: T): number => {
+    const known = depths.get(m.id);
+    if (known !== undefined) return known;
+    depths.set(m.id, 0); // cycle guard
+    const parentHeader = m.in_reply_to ?? m.references?.[m.references.length - 1] ?? null;
+    const parent = parentHeader ? byHeader.get(parentHeader) : undefined;
+    // Ancestors outside the list still count (References lists the whole chain).
+    const d = parent && parent.id !== m.id ? depth(parent) + 1 : Math.max(m.references?.length ?? 0, m.in_reply_to ? 1 : 0);
+    depths.set(m.id, d);
+    return d;
+  };
+  return [...list].sort(
+    (a, b) => compareTime(when(a), when(b)) || depth(a) - depth(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+  );
+}
+
+/** Newest first: the exact reverse of `chronological`. */
+export function newestFirst<T extends Sortable>(list: readonly T[]): T[] {
+  return chronological(list).reverse();
+}

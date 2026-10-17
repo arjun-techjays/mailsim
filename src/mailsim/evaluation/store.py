@@ -110,9 +110,10 @@ class StoredTrial:
 
 
 def trials_for_scenario(session: Session, scope: Scope, scenario_key: str) -> list[StoredTrial]:
-    """Stored evaluations of `scenario_key` runs, oldest first."""
+    """Stored evaluations of `scenario_key` agent runs (never replay copies), oldest first."""
     rows = session.execute(
         _scoped(scope)
+        .where(m.Run.replay_of.is_(None))
         .add_columns(m.AnswerKey.version)
         .join(m.AnswerKey, m.AnswerKey.id == m.Evaluation.answer_key_id)
         .join(m.Scenario, m.Scenario.id == m.AnswerKey.scenario_id)

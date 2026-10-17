@@ -71,7 +71,7 @@ def test_label_mapping_edges():
     assert lb.user_labels(msg(folder="Custom", labels=[])) == []
     draft = msg(folder="Drafts", labels=["DRAFTS"], is_draft=True)
     assert lb.message_label_ids(draft) == ["DRAFT"]
-    assert lb.system_label("MAILSIM_ANSWERED")["labelListVisibility"] == "labelHide"
+    assert lb.system_label("ANSWERED")["labelListVisibility"] == "labelHide"
     reg = lb.LabelRegistry()
     reg.drop(("r", "m"), "absent")
     reg.put(("r", "m"), "A", {"color": 1}, 5)

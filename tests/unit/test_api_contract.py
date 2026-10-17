@@ -180,3 +180,13 @@ def test_role_dependencies_enforce_roles():
         agent_for_mailbox("mbx_2", agent)
     with pytest.raises(PermissionDenied):
         agent_for_mailbox("mbx_1", ctl)
+
+
+def test_unauthenticated_docs_do_not_name_the_simulator():
+    """/openapi.json and /docs are reachable by agents: title and description stay neutral."""
+    c = client()
+    info = c.get("/openapi.json").json()["info"]
+    docs = c.get("/docs").text.lower()
+    for text in (info["title"].lower(), info["description"].lower(), docs):
+        for word in ("mailsim", "simulat", "sandbox", "testing"):
+            assert word not in text

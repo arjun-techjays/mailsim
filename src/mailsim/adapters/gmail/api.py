@@ -372,5 +372,5 @@ def not_in_profile(request: Request, rest: str, principal: Agent) -> Response:
     parts = rest.split("/")
     if len(parts) >= 3 and parts[0] == "users" and parts[2] in _UNSUPPORTED:
         raise UnsupportedOperation(f"{request.method} {request.url.path} is not supported by "
-                                   "the mailsim Gmail profile (see docs/compat/gmail.md)")  # fmt: skip
+                                   "this server")  # fmt: skip
     raise NotFound(f"{request.method} {request.url.path} not found")

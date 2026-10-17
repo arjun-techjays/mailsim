@@ -94,10 +94,43 @@ def test_partial_recipient_rejection(proto):
     refused = s.sendmail(AGENT, [VENDOR, "boss@real-company.example"],
                          message(to=(VENDOR, "boss@real-company.example")))  # fmt: skip
     code, text = refused["boss@real-company.example"]
-    assert code == 550 and b"EXTERNAL_DELIVERY_BLOCKED" in text
+    assert code == 550 and text.endswith(b"relay not permitted")
     assert len(vendor_inbox(proto)) == 1
     types = {e["type"] for e in proto.ev.events(proto.run)}
     assert not types & {"delivery.external_attempt", "delivery.sunk"}
+    # QA B-2: the refused RCPT is still an attempt: audited, never delivered
+    blocked = [e for e in proto.ev.events(proto.run) if e["type"] == "delivery.external_blocked"]
+    assert [e["payload"]["recipients"] for e in blocked] == [["boss@real-company.example"]]
+    assert ("agent", "send", "EXTERNAL_DELIVERY_BLOCKED") in proto.actions()
+
+
+def test_refused_recipients_are_capped_per_session(proto):
+    from mailsim.protocols.smtp import MAX_REFUSED_RECIPIENTS
+
+    s = proto.smtp()
+    s.mail(AGENT)
+    for i in range(MAX_REFUSED_RECIPIENTS):
+        assert s.rcpt(f"x{i}@real-company.example")[0] == 550
+    assert s.rcpt(VENDOR)[0] == 250  # internal recipients are unaffected until the cap
+    code, text = s.rcpt("one-more@real-company.example")
+    assert code == 421 and b"too many refused" in text
+    with pytest.raises(smtplib.SMTPServerDisconnected):
+        s.noop()
+    blocked = [a for a in proto.actions() if a[2] == "EXTERNAL_DELIVERY_BLOCKED"]
+    assert len(blocked) == MAX_REFUSED_RECIPIENTS + 1  # each refusal is an audited attempt
+
+
+def test_blocked_recipient_audit_failure_keeps_the_550(proto, monkeypatch):
+    from mailsim.engine.facades import AgentMailbox
+
+    def broken(self, recipients):
+        raise RuntimeError("audit store down")
+
+    monkeypatch.setattr(AgentMailbox, "record_external_blocked", broken)
+    s = proto.smtp()
+    s.mail(AGENT)
+    code, text = s.rcpt("boss@real-company.example")
+    assert (code, text) == (550, b"5.7.1 <boss@real-company.example>: relay not permitted")
 
 
 def test_all_recipients_rejected(proto):
@@ -157,7 +190,7 @@ def test_cc_bcc_and_html(proto):
          b"MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\n"
          b"Content-Type: text/plain\r\n\r\nhi\r\n--b\r\nContent-Type: application/pdf\r\n"
          b"Content-Disposition: attachment; filename=a.pdf\r\n\r\nPDF\r\n--b--\r\n",
-         554, b"attachments cannot be submitted"),
+         554, b"attachments are not accepted"),
         (b"From: finance@example.test\r\nTo: vendor@example.test\r\nSubject: s\r\n"
          b"MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\n"
          b"Content-Type: application/x-msdownload\r\n"
@@ -264,7 +297,7 @@ def test_budget_exhaustion(make_proto):
     s.mail(AGENT)
     s.rcpt(VENDOR)
     code, text = s.data(message())
-    assert code == 554 and b"SIMULATION_LIMIT_EXCEEDED" in text
+    assert (code, text) == (452, b"4.5.3 quota exceeded")
 
 
 def test_starttls(make_proto):

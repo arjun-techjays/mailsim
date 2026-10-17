@@ -96,8 +96,8 @@ export interface paths {
         put?: never;
         /**
          * Send
-         * @description Send to simulated mailboxes only. External recipients follow the scenario's rule
-         *     (deny/sink/event); nothing is ever delivered outside the sandbox.
+         * @description Send a new message. Recipients may be bare addresses or `Name <addr@example.com>`; a
+         *     recipient the run does not allow is rejected with EXTERNAL_DELIVERY_BLOCKED (422).
          */
         post: operations["send_v1_mailboxes__mailbox_id__messages_post"];
         delete?: never;
@@ -135,6 +135,48 @@ export interface paths {
          *     GET the message to see its state.
          */
         patch: operations["patch_message_v1_mailboxes__mailbox_id__messages__message_id__patch"];
+        trace?: never;
+    };
+    "/v1/mailboxes/{mailbox_id}/messages/{message_id}/attachments/{attachment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Attachment
+         * @description Download one attachment (ids from the message's `attachments`). Served as a download
+         *     with its stored media type; never rendered inline. Recorded as a `read`.
+         */
+        get: operations["get_attachment_v1_mailboxes__mailbox_id__messages__message_id__attachments__attachment_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/mailboxes/{mailbox_id}/messages/{message_id}/forward": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Forward
+         * @description Forward a message, attachments included, to `to` (and `cc`); `text` is written above
+         *     the forwarded content. Counts as one `forward` operation.
+         */
+        post: operations["forward_v1_mailboxes__mailbox_id__messages__message_id__forward_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/v1/mailboxes/{mailbox_id}/messages/{message_id}/reply": {
@@ -265,6 +307,9 @@ export interface paths {
          * List Runs
          * @description Runs in the caller's project, newest first (by creation time, then id); filter by
          *     `scenario_key` and/or `status`; follow `next_cursor` until it is null.
+         *
+         *     Replay runs (`replay_of` set, status REPLAYED) are copies of another run's log, not agent
+         *     runs: they are left out unless `include_replays=true` (or `status=REPLAYED`).
          */
         get: operations["list_runs_v1_runs_get"];
         put?: never;
@@ -340,8 +385,10 @@ export interface paths {
         put?: never;
         /**
          * Create Agent Credential
-         * @description Issue a new agent key for a run (e.g. after a lost or redacted response). Earlier agent
-         *     keys of the run are revoked.
+         * @description Issue an additional agent key for a run (e.g. after a lost or redacted response, or one
+         *     key per interface). Earlier agent keys are NOT revoked: revoke one explicitly with
+         *     `DELETE /v1/keys/{key_id}`. Cancelling or completing the run revokes all of them. At most
+         *     16 live agent keys per run: beyond that, 409 CONFLICT until one is revoked.
          */
         post: operations["create_agent_credential_v1_runs__run_id__agent_credentials_post"];
         delete?: never;
@@ -359,9 +406,33 @@ export interface paths {
         };
         /**
          * Run Artifacts
-         * @description Trace, raw MIME and attachment blobs; evaluation reports for evaluators only.
+         * @description Trace, raw MIME and attachment blobs; evaluation reports for evaluators only. Blob
+         *     artifacts carry a `url` that downloads them (`GET /v1/runs/{run_id}/artifacts/{ref}`).
          */
         get: operations["run_artifacts_v1_runs__run_id__artifacts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/runs/{run_id}/artifacts/{artifact_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run Artifact
+         * @description Download one listed blob artifact (`artifact_id` = its `ref`) as an attachment. Only
+         *     blobs this run lists for the caller are served (reports: evaluators only); 404 otherwise.
+         *     Served with `Content-Security-Policy: sandbox`, `X-Content-Type-Options: nosniff` and the
+         *     recorded content type only when it is a passive type (else application/octet-stream).
+         */
+        get: operations["run_artifact_v1_runs__run_id__artifacts__artifact_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -474,7 +545,15 @@ export interface paths {
         /** List Evaluations */
         get: operations["list_evaluations_v1_runs__run_id__evaluations_get"];
         put?: never;
-        /** Evaluate Run */
+        /**
+         * Evaluate Run
+         * @description Grade the recorded run with an answer key (default: the latest compatible version).
+         *
+         *     404 when the run or the requested answer-key version does not exist; 409 CONFLICT when
+         *     the key is not compatible with the run's scenario version (`details.answer_key_version`,
+         *     `details.scenario_versions`, `details.run_scenario_version`) and for replay runs
+         *     (`details.replay_of`: evaluate the original run instead).
+         */
         post: operations["evaluate_run_v1_runs__run_id__evaluations_post"];
         delete?: never;
         options?: never;
@@ -491,7 +570,8 @@ export interface paths {
         };
         /**
          * Evaluation Report
-         * @description Download one evaluation's report (JSON, JUnit XML or Markdown).
+         * @description Download one evaluation's report (JSON, JUnit XML or Markdown) as an attachment named
+         *     `<run_id>-<evaluation_id>.<json|xml|md>`.
          */
         get: operations["evaluation_report_v1_runs__run_id__evaluations__evaluation_id__report_get"];
         put?: never;
@@ -585,6 +665,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/runs/{run_id}/mailboxes/{mailbox_id}/messages/{message_id}/attachments/{attachment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Inspect Attachment
+         * @description Operator download of one attachment of any mailbox in the run (records nothing; works
+         *     on finished runs). Always a download: `Content-Disposition: attachment`, `nosniff` and
+         *     `Content-Security-Policy: sandbox`, so it is never rendered in the dashboard's origin.
+         */
+        get: operations["inspect_attachment_v1_runs__run_id__mailboxes__mailbox_id__messages__message_id__attachments__attachment_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/runs/{run_id}/replay": {
         parameters: {
             query?: never;
@@ -594,7 +696,13 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Replay Run */
+        /**
+         * Replay Run
+         * @description Copy the run's recorded event log into a new run and compare state hashes. The copy
+         *     (`replay_of` = this run) ends REPLAYED (or the original's final status if it had ended):
+         *     it takes no commands, cannot be evaluated (409), and is left out of /accuracy and of the
+         *     runs list unless `include_replays=true`.
+         */
         post: operations["replay_run_v1_runs__run_id__replay_post"];
         delete?: never;
         options?: never;
@@ -835,7 +943,9 @@ export interface paths {
         /**
          * Create Answer Key
          * @description Publish a hidden answer-key version (controller or evaluator). The response is
-         *     metadata only.
+         *     metadata only. Runs the checks of `.../answer-keys/validate` (400 with `details.issues`);
+         *     references are checked against the compatible scenario versions that exist now (all of
+         *     them when `scenario_versions` is omitted); later scenario versions do not re-check it.
          */
         post: operations["create_answer_key_v1_scenarios__scenario_key__answer_keys_post"];
         delete?: never;
@@ -855,10 +965,15 @@ export interface paths {
         put?: never;
         /**
          * Validate Answer Key
-         * @description Schema + leak guard for an unsaved answer key. Stores nothing.
+         * @description Schema, references + leak guard for an unsaved answer key. Stores nothing; publishing
+         *     runs the same checks.
          *
          *     Errors: dotted schema paths (`answer_key.assertions.0.check`), `answer_key.scenario` for a
-         *     key of another scenario, `answer_key.scenario_versions` for unknown versions, and
+         *     key of another scenario, `answer_key.scenario_versions` for unknown versions, unknown
+         *     references at their dotted path (`answer_key.assertions.0.check.where.folder`: folders,
+         *     flags, operations per actor, outcome and error codes, persona mailboxes and event ids of
+         *     every compatible scenario version; with `scenario_versions` omitted, the versions that exist
+         *     now: a later scenario version does not re-check stored keys), and
          *     `leak:<scenario version>` when grading prose appears in content the agent can read (the
          *     leaked text is cut to 60 characters). 404 when the scenario does not exist.
          */
@@ -1129,6 +1244,11 @@ export interface components {
         AgentCredential: {
             /** Api Key */
             api_key: string;
+            /**
+             * Key Id
+             * @description revoke with DELETE /v1/keys/{key_id}
+             */
+            key_id?: string | null;
             /** Mailbox Address */
             mailbox_address: string;
             /** Mailbox Id */
@@ -1222,6 +1342,11 @@ export interface components {
             ref: string;
             /** Size */
             size?: number | null;
+            /**
+             * Url
+             * @description download URL of a blob artifact (served as an attachment)
+             */
+            url?: string | null;
         };
         /**
          * AssertionDiff
@@ -1860,6 +1985,27 @@ export interface components {
             /** System Type */
             system_type: string | null;
         };
+        /**
+         * ForwardRequest
+         * @description Forward a message (with its attachments) to new recipients; `text` goes above it.
+         */
+        ForwardRequest: {
+            /**
+             * Cc
+             * @description addresses; "Name <addr@example.com>" is accepted (the name is dropped); quote a name that contains a comma ('"Smith, John" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.
+             */
+            cc?: string[];
+            /**
+             * Text
+             * @default
+             */
+            text: string;
+            /**
+             * To
+             * @description addresses; "Name <addr@example.com>" is accepted (the name is dropped); quote a name that contains a comma ('"Smith, John" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.
+             */
+            to: string[];
+        };
         /** InjectMessage */
         InjectMessage: {
             /** Cc */
@@ -2174,7 +2320,10 @@ export interface components {
         };
         /** RunCreate */
         RunCreate: {
-            /** Agent Build */
+            /**
+             * Agent Build
+             * @description label for comparing builds in /accuracy; omit for none (stored as null, reported as "(no build)", which is therefore not a valid name)
+             */
             agent_build?: string | null;
             /**
              * Checks
@@ -2208,13 +2357,19 @@ export interface components {
             epoch: number;
             /** Id */
             id: string;
-            /** Replay Of */
+            /**
+             * Replay Of
+             * @description set on replay runs: the run whose recorded log this run copies (never evaluated)
+             */
             replay_of: string | null;
             /** Scenario Key */
             scenario_key?: string | null;
             /** Scenario Version */
             scenario_version?: number | null;
-            /** Status */
+            /**
+             * Status
+             * @description DRAFT, VALIDATED, READY, RUNNING, PASSED, FAILED, ERROR, CANCELLED or REPLAYED (a closed replay copy)
+             */
             status: string;
             /** Virtual Time */
             virtual_time: string | null;
@@ -2316,9 +2471,15 @@ export interface components {
         };
         /** SendRequest */
         SendRequest: {
-            /** Bcc */
+            /**
+             * Bcc
+             * @description addresses; "Name <addr@example.com>" is accepted (the name is dropped); quote a name that contains a comma ('"Smith, John" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.
+             */
             bcc?: string[];
-            /** Cc */
+            /**
+             * Cc
+             * @description addresses; "Name <addr@example.com>" is accepted (the name is dropped); quote a name that contains a comma ('"Smith, John" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.
+             */
             cc?: string[];
             /** Html */
             html?: string | null;
@@ -2332,17 +2493,18 @@ export interface components {
              * @default
              */
             text: string;
-            /** To */
+            /**
+             * To
+             * @description addresses; "Name <addr@example.com>" is accepted (the name is dropped); quote a name that contains a comma ('"Smith, John" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.
+             */
             to?: string[];
         };
-        /** SendResult */
+        /**
+         * SendResult
+         * @description The sent copy in the caller's mailbox. How each recipient was handled is not part of
+         *     the agent-facing result (operators see it in the run's actions and events).
+         */
         SendResult: {
-            /** Delivered Message Ids */
-            delivered_message_ids: string[];
-            /** External Mode */
-            external_mode: string;
-            /** External Recipients */
-            external_recipients: string[];
             /** Message Id */
             message_id: string;
             /** Message Id Header */
@@ -2710,6 +2872,75 @@ export interface operations {
             };
         };
     };
+    get_attachment_v1_mailboxes__mailbox_id__messages__message_id__attachments__attachment_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                mailbox_id: string;
+                message_id: string;
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The attachment bytes, always as a download (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`). Active types (HTML, SVG, XML, scripts, ...) are served as application/octet-stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    forward_v1_mailboxes__mailbox_id__messages__message_id__forward_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                mailbox_id: string;
+                message_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ForwardRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SendResult"];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
     reply_v1_mailboxes__mailbox_id__messages__message_id__reply_post: {
         parameters: {
             query?: never;
@@ -2907,6 +3138,7 @@ export interface operations {
                 status?: string | null;
                 cursor?: string | null;
                 page_size?: number;
+                include_replays?: boolean;
             };
             header?: never;
             path?: never;
@@ -3079,6 +3311,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ArtifactOut"][];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    run_artifact_v1_runs__run_id__artifacts__artifact_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                artifact_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": unknown;
                 };
             };
             /** @description Default Response */
@@ -3462,6 +3726,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MessagePage"];
+                };
+            };
+            /** @description Default Response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    inspect_attachment_v1_runs__run_id__mailboxes__mailbox_id__messages__message_id__attachments__attachment_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+                mailbox_id: string;
+                message_id: string;
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The attachment bytes, always as a download (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`). Active types (HTML, SVG, XML, scripts, ...) are served as application/octet-stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
                 };
             };
             /** @description Default Response */

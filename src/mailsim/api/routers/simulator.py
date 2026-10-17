@@ -12,9 +12,16 @@ from mailsim.api import schemas as s
 from mailsim.api.deps import Controller, Inspector
 from mailsim.api.errors import ErrorEnvelope
 from mailsim.api.idempotency import idempotent
-from mailsim.api.routers._common import controller, inspector, run_personas
+from mailsim.api.routers._common import (
+    ATTACHMENT_RESPONSE,
+    attachment_response,
+    controller,
+    inspector,
+    persona_runtime,
+)
 from mailsim.domain.errors import InvalidRequest, PermissionDenied, UnsupportedOperation
 from mailsim.engine.facades import EvaluatorView
+from mailsim.personas.runtime import advance_clock, tick_clock
 
 router = APIRouter(prefix="/v1/runs/{run_id}", tags=["simulator"],
                    responses={"default": {"model": ErrorEnvelope}})  # fmt: skip
@@ -69,10 +76,8 @@ def advance(
 ) -> Response:
     def run() -> s.ClockResult:
         ctl = controller(request, principal)
-        result = ctl.advance(run_id, body.seconds)
-        return s.ClockResult.model_validate(
-            {**result, "persona_replies": run_personas(request, ctl, run_id)}
-        )
+        return s.ClockResult.model_validate(advance_clock(ctl, persona_runtime(request, ctl),
+                                                          run_id, body.seconds))  # fmt: skip
 
     return idempotent(request, principal, idempotency_key, body.model_dump(mode="json"), 200, run)
 
@@ -80,10 +85,7 @@ def advance(
 @router.post("/scheduler/tick", response_model=s.ClockResult)
 def tick(request: Request, run_id: str, principal: Controller) -> s.ClockResult:
     ctl = controller(request, principal)
-    result = ctl.tick(run_id)
-    return s.ClockResult.model_validate(
-        {**result, "persona_replies": run_personas(request, ctl, run_id)}
-    )
+    return s.ClockResult.model_validate(tick_clock(ctl, persona_runtime(request, ctl), run_id))
 
 
 @router.get("/state", response_model=dict[str, Any])
@@ -127,3 +129,17 @@ def inspect_messages(
         run_id, mailbox_id, folder=folder, page_size=page_size, cursor=cursor, order=order
     )
     return s.MessagePage(items=page.items, next_cursor=page.next_cursor)
+
+
+@router.get("/mailboxes/{mailbox_id}/messages/{message_id}/attachments/{attachment_id}",
+            response_class=Response, responses=ATTACHMENT_RESPONSE)  # fmt: skip
+def inspect_attachment(
+    request: Request, run_id: str, mailbox_id: str, message_id: str, attachment_id: str,
+    principal: Inspector,
+) -> Response:  # fmt: skip
+    """Operator download of one attachment of any mailbox in the run (records nothing; works
+    on finished runs). Always a download: `Content-Disposition: attachment`, `nosniff` and
+    `Content-Security-Policy: sandbox`, so it is never rendered in the dashboard's origin."""
+    ref, data = inspector(request, principal).inspect_attachment(run_id, mailbox_id, message_id,
+                                                                 attachment_id)  # fmt: skip
+    return attachment_response(ref, data)

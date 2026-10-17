@@ -15,20 +15,21 @@ import copy
 import functools
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 import mcp_types as types
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
 
 from mailsim.api.auth import revoke_agent_keys
 from mailsim.api.pagination import decode_sequence_cursor, encode_sequence_cursor, page_messages
-from mailsim.api.schemas import MAX_RAW_B64_CHARS
+from mailsim.api.schemas import MAX_RAW_B64_CHARS, normalise_addresses
 from mailsim.auth.principal import Role
 from mailsim.domain.errors import InvalidRequest, NotFound, UnsupportedOperation
 from mailsim.domain.models import CanonicalMessage
 from mailsim.domain.states import TERMINAL
 from mailsim.engine.facades import AgentMailbox, Controller, EvaluatorView
 from mailsim.engine.pagination import MAX_PAGE_SIZE, check_page_size
+from mailsim.personas.runtime import PersonaRuntime, advance_clock, tick_clock
 
 JSON = dict[str, Any]
 ROLE_FACADE: dict[Role, type[Any]] = {
@@ -60,6 +61,8 @@ MAX_QUERY_CHARS = 1024
 MAX_SUBJECT_CHARS = 16 * 1024
 MAX_BODY_CHARS = 5 * 1024 * 1024
 MAX_CURSOR_CHARS = 1024
+# get_attachment returns the bytes base64-encoded inside the JSON result: keep that bounded.
+MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
 Id = Annotated[str, StringConstraints(min_length=1, max_length=MAX_ID_CHARS)]
 Name = Annotated[str, StringConstraints(max_length=MAX_ID_CHARS)]  # folder, label, flag, ...
@@ -71,6 +74,14 @@ CursorStr = Annotated[str, StringConstraints(max_length=MAX_CURSOR_CHARS)]
 
 def _list(description: str | None = None) -> Any:
     return Field(default_factory=list, max_length=MAX_LIST_ITEMS, description=description)
+
+
+# recipient lists: "Name <addr@example.com>" entries are reduced to the address
+Recipients = Annotated[list[Address], AfterValidator(normalise_addresses)]
+RECIPIENTS_HELP = (
+    'addresses; "Name <addr@example.com>" is accepted (quote a name containing '
+    "a comma); at most 100 distinct recipients per message"
+)
 
 
 PageSize = Field(default=50, ge=1, le=MAX_PAGE_SIZE, description="items per page")
@@ -87,11 +98,11 @@ class ListMessagesArgs(Args):
 
 
 class MessageIdArgs(Args):
-    message_id: Id = Field(description="simulator message id (msg_...)")
+    message_id: Id = Field(description="message id (msg_...)")
 
 
 class ThreadIdArgs(Args):
-    thread_id: Id = Field(description="simulator thread id")
+    thread_id: Id = Field(description="thread id")
 
 
 class SearchArgs(Args):
@@ -103,9 +114,9 @@ class SearchArgs(Args):
 
 
 class SendArgs(Args):
-    to: list[Address] = _list("recipient addresses")
-    cc: list[Address] = _list()
-    bcc: list[Address] = _list()
+    to: Recipients = _list(RECIPIENTS_HELP)
+    cc: Recipients = _list()
+    bcc: Recipients = _list()
     subject: Subject = ""
     text: Body = ""
     html: Body | None = None
@@ -115,6 +126,18 @@ class ReplyArgs(Args):
     message_id: Id
     text: Body
     reply_all: bool = False
+
+
+class ForwardArgs(Args):
+    message_id: Id
+    to: Recipients = Field(min_length=1, max_length=MAX_LIST_ITEMS, description=RECIPIENTS_HELP)
+    cc: Recipients = _list()
+    text: Body = Field(default="", description="written above the forwarded message")
+
+
+class AttachmentArgs(Args):
+    message_id: Id
+    attachment_id: Id = Field(description="`id` of an entry of the message's `attachments`")
 
 
 class ManageLabelsArgs(Args):
@@ -198,10 +221,9 @@ def _folder_name(mb: AgentMailbox, folder: str) -> str:
     raise NotFound(f"folder {folder!r} not found")
 
 
-def _personas(deps: Deps, ctl: Controller, run_id: str) -> int:
-    if deps.persona_runtime_factory is None:
-        return 0
-    return len(deps.persona_runtime_factory(ctl).step(run_id))
+def _runtime(deps: Deps, ctl: Controller) -> PersonaRuntime | None:
+    factory = deps.persona_runtime_factory
+    return None if factory is None else cast("PersonaRuntime", factory(ctl))
 
 
 def _revoke_agent_keys(deps: Deps, view: Controller | EvaluatorView, run_id: str) -> None:
@@ -241,6 +263,17 @@ def send_message(mb: AgentMailbox, a: SendArgs, _: Deps) -> JSON:
 
 def reply_to_message(mb: AgentMailbox, a: ReplyArgs, _: Deps) -> JSON:
     return mb.reply(a.message_id, text=a.text, reply_all=a.reply_all)
+
+
+def forward_message(mb: AgentMailbox, a: ForwardArgs, _: Deps) -> JSON:
+    return mb.forward(a.message_id, to=a.to, cc=a.cc, text=a.text)
+
+
+def get_attachment(mb: AgentMailbox, a: AttachmentArgs, _: Deps) -> JSON:
+    ref, data = mb.get_attachment(a.message_id, a.attachment_id, max_bytes=MAX_ATTACHMENT_BYTES)
+    return {"id": ref.id, "filename": ref.filename, "mime_type": ref.mime_type,
+            "size": len(data), "checksum": ref.checksum,
+            "content_base64": base64.b64encode(data).decode("ascii")}  # fmt: skip
 
 
 def manage_labels(mb: AgentMailbox, a: ManageLabelsArgs, _: Deps) -> JSON:
@@ -293,13 +326,12 @@ def inject_incoming_email(ctl: Controller, a: InjectArgs, _: Deps) -> JSON:
 
 
 def advance_simulation(ctl: Controller, a: AdvanceArgs, deps: Deps) -> JSON:
-    result = ctl.advance(a.run_id, a.seconds)
-    return {**result, "persona_replies": _personas(deps, ctl, a.run_id)}
+    # persona replies are answered at their due times on the way (`advance_clock`)
+    return advance_clock(ctl, _runtime(deps, ctl), a.run_id, a.seconds)
 
 
 def trigger_scheduled_event(ctl: Controller, a: RunArgs, deps: Deps) -> JSON:
-    result = ctl.tick(a.run_id)
-    return {**result, "persona_replies": _personas(deps, ctl, a.run_id)}
+    return tick_clock(ctl, _runtime(deps, ctl), a.run_id)
 
 
 def reset_run(ctl: Controller, a: RunArgs, _: Deps) -> JSON:
@@ -439,10 +471,19 @@ TOOLS: tuple[ToolSpec, ...] = (
         read_only=True,
     ),
     ToolSpec(
+        "get_attachment",
+        "Download one attachment of a message (ids from the message's `attachments`); the "
+        "bytes come back base64-encoded in content_base64. Attachments larger than 10 MB are "
+        "refused with UNSUPPORTED_OPERATION.",
+        AGENT,
+        AttachmentArgs,
+        get_attachment,
+        read_only=True,
+    ),
+    ToolSpec(
         "send_message",
-        "Send a new message. Delivered only inside the simulation; "
-        "recipients outside it follow the scenario's delivery rule (a rejection is "
-        "EXTERNAL_DELIVERY_BLOCKED). Nothing is ever sent to a real mail server.",
+        "Send a new message. A recipient that is not allowed is rejected with "
+        "EXTERNAL_DELIVERY_BLOCKED.",
         AGENT,
         SendArgs,
         send_message,
@@ -453,6 +494,13 @@ TOOLS: tuple[ToolSpec, ...] = (
         AGENT,
         ReplyArgs,
         reply_to_message,
+    ),
+    ToolSpec(
+        "forward_message",
+        "Forward a message, attachments included, to new recipients (text goes above it).",
+        AGENT,
+        ForwardArgs,
+        forward_message,
     ),
     ToolSpec(
         "manage_labels",
@@ -481,7 +529,7 @@ TOOLS: tuple[ToolSpec, ...] = (
     ToolSpec(
         "get_changes",
         "Mailbox change feed after event `since`; resume from next_since "
-        "while has_more. reset_since=true means the run was reset: resynchronise.",
+        "while has_more. reset_since=true means the mailbox was reset: resynchronise.",
         AGENT,
         ChangesArgs,
         get_changes,

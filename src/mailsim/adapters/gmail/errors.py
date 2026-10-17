@@ -5,7 +5,7 @@ Every failure under ``/gmail/v1`` and ``/upload/gmail/v1`` answers Google's JSON
     {"error": {"code": 404, "message": "...", "status": "NOT_FOUND",
                "errors": [{"message": "...", "domain": "global", "reason": "notFound"}],
                "details": [{"@type": "type.googleapis.com/google.rpc.ErrorInfo",
-                            "reason": "NOT_FOUND", "domain": "mailsim.local", "metadata": {}}]}}
+                            "reason": "NOT_FOUND", "domain": "global", "metadata": {}}]}}
 
 ``details[0]`` is a ``google.rpc.ErrorInfo`` whose ``reason`` is the simulator's neutral error
 code (spec 7.4), so callers can tell apart codes that share an HTTP status (e.g. CONFLICT and
@@ -25,13 +25,14 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from starlette.exceptions import HTTPException
 
+from mailsim.api.agent_errors import QUOTA_EXCEEDED, agent_view
 from mailsim.domain.errors import ErrorCode, SimError
 
 log = logging.getLogger("mailsim.adapters.gmail")
 
 UNAUTHENTICATED = "UNAUTHENTICATED"
 INTERNAL = "INTERNAL"
-ERROR_DOMAIN = "mailsim.local"
+ERROR_DOMAIN = "global"
 
 # neutral code -> (HTTP status, errors[].reason, error.status)
 GMAIL_ERRORS: dict[str, tuple[int, str, str]] = {
@@ -43,6 +44,7 @@ GMAIL_ERRORS: dict[str, tuple[int, str, str]] = {
     ErrorCode.RUN_NOT_ACTIVE: (409, "failedPrecondition", "FAILED_PRECONDITION"),
     ErrorCode.EXTERNAL_DELIVERY_BLOCKED: (400, "failedPrecondition", "FAILED_PRECONDITION"),
     ErrorCode.SIMULATION_LIMIT_EXCEEDED: (429, "rateLimitExceeded", "RESOURCE_EXHAUSTED"),
+    QUOTA_EXCEEDED: (429, "rateLimitExceeded", "RESOURCE_EXHAUSTED"),
     ErrorCode.RATE_LIMITED: (429, "rateLimitExceeded", "RESOURCE_EXHAUSTED"),
     ErrorCode.UPSTREAM_UNAVAILABLE: (503, "backendError", "UNAVAILABLE"),
     UNAUTHENTICATED: (401, "authError", "UNAUTHENTICATED"),
@@ -74,20 +76,18 @@ def gmail_error(code: str, message: str, details: dict[str, object] | None = Non
         }
     }  # fmt: skip
     headers = (
-        {"WWW-Authenticate": 'Bearer realm="mailsim", error="invalid_token"'}
-        if status == 401
-        else None
+        {"WWW-Authenticate": 'Bearer realm="api", error="invalid_token"'} if status == 401 else None
     )
     return JSONResponse(body, status_code=status, headers=headers)
 
 
 def to_response(exc: Exception) -> JSONResponse:
     """Translate any exception raised under the Gmail paths to the Gmail error shape."""
-    if isinstance(exc, SimError):
-        return gmail_error(str(exc.code), exc.message, exc.details)
+    if isinstance(exc, SimError):  # Gmail paths serve agents only: the agent's view
+        return gmail_error(*agent_view(str(exc.code), exc.message, exc.details))
     if isinstance(exc, GmailAuthError):
         return gmail_error(UNAUTHENTICATED, "Request had invalid authentication credentials. "
-                                            "Expected a sandbox agent key as a Bearer token.")  # fmt: skip
+                                            "Expected an API key as a Bearer token.")  # fmt: skip
     if isinstance(exc, RequestValidationError):
         problems = "; ".join(f"{'.'.join(str(p) for p in e.get('loc', ()))}: {e.get('msg', '')}"
                              for e in exc.errors())  # fmt: skip

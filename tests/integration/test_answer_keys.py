@@ -60,24 +60,40 @@ def test_inline_assertions_become_a_hidden_versioned_key(env, tmp_path):
 def test_file_keys_compatibility_and_selection(env):
     env.version()
     file_key = publish_key(env, load_answer_key(EXAMPLE_DIR / "answer_key.yaml"))
-    assert file_key.version == 2 and file_key.source == "file"
+    assert file_key.version == 3 and file_key.source == "file"
     assert publish_key(env, load_answer_key(EXAMPLE_DIR / "answer_key.yaml")).id == file_key.id
-    publish_key(env, key_doc(version=3, scenario_versions=None))
+    publish_key(env, key_doc(version=4, scenario_versions=None))
     with env.session_factory() as s:
-        assert answer_key_for(s, env.scope, KEY, 1, None).version == 3
-        assert answer_key_for(s, env.scope, KEY, 1, 2).version == 2
-        assert answer_key_for(s, env.scope, KEY, 9, None).version == 3  # all-versions key
-        with pytest.raises(NotFound):
-            answer_key_for(s, env.scope, KEY, 9, 2)
+        assert answer_key_for(s, env.scope, KEY, 1, None).version == 4
+        assert answer_key_for(s, env.scope, KEY, 1, 3).version == 3
+        assert answer_key_for(s, env.scope, KEY, 9, None).version == 4  # all-versions key
+        # an existing but incompatible key version is a CONFLICT that names both sides
+        with pytest.raises(Conflict, match="not compatible with scenario version 9") as exc:
+            answer_key_for(s, env.scope, KEY, 9, 3)
+        assert exc.value.details == {"answer_key_version": 3, "scenario_versions": [1],
+                                     "run_scenario_version": 9}  # fmt: skip
+        with pytest.raises(NotFound, match="version 42"):
+            answer_key_for(s, env.scope, KEY, 1, 42)
     with pytest.raises(Conflict, match="different content"):
-        publish_key(env, key_doc(version=3, checks_default="off"))
-    publish_key(env, key_doc(version=6, scenario_versions=None))
+        publish_key(env, key_doc(version=4, checks_default="off"))
+    publish_key(env, key_doc(version=7, scenario_versions=None))
     with pytest.raises(Conflict, match="older"):
-        publish_key(env, key_doc(version=5))
+        publish_key(env, key_doc(version=6))
     with pytest.raises(InvalidRequest, match="unknown scenario versions"):
-        publish_key(env, key_doc(version=4, scenario_versions=[7]))
+        publish_key(env, key_doc(version=5, scenario_versions=[7]))
     with pytest.raises(NotFound):
         publish_key(env, key_doc(scenario="no.such.scenario"))
+
+
+def test_no_compatible_key_at_all_is_a_conflict_listing_the_keys(env):
+    env.version()  # inline key v1: scenario version 1 only
+    with env.session_factory() as s:
+        with pytest.raises(Conflict, match="compatible with scenario version 2") as exc:
+            answer_key_for(s, env.scope, KEY, 2, None)
+        assert exc.value.details == {"run_scenario_version": 2, "answer_keys": [
+            {"answer_key_version": 1, "scenario_versions": [1]}]}  # fmt: skip
+        with pytest.raises(NotFound):
+            answer_key_for(s, env.scope, "no.such.scenario", 1, None)
 
 
 def test_answer_key_is_immutable(env, session_factory):
@@ -144,7 +160,7 @@ def test_evaluator_only_access_and_nothing_reaches_the_agent(env):
     ctl.start_run(run)
     ev = EvaluatorView(env.engine, env.scope)
     key = ev.answer_key(run)
-    assert key["version"] == 2 and key["source"] == "file"
+    assert key["version"] == 3 and key["source"] == "file"
     assert ev.answer_key(run, version=1)["source"] == "inline"
     assert ev.scenario_spec(run)["spec"]["scenario"]["evaluation"]["assertions"] == []
     # the agent's whole visible world contains no answer-key text

@@ -19,6 +19,8 @@ describe('scenario builder page', () => {
     const validated = captureBodies('/scenario-drafts/validate');
     const { user, router } = await openNew(true);
     expect(screen.getByRole('heading', { level: 1, name: 'New scenario' })).toBeInTheDocument();
+    // UI-2: the chosen start button is gone; keyboard focus continues at the first section.
+    await waitFor(() => expect(screen.getByRole('heading', { level: 2, name: 'Basics' })).toHaveFocus());
     expect(screen.getByTestId('page-intro')).toHaveTextContent('Build a scenario step by step');
     await waitValid();
     expect(validated.length).toBeGreaterThan(0);
@@ -37,6 +39,7 @@ describe('scenario builder page', () => {
 
   it('lists problems for a blank scenario, links them to fields and counts them per section', async () => {
     const { user } = await openNew();
+    await waitFor(() => expect(screen.getByRole('heading', { level: 2, name: 'Basics' })).toHaveFocus());
     await waitInvalid();
     const save = screen.getByRole('button', { name: 'Save and publish' });
     expect(save).toBeEnabled();

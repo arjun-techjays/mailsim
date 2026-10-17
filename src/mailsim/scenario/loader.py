@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -58,6 +59,20 @@ class _NoAliasSafeLoader(yaml.SafeLoader):
         if self._nodes > self.max_nodes:
             raise yaml.YAMLError("scenario document has too many nodes")
         return super().compose_node(parent, index)
+
+
+# YAML 1.1 (PyYAML's default) reads plain yes/no/on/off as booleans: a persona script's
+# `on:` key would become True and `checks_default: on` a bool. Here only true/false (the
+# YAML 1.2 core schema) are booleans; yes/no/on/off stay strings, which the schema still
+# accepts wherever a boolean is expected (pydantic reads "on"/"off"/"yes"/"no" as booleans).
+_BOOL_TAG = "tag:yaml.org,2002:bool"
+_NoAliasSafeLoader.yaml_implicit_resolvers = {
+    first: [(tag, rx) for tag, rx in resolvers if tag != _BOOL_TAG]
+    for first, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+_NoAliasSafeLoader.add_implicit_resolver(
+    _BOOL_TAG, re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"), list("tTfF")
+)
 
 
 def _reject_constant(name: str) -> object:

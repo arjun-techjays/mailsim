@@ -200,9 +200,7 @@ def test_wrong_state_and_unknown_commands(proto):
     c.cmd(f"a4 LOGIN {AGENT} {proto.key}".encode())
     assert c.cmd(b"a5 CHECK")[-1] == b"a5 BAD no mailbox selected\r\n"
     assert c.cmd(b"a6 CAPABILITY extra")[-1].startswith(b"a6 BAD usage")
-    assert (
-        c.cmd(b'a7 ID ("name" "imaplib")')[0] == b'* ID ("name" "mailsim" "vendor" "mailsim")\r\n'
-    )
+    assert c.cmd(b'a7 ID ("name" "imaplib")')[0] == b'* ID ("name" "IMAP" "vendor" "IMAP")\r\n'
 
 
 # ------------------------------------------------------------------------ FETCH
@@ -373,6 +371,18 @@ def test_copy_and_move_report_uids(proto):
     assert uids == [b"1", b"2"]  # the move gave the message a new UID in Archive
 
 
+def test_received_mail_cannot_be_moved_or_copied_into_sent_or_drafts(proto):
+    """QA B-5: IMAP MOVE/COPY must not forge "sent"/"drafted" evidence."""
+    c = proto.imap()
+    ok(c.select("INBOX"))
+    for cmd in ("COPY", "MOVE"):
+        for folder in ("Sent", "Drafts"):
+            typ, data = c.uid(cmd, "1", folder)
+            assert typ == "NO" and b"cannot be placed" in data[0], (cmd, folder, data)
+    ok(c.select("Sent"))
+    assert ok(c.uid("SEARCH", "ALL")) == [b""]
+
+
 def test_expunge_keeps_uids_stable(proto):
     for i in range(3):
         proto.ctl.inject(proto.run, proto.mailbox_id, {"from": "vendor@example.test",
@@ -528,7 +538,7 @@ def test_budget_limit(make_proto):
     ok(c.select("INBOX"))
     ok(c.store("1", "+FLAGS", "\\Seen"))
     typ, data = c.store("1", "+FLAGS", "\\Flagged")
-    assert typ == "NO" and data[0].startswith(b"[LIMIT] SIMULATION_LIMIT_EXCEEDED")
+    assert typ == "NO" and data[0] == b"[LIMIT] QUOTA_EXCEEDED: action limit reached"
 
 
 def test_reset_changes_uidvalidity(proto):

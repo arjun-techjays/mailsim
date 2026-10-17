@@ -108,7 +108,7 @@ def test_framing_limits(proto, monkeypatch):
 
 def test_logout_and_disconnects(proto):
     c = proto.raw()
-    assert c.cmd(b"a LOGOUT") == [b"* BYE mailsim logging out\r\n", b"a OK LOGOUT completed\r\n"]
+    assert c.cmd(b"a LOGOUT") == [b"* BYE logging out\r\n", b"a OK LOGOUT completed\r\n"]
     assert c.line() == b""
     d = proto.raw()
     d.send(b"a1 LOGIN {3}\r\n")

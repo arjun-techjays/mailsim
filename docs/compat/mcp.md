@@ -54,8 +54,10 @@ back as `structuredContent` (a JSON object), with the same JSON as text content.
 | `get_message` | `message_id`* | message |
 | `get_thread` | `thread_id`* | `{items: [message]}` |
 | `search_messages` | `query`* (subject, body, sender), `folder`, `page_size`, `cursor` | `{items, next_cursor}` |
-| `send_message` | `to`, `cc`, `bcc` (address lists), `subject`, `text`, `html` | `{message_id, message_id_header, ...}` |
+| `get_attachment` | `message_id`*, `attachment_id`* (an `attachments[].id` of the message) | `{id, filename, mime_type, size, checksum, content_base64}`; over 10 MB: `UNSUPPORTED_OPERATION` with `details.size` / `details.max_bytes` |
+| `send_message` | `to`, `cc`, `bcc` (address lists; `Name <addr@x>` accepted), `subject`, `text`, `html` | `{message_id, message_id_header}` |
 | `reply_to_message` | `message_id`*, `text`*, `reply_all` = false | same as send |
+| `forward_message` | `message_id`*, `to`* (1+ addresses), `cc`, `text` (above the forwarded message) | same as send; the original's attachments are forwarded |
 | `manage_labels` | `message_id`*, `folder` (move), `add_labels`, `remove_labels`, `add_flags`, `remove_flags` | the updated message |
 | `delete_message` | `message_id`* | `{deleted}` |
 | `list_folders` | none | `{items: [{id, name, system_type}]}` |
@@ -66,10 +68,21 @@ A *message* is the canonical message of the REST API (`GET /v1/mailboxes/{id}/me
 labels, flags, attachments, created_at, ...`. Pagination is keyset-based. Under a fixed state,
 following `next_cursor` until it is `null` never skips or repeats an item.
 
-`send_message` and `reply_to_message` deliver only to simulated mailboxes. For recipients
-outside the simulation, the scenario's `delivery.external_delivery` rule applies. `deny`
-gives a tool error `EXTERNAL_DELIVERY_BLOCKED`. `sink` and `event` record the message in the
-sandbox. Real SMTP is never used.
+`send_message`, `reply_to_message` and `forward_message` deliver only to simulated mailboxes.
+For recipients outside the simulation, the scenario's `delivery.external_delivery` rule
+applies. `deny` gives a tool error `EXTERNAL_DELIVERY_BLOCKED`. `sink` and `event` record the
+message in the sandbox. Real SMTP is never used. The agent's result is only the sent copy
+(`message_id`, `message_id_header`) and is the same in every mode: how each recipient was
+handled is visible to operators only (the run's actions and `delivery.*` events). Address
+entries may be `Name <addr@example.com>` (also several, comma-separated); the name is dropped.
+A display name containing a comma must be quoted (`"Smith, John" <j@example.com>`): unquoted,
+`Smith, John <j@example.com>` is read as two entries and `Smith` is rejected as an invalid
+address. One message has at most 100 distinct recipients (to + cc + bcc, after expansion;
+`INVALID_REQUEST` otherwise), on every interface.
+
+The agent session's MCP identity is neutral: server name `mail`, title `Mail` and a short
+mailbox-tools instruction. Controller and evaluator sessions keep the `mailsim` identity and
+the operator instructions.
 
 `manage_labels` applies its changes as separate audited writes, in this order: move, labels,
 flags. It resolves the folder (`NOT_FOUND`) before the first write. If a later step fails, the
@@ -117,7 +130,9 @@ correct course. Protocol errors are not used for them:
 
 `code` is one of the spec 7.4 codes (`INVALID_REQUEST`, `NOT_FOUND`, `PERMISSION_DENIED`,
 `UNSUPPORTED_OPERATION`, `CONFLICT`, `RATE_LIMITED`, `SIMULATION_LIMIT_EXCEEDED`,
-`RUN_NOT_ACTIVE`, `EXTERNAL_DELIVERY_BLOCKED`, `UPSTREAM_UNAVAILABLE`), plus:
+`RUN_NOT_ACTIVE`, `EXTERNAL_DELIVERY_BLOCKED`, `UPSTREAM_UNAVAILABLE`), plus the ones below.
+Engine budget and run-state errors read neutrally to agents (`api/agent_errors.py`, the same on every interface): `SIMULATION_LIMIT_EXCEEDED` is shown as `QUOTA_EXCEEDED` with the message "action limit reached" and no details; `RUN_NOT_ACTIVE` keeps its code with the message "mailbox is not available". Operators (controller/evaluator routes, actions, events) keep the engine codes and messages. For an agent session the budget error is therefore `QUOTA_EXCEEDED`.
+
 
 - `UNAUTHENTICATED`: the key stopped being valid mid-session.
 - `INTERNAL`: an unexpected fault. Details are never included.

@@ -42,6 +42,26 @@ def test_schema_rejects_unknown_keys_and_bad_version():
     assert validate_data("nonsense").errors[0].path == "<root>"
 
 
+@pytest.mark.parametrize(("name", "needle"), [
+    ("Eve\r\nBcc: x@evil.test", "control or invisible"), ("tab\there", "control or invisible"),
+    ("del\x7f", "control or invisible"), ("=?utf-8?q?x?=", "encoded-word"),
+    ("Ann =?utf-8?q?Boss?=", "encoded-word"), ("Ann\u2028Bcc", "control or invisible"),
+    ("Ann\u202eBoss", "control or invisible"), ("Ann\x85", "control or invisible"),
+    ("   ", "blank"), ("x" * 201, "at most 200"),
+])  # fmt: skip
+def test_persona_display_name_must_be_header_safe(name, needle):
+    d = example_dict()
+    d["scenario"]["personas"][0]["name"] = name
+    report = validate_data(d)
+    assert not report.ok and needle in str(report.errors[0]), report.errors
+
+
+def test_persona_display_name_accepts_plain_and_unicode_names():
+    d = example_dict()
+    d["scenario"]["personas"][0]["name"] = "Lee, Ann (Finance) — Zoë"
+    assert validate_data(d).ok
+
+
 def test_external_delivery_can_never_be_enabled():
     for bad in ("allow", True):
         d = example_dict()

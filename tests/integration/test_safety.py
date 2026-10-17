@@ -175,3 +175,10 @@ def test_compose_sandbox_network_has_no_egress():
     # only PostgreSQL publishes a port, and only on loopback
     assert compose["services"]["postgres"]["ports"] == ["127.0.0.1:54329:5432"]
     _ = Path
+
+
+def test_compose_postgres_recovers_with_syncfs():
+    # crash recovery must not fsync every file of every (test) database one by one
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    command = compose["services"]["postgres"]["command"]
+    assert command[0] == "postgres" and "recovery_init_sync_method=syncfs" in command

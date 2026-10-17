@@ -10,8 +10,9 @@ Session rules
   offered when the listener has a TLS context.
 - MAIL FROM must be the authenticated mailbox.
 - RCPT TO is decided per recipient: simulated mailboxes are accepted; recipients outside the
-  simulation are rejected with 550 when the run denies external delivery, else accepted and
-  handled by the engine's sink/event policy (never delivered).
+  simulation are rejected with 550 when the run denies external delivery (and audited as an
+  EXTERNAL_DELIVERY_BLOCKED `send` attempt), else accepted and handled by the engine's
+  sink/event policy (never delivered).
 - DATA is parsed with `mailsim.mime`; the envelope decides who receives it (header To/Cc that
   are also envelope recipients stay To/Cc, the remaining envelope recipients become Bcc).
   A message whose In-Reply-To (else newest References entry) names a message in the mailbox
@@ -26,11 +27,13 @@ import asyncio
 import base64
 import binascii
 import logging
+import weakref
 from collections.abc import Callable
 from typing import Any
 
 from aiosmtpd.smtp import MISSING, SMTP, AuthResult, Envelope, Session
 
+from mailsim.api.agent_errors import agent_view
 from mailsim.domain.errors import SimError
 from mailsim.domain.models import CanonicalMessage
 from mailsim.engine.context import with_interface
@@ -43,6 +46,7 @@ log = logging.getLogger(__name__)
 
 MAX_MESSAGE_BYTES = 25 * 1024 * 1024
 MAX_RECIPIENTS = 100
+MAX_REFUSED_RECIPIENTS = 20  # per SMTP session
 COMMAND_CALL_LIMIT = {"AUTH": 3, "*": 100}
 INTERNAL_ERROR = "451 4.3.0 internal error"
 _SMTP_ERRORS = {
@@ -63,8 +67,11 @@ def _line(text: str) -> str:
 
 
 def smtp_error(exc: SimError) -> str:
+    if exc.code == "SIMULATION_LIMIT_EXCEEDED":  # the agent's view, without a raw code
+        return "452 4.5.3 quota exceeded"
     prefix = _SMTP_ERRORS.get(str(exc.code), "451 4.3.0")
-    return f"{prefix} {exc.code}: {_line(exc.message)}"
+    code, message, _ = agent_view(str(exc.code), exc.message)
+    return f"{prefix} {code}: {_line(message)}"
 
 
 def _valid_address(addr: str) -> bool:
@@ -79,6 +86,8 @@ class SandboxHandler:
                  limits: MimeLimits | None = None) -> None:  # fmt: skip
         self.auth = authenticator
         self.max_recipients = max_recipients or MAX_RECIPIENTS
+        # refused RCPTs per session (each is an audited attempt): bounded, then 421 + close
+        self._refused: weakref.WeakKeyDictionary[Session, int] = weakref.WeakKeyDictionary()
         self.limits = limits or MimeLimits(max_message_bytes=MAX_MESSAGE_BYTES)
 
     # ------------------------------------------------------------------ AUTH (off the loop)
@@ -177,11 +186,26 @@ class SandboxHandler:
             return "452 4.5.3 too many recipients"
         policy = await asyncio.to_thread(self.auth.recipient_policy, agent)
         if not policy.allows(addr):
-            return (f"550 5.7.1 <{addr}> EXTERNAL_DELIVERY_BLOCKED: recipient is outside the "
-                    "simulated environment and external delivery is not permitted")  # fmt: skip
+            # a refused recipient is still an attempt: audit it (nothing is delivered)
+            await asyncio.to_thread(self._audit_blocked, agent, addr)
+            refused = self._refused[session] = self._refused.get(session, 0) + 1
+            if refused > MAX_REFUSED_RECIPIENTS:
+                assert server.transport is not None
+                asyncio.get_running_loop().call_soon(server.transport.close)
+                return "421 4.7.0 too many refused recipients; closing connection"
+            return f"550 5.7.1 <{addr}>: relay not permitted"
         envelope.rcpt_tos.append(addr)
         envelope.rcpt_options.extend(rcpt_options)
         return "250 2.1.5 OK"
+
+    @staticmethod
+    def _audit_blocked(agent: AgentSession, addr: str) -> None:
+        try:
+            with_interface("smtp", agent.mailbox.record_external_blocked)([addr])
+        except SimError as exc:  # recorded (blocked, or refused by the guard): the 550 stands
+            log.info("SMTP blocked recipient recorded as %s", exc.code)
+        except Exception:  # the 550 answer stands even if the audit record fails
+            log.exception("SMTP blocked-recipient audit failed")
 
     async def handle_DATA(self, server: SMTP, session: Session, envelope: Envelope) -> str:
         agent = await self._live(server, session)
@@ -195,9 +219,7 @@ class SandboxHandler:
         try:
             parsed = parse_mime(raw, self.limits)
             if parsed.attachments:
-                return ("554 5.6.1 UNSUPPORTED_OPERATION: attachments cannot be submitted over "
-                        "SMTP in this simulator (the agent send operations carry text/html "
-                        "only)")  # fmt: skip
+                return "554 5.6.1 attachments are not accepted on this submission path"
             result = self._submit(agent, parsed, rcpts)
         except SimError as exc:
             return smtp_error(exc)
@@ -281,7 +303,7 @@ def smtp_factory(authenticator: Authenticator, *, tls_context: TLSContext | None
         server = _TrackedSMTP(
             handler,
             hostname=hostname,
-            ident="mailsim sandbox ESMTP (no relay)",
+            ident="ESMTP ready",
             data_size_limit=MAX_MESSAGE_BYTES,
             decode_data=False,
             tls_context=tls_context,

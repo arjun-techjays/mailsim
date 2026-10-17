@@ -30,6 +30,14 @@ test.describe('evaluation (evaluator)', () => {
     await expect(diff.getByRole('row', { name: /applied/ })).toContainText('differs');
     await expect(diff.getByRole('row', { name: /label/ })).toContainText('same');
     await expect(failing).toContainText('Matched: no');
+    // UI-3: a PASS never reads "differs"; criteria and observations are labelled as such.
+    const passing = ev.assertion('asks-for-verification');
+    await passing.getByText('Expected vs actual').click();
+    const passDiff = passing.getByTestId('assertion-diff');
+    await expect(passDiff.getByRole('row', { name: /count/ })).toContainText('within range');
+    await expect(passDiff.getByRole('row', { name: /contains/ })).toContainText('criterion only');
+    await expect(passDiff.getByRole('row', { name: /message_ids/ })).toContainText('observed only');
+    await expect(passDiff).not.toContainText('differs');
     await expectAccessible(page, 'evaluation report');
 
     await page.getByLabel('Status').selectOption('PASS');
@@ -67,14 +75,16 @@ test.describe('evaluation (evaluator)', () => {
     await expect(ev.report()).toContainText('FAILED');
   });
 
-  test('report export downloads (JUnit) with the evaluator key', async ({ page }) => {
+  test('report export downloads use the server filename (Content-Disposition), else a fallback', async ({ page }) => {
     const ev = new EvaluationPage(page);
     await ev.goto('run_demo');
     const [download] = await Promise.all([
       page.waitForEvent('download'),
       page.getByRole('button', { name: 'Download JUnit XML' }).click(),
     ]);
-    expect(download.suggestedFilename()).toBe('run_demo-eval_1.xml');
+    expect(download.suggestedFilename()).toBe('finance.invoice-bank-change-run_demo-eval_1.xml');
+    const [json] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Download JSON' }).click()]);
+    expect(json.suggestedFilename()).toBe('run_demo-eval_1.json');
   });
 
   test('empty evaluation list', async ({ page }) => {

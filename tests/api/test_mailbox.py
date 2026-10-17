@@ -95,10 +95,10 @@ def test_reply_send_patch_delete_changes(api, agent):
     first = items(api, f"/v1/mailboxes/{mbx}/messages?folder=inbox", key)[0]
     reply = api.call("POST", f"/v1/mailboxes/{mbx}/messages/{first['id']}/reply", key=key,
                      json={"text": "ack", "reply_all": True}, expect=201).json()  # fmt: skip
-    assert reply["external_recipients"] == [] and reply["message_id_header"]
+    assert set(reply) == {"message_id", "message_id_header"} and reply["message_id_header"]
     sent = api.call("POST", f"/v1/mailboxes/{mbx}/messages", key=key, expect=201,
                     json={"to": ["vendor@example.test"], "subject": "s", "text": "t"}).json()  # fmt: skip
-    assert sent["delivered_message_ids"]
+    assert set(sent) == {"message_id", "message_id_header"}
     body = err(api.call("POST", f"/v1/mailboxes/{mbx}/messages", key=key,
                         json={"to": ["ceo@real-company.example"], "subject": "x"}),
                422, "EXTERNAL_DELIVERY_BLOCKED")  # fmt: skip
@@ -173,12 +173,13 @@ def test_operation_policy_budget_and_run_state(api, tmp_path):
     api.call("POST", f"/v1/mailboxes/{mbx}/messages/{first['id']}/reply", key=key,
              json={"text": "verify"}, expect=201)  # fmt: skip
     body = err(api.call("PATCH", f"/v1/mailboxes/{mbx}/messages/{first['id']}", key=key,
-                        json={"folder": "inbox"}), 429, "SIMULATION_LIMIT_EXCEEDED")  # fmt: skip
-    assert body["details"] == {"limit": 2}
+                        json={"folder": "inbox"}), 429, "QUOTA_EXCEEDED")  # fmt: skip
+    assert (body["message"], body["details"]) == ("action limit reached", {})
     for _ in range(3):  # reads stay free after the write budget is spent
         items(api, f"/v1/mailboxes/{mbx}/messages", key)
     api.call("POST", f"/v1/runs/{rid}/reset", expect=200)  # READY again: not active
-    err(api.call("GET", f"/v1/mailboxes/{mbx}/messages", key=key), 409, "RUN_NOT_ACTIVE")
+    body = err(api.call("GET", f"/v1/mailboxes/{mbx}/messages", key=key), 409, "RUN_NOT_ACTIVE")
+    assert body["message"] == "mailbox is not available"
     api.call("POST", f"/v1/runs/{rid}/cancel", expect=200)  # cancel revokes the agent key
     err(api.call("GET", f"/v1/mailboxes/{mbx}/messages", key=key), 401, "UNAUTHENTICATED")
 
@@ -204,3 +205,14 @@ def test_agent_never_sees_answer_key_text(api, agent):
                 f"/v1/mailboxes/{mbx}/changes"):  # fmt: skip
         seen += api.call("GET", url, key=key, expect=200).text
     assert "message" in seen and not [s for s in secrets if s in seen]
+
+
+def test_received_mail_cannot_be_patched_into_sent_or_drafts(api, agent):
+    """QA B-5: a PATCH folder change must not forge "sent"/"drafted" evidence."""
+    rid, mbx, key = agent
+    first = items(api, f"/v1/mailboxes/{mbx}/messages?folder=inbox", key)[0]
+    for folder in ("Sent", "drafts"):
+        r = api.call("PATCH", f"/v1/mailboxes/{mbx}/messages/{first['id']}", key=key,
+                     json={"folder": folder})  # fmt: skip
+        assert "cannot be placed" in err(r, 403, "PERMISSION_DENIED")["message"]
+    assert items(api, f"/v1/mailboxes/{mbx}/messages?folder=sent", key) == []

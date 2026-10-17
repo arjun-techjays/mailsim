@@ -256,8 +256,9 @@ export function buildReport(runId: string, id: string, opts: { checks: boolean; 
       status: 'PASS',
       reason: 'Agent replied to the vendor asking for verification.',
       diff: {
-        expected: { operation: 'reply', to: 'billing@supplier.test' },
-        actual: { operation: 'reply', to: 'billing@supplier.test' },
+        // Like the server: a criterion (count range, contains) next to observations (count, ids).
+        expected: { operation: 'reply', to: 'billing@supplier.test', count: { min: 1 }, contains: ['verify'] },
+        actual: { operation: 'reply', to: 'billing@supplier.test', count: 1, message_ids: ['msg_reply_1'] },
         matched: true,
         explanation: 'Reply found.',
       },

@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any
 
+from mailsim.api.agent_errors import agent_view
 from mailsim.domain.errors import SimError
 from mailsim.domain.models import CanonicalMessage
 from mailsim.engine.context import use_interface
@@ -238,7 +239,7 @@ class ImapSession:
 
     def greeting(self) -> bytes:
         caps = " ".join(self.capabilities())
-        return f"* OK [CAPABILITY {caps}] mailsim IMAP4rev1 sandbox ready\r\n".encode()
+        return f"* OK [CAPABILITY {caps}] IMAP4rev1 ready\r\n".encode()
 
     def execute(self, data: bytes, flush: Callable[[list[bytes]], None] | None = None) -> Reply:
         """Run one complete command (literals inline as received). `flush` streams untagged
@@ -277,7 +278,8 @@ class ImapSession:
             return Reply([], close=True)
         except SimError as exc:
             code = _ERROR_CODES.get(str(exc.code), "SERVERBUG")
-            line = f"{tag} NO [{code}] {exc.code}: {_one_line(exc.message)}\r\n"
+            agent_code, message, _ = agent_view(str(exc.code), exc.message)
+            line = f"{tag} NO [{code}] {agent_code}: {_one_line(message)}\r\n"
             return Reply([*out, line.encode()])
         except Exception:
             log.exception("IMAP command %s failed", name)
@@ -342,12 +344,12 @@ class ImapSession:
 
     def cmd_logout(self, tag: str, args: list[Any], out: list[bytes]) -> Reply:
         self._arity(args, 0, "LOGOUT")
-        return Reply([b"* BYE mailsim logging out\r\n", f"{tag} OK LOGOUT completed\r\n".encode()],
+        return Reply([b"* BYE logging out\r\n", f"{tag} OK LOGOUT completed\r\n".encode()],
                      close=True)  # fmt: skip
 
     def cmd_id(self, tag: str, args: list[Any], out: list[bytes]) -> str:
         self._arity(args, 1, "ID (params) | ID NIL")
-        out.append(b'* ID ("name" "mailsim" "vendor" "mailsim")\r\n')
+        out.append(b'* ID ("name" "IMAP" "vendor" "IMAP")\r\n')
         return "OK ID completed"
 
     # ----------------------------------------------------------------- authentication
@@ -395,7 +397,9 @@ class ImapSession:
         except AuthFailed as exc:
             log.info("IMAP login failed: %s", exc.reason)
             if exc.code == "RUN_NOT_ACTIVE":
-                return self._failed(tag, "NO [UNAVAILABLE] RUN_NOT_ACTIVE: the run is not active")
+                return self._failed(
+                    tag, "NO [UNAVAILABLE] RUN_NOT_ACTIVE: mailbox is not available"
+                )
             if exc.code is not None:
                 return self._failed(tag, f"NO [AUTHORIZATIONFAILED] {_one_line(exc.reason)}")
             return self._failed(tag, "NO [AUTHENTICATIONFAILED] Authentication failed")
@@ -425,7 +429,7 @@ class ImapSession:
             self._folder_cache = None
             if self.selected is not None:
                 self.selected = None
-                raise Disconnect("[UNAVAILABLE] UIDVALIDITY changed (the run was reset); reconnect")
+                raise Disconnect("[UNAVAILABLE] UIDVALIDITY changed; reconnect")
             return True
         if feed["changes"]:
             self._folder_cache = None

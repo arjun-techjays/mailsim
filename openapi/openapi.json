@@ -291,6 +291,18 @@
             "title": "Api Key",
             "type": "string"
           },
+          "key_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "revoke with DELETE /v1/keys/{key_id}",
+            "title": "Key Id"
+          },
           "mailbox_address": {
             "title": "Mailbox Address",
             "type": "string"
@@ -539,6 +551,18 @@
               }
             ],
             "title": "Size"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "download URL of a blob artifact (served as an attachment)",
+            "title": "Url"
           }
         },
         "required": [
@@ -2128,6 +2152,43 @@
         "title": "FolderOut",
         "type": "object"
       },
+      "ForwardRequest": {
+        "additionalProperties": false,
+        "description": "Forward a message (with its attachments) to new recipients; `text` goes above it.",
+        "properties": {
+          "cc": {
+            "description": "addresses; \"Name <addr@example.com>\" is accepted (the name is dropped); quote a name that contains a comma ('\"Smith, John\" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.",
+            "items": {
+              "maxLength": 8192,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Cc",
+            "type": "array"
+          },
+          "text": {
+            "default": "",
+            "title": "Text",
+            "type": "string"
+          },
+          "to": {
+            "description": "addresses; \"Name <addr@example.com>\" is accepted (the name is dropped); quote a name that contains a comma ('\"Smith, John\" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.",
+            "items": {
+              "maxLength": 8192,
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "To",
+            "type": "array"
+          }
+        },
+        "required": [
+          "to"
+        ],
+        "title": "ForwardRequest",
+        "type": "object"
+      },
       "InjectMessage": {
         "additionalProperties": false,
         "properties": {
@@ -3000,6 +3061,7 @@
                 "type": "null"
               }
             ],
+            "description": "label for comparing builds in /accuracy; omit for none (stored as null, reported as \"(no build)\", which is therefore not a valid name)",
             "title": "Agent Build"
           },
           "checks": {
@@ -3095,6 +3157,7 @@
                 "type": "null"
               }
             ],
+            "description": "set on replay runs: the run whose recorded log this run copies (never evaluated)",
             "title": "Replay Of"
           },
           "scenario_key": {
@@ -3120,6 +3183,7 @@
             "title": "Scenario Version"
           },
           "status": {
+            "description": "DRAFT, VALIDATED, READY, RUNNING, PASSED, FAILED, ERROR, CANCELLED or REPLAYED (a closed replay copy)",
             "title": "Status",
             "type": "string"
           },
@@ -3373,16 +3437,22 @@
         "additionalProperties": false,
         "properties": {
           "bcc": {
+            "description": "addresses; \"Name <addr@example.com>\" is accepted (the name is dropped); quote a name that contains a comma ('\"Smith, John\" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.",
             "items": {
+              "maxLength": 8192,
               "type": "string"
             },
+            "maxItems": 100,
             "title": "Bcc",
             "type": "array"
           },
           "cc": {
+            "description": "addresses; \"Name <addr@example.com>\" is accepted (the name is dropped); quote a name that contains a comma ('\"Smith, John\" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.",
             "items": {
+              "maxLength": 8192,
               "type": "string"
             },
+            "maxItems": 100,
             "title": "Cc",
             "type": "array"
           },
@@ -3408,9 +3478,12 @@
             "type": "string"
           },
           "to": {
+            "description": "addresses; \"Name <addr@example.com>\" is accepted (the name is dropped); quote a name that contains a comma ('\"Smith, John\" <j@example.com>'): unquoted commas separate addresses. At most 100 distinct recipients per message.",
             "items": {
+              "maxLength": 8192,
               "type": "string"
             },
+            "maxItems": 100,
             "title": "To",
             "type": "array"
           }
@@ -3420,25 +3493,8 @@
       },
       "SendResult": {
         "additionalProperties": false,
+        "description": "The sent copy in the caller's mailbox. How each recipient was handled is not part of\nthe agent-facing result (operators see it in the run's actions and events).",
         "properties": {
-          "delivered_message_ids": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Delivered Message Ids",
-            "type": "array"
-          },
-          "external_mode": {
-            "title": "External Mode",
-            "type": "string"
-          },
-          "external_recipients": {
-            "items": {
-              "type": "string"
-            },
-            "title": "External Recipients",
-            "type": "array"
-          },
           "message_id": {
             "title": "Message Id",
             "type": "string"
@@ -3450,10 +3506,7 @@
         },
         "required": [
           "message_id",
-          "message_id_header",
-          "delivered_message_ids",
-          "external_recipients",
-          "external_mode"
+          "message_id_header"
         ],
         "title": "SendResult",
         "type": "object"
@@ -3694,8 +3747,8 @@
     }
   },
   "info": {
-    "description": "Email agent testing simulator. External delivery is impossible by design.",
-    "title": "mailsim",
+    "description": "Mail API.",
+    "title": "Mail API",
     "version": "1.0.0-wave0"
   },
   "openapi": "3.1.0",
@@ -3996,7 +4049,7 @@
         ]
       },
       "post": {
-        "description": "Send to simulated mailboxes only. External recipients follow the scenario's rule\n(deny/sink/event); nothing is ever delivered outside the sandbox.",
+        "description": "Send a new message. Recipients may be bare addresses or `Name <addr@example.com>`; a\nrecipient the run does not allow is rejected with EXTERNAL_DELIVERY_BLOCKED (422).",
         "operationId": "send_v1_mailboxes__mailbox_id__messages_post",
         "parameters": [
           {
@@ -4216,6 +4269,140 @@
           }
         ],
         "summary": "Patch Message",
+        "tags": [
+          "mailbox"
+        ]
+      }
+    },
+    "/v1/mailboxes/{mailbox_id}/messages/{message_id}/attachments/{attachment_id}": {
+      "get": {
+        "description": "Download one attachment (ids from the message's `attachments`). Served as a download\nwith its stored media type; never rendered inline. Recorded as a `read`.",
+        "operationId": "get_attachment_v1_mailboxes__mailbox_id__messages__message_id__attachments__attachment_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mailbox_id",
+            "required": true,
+            "schema": {
+              "title": "Mailbox Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "title": "Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "attachment_id",
+            "required": true,
+            "schema": {
+              "title": "Attachment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The attachment bytes, always as a download (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`). Active types (HTML, SVG, XML, scripts, ...) are served as application/octet-stream."
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Attachment",
+        "tags": [
+          "mailbox"
+        ]
+      }
+    },
+    "/v1/mailboxes/{mailbox_id}/messages/{message_id}/forward": {
+      "post": {
+        "description": "Forward a message, attachments included, to `to` (and `cc`); `text` is written above\nthe forwarded content. Counts as one `forward` operation.",
+        "operationId": "forward_v1_mailboxes__mailbox_id__messages__message_id__forward_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "mailbox_id",
+            "required": true,
+            "schema": {
+              "title": "Mailbox Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "title": "Message Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForwardRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Forward",
         "tags": [
           "mailbox"
         ]
@@ -4519,7 +4706,7 @@
     },
     "/v1/runs": {
       "get": {
-        "description": "Runs in the caller's project, newest first (by creation time, then id); filter by\n`scenario_key` and/or `status`; follow `next_cursor` until it is null.",
+        "description": "Runs in the caller's project, newest first (by creation time, then id); filter by\n`scenario_key` and/or `status`; follow `next_cursor` until it is null.\n\nReplay runs (`replay_of` set, status REPLAYED) are copies of another run's log, not agent\nruns: they are left out unless `include_replays=true` (or `status=REPLAYED`).",
         "operationId": "list_runs_v1_runs_get",
         "parameters": [
           {
@@ -4580,6 +4767,16 @@
               "minimum": 1,
               "title": "Page Size",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_replays",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Replays",
+              "type": "boolean"
             }
           }
         ],
@@ -4787,7 +4984,7 @@
     },
     "/v1/runs/{run_id}/agent-credentials": {
       "post": {
-        "description": "Issue a new agent key for a run (e.g. after a lost or redacted response). Earlier agent\nkeys of the run are revoked.",
+        "description": "Issue an additional agent key for a run (e.g. after a lost or redacted response, or one\nkey per interface). Earlier agent keys are NOT revoked: revoke one explicitly with\n`DELETE /v1/keys/{key_id}`. Cancelling or completing the run revokes all of them. At most\n16 live agent keys per run: beyond that, 409 CONFLICT until one is revoked.",
         "operationId": "create_agent_credential_v1_runs__run_id__agent_credentials_post",
         "parameters": [
           {
@@ -4835,7 +5032,7 @@
     },
     "/v1/runs/{run_id}/artifacts": {
       "get": {
-        "description": "Trace, raw MIME and attachment blobs; evaluation reports for evaluators only.",
+        "description": "Trace, raw MIME and attachment blobs; evaluation reports for evaluators only. Blob\nartifacts carry a `url` that downloads them (`GET /v1/runs/{run_id}/artifacts/{ref}`).",
         "operationId": "run_artifacts_v1_runs__run_id__artifacts_get",
         "parameters": [
           {
@@ -4880,6 +5077,59 @@
           }
         ],
         "summary": "Run Artifacts",
+        "tags": [
+          "control"
+        ]
+      }
+    },
+    "/v1/runs/{run_id}/artifacts/{artifact_id}": {
+      "get": {
+        "description": "Download one listed blob artifact (`artifact_id` = its `ref`) as an attachment. Only\nblobs this run lists for the caller are served (reports: evaluators only); 404 otherwise.\nServed with `Content-Security-Policy: sandbox`, `X-Content-Type-Options: nosniff` and the\nrecorded content type only when it is a passive type (else application/octet-stream).",
+        "operationId": "run_artifact_v1_runs__run_id__artifacts__artifact_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {}
+            },
+            "description": "Successful Response"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Run Artifact",
         "tags": [
           "control"
         ]
@@ -5180,6 +5430,7 @@
         ]
       },
       "post": {
+        "description": "Grade the recorded run with an answer key (default: the latest compatible version).\n\n404 when the run or the requested answer-key version does not exist; 409 CONFLICT when\nthe key is not compatible with the run's scenario version (`details.answer_key_version`,\n`details.scenario_versions`, `details.run_scenario_version`) and for replay runs\n(`details.replay_of`: evaluate the original run instead).",
         "operationId": "evaluate_run_v1_runs__run_id__evaluations_post",
         "parameters": [
           {
@@ -5254,7 +5505,7 @@
     },
     "/v1/runs/{run_id}/evaluations/{evaluation_id}/report": {
       "get": {
-        "description": "Download one evaluation's report (JSON, JUnit XML or Markdown).",
+        "description": "Download one evaluation's report (JSON, JUnit XML or Markdown) as an attachment named\n`<run_id>-<evaluation_id>.<json|xml|md>`.",
         "operationId": "evaluation_report_v1_runs__run_id__evaluations__evaluation_id__report_get",
         "parameters": [
           {
@@ -5698,8 +5949,85 @@
         ]
       }
     },
+    "/v1/runs/{run_id}/mailboxes/{mailbox_id}/messages/{message_id}/attachments/{attachment_id}": {
+      "get": {
+        "description": "Operator download of one attachment of any mailbox in the run (records nothing; works\non finished runs). Always a download: `Content-Disposition: attachment`, `nosniff` and\n`Content-Security-Policy: sandbox`, so it is never rendered in the dashboard's origin.",
+        "operationId": "inspect_attachment_v1_runs__run_id__mailboxes__mailbox_id__messages__message_id__attachments__attachment_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "mailbox_id",
+            "required": true,
+            "schema": {
+              "title": "Mailbox Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "title": "Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "attachment_id",
+            "required": true,
+            "schema": {
+              "title": "Attachment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The attachment bytes, always as a download (`Content-Disposition: attachment`, `X-Content-Type-Options: nosniff`, `Content-Security-Policy: sandbox`). Active types (HTML, SVG, XML, scripts, ...) are served as application/octet-stream."
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Default Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Inspect Attachment",
+        "tags": [
+          "simulator"
+        ]
+      }
+    },
     "/v1/runs/{run_id}/replay": {
       "post": {
+        "description": "Copy the run's recorded event log into a new run and compare state hashes. The copy\n(`replay_of` = this run) ends REPLAYED (or the original's final status if it had ended):\nit takes no commands, cannot be evaluated (409), and is left out of /accuracy and of the\nruns list unless `include_replays=true`.",
         "operationId": "replay_run_v1_runs__run_id__replay_post",
         "parameters": [
           {
@@ -6511,7 +6839,7 @@
         ]
       },
       "post": {
-        "description": "Publish a hidden answer-key version (controller or evaluator). The response is\nmetadata only.",
+        "description": "Publish a hidden answer-key version (controller or evaluator). The response is\nmetadata only. Runs the checks of `.../answer-keys/validate` (400 with `details.issues`);\nreferences are checked against the compatible scenario versions that exist now (all of\nthem when `scenario_versions` is omitted); later scenario versions do not re-check it.",
         "operationId": "create_answer_key_v1_scenarios__scenario_key__answer_keys_post",
         "parameters": [
           {
@@ -6569,7 +6897,7 @@
     },
     "/v1/scenarios/{scenario_key}/answer-keys/validate": {
       "post": {
-        "description": "Schema + leak guard for an unsaved answer key. Stores nothing.\n\nErrors: dotted schema paths (`answer_key.assertions.0.check`), `answer_key.scenario` for a\nkey of another scenario, `answer_key.scenario_versions` for unknown versions, and\n`leak:<scenario version>` when grading prose appears in content the agent can read (the\nleaked text is cut to 60 characters). 404 when the scenario does not exist.",
+        "description": "Schema, references + leak guard for an unsaved answer key. Stores nothing; publishing\nruns the same checks.\n\nErrors: dotted schema paths (`answer_key.assertions.0.check`), `answer_key.scenario` for a\nkey of another scenario, `answer_key.scenario_versions` for unknown versions, unknown\nreferences at their dotted path (`answer_key.assertions.0.check.where.folder`: folders,\nflags, operations per actor, outcome and error codes, persona mailboxes and event ids of\nevery compatible scenario version; with `scenario_versions` omitted, the versions that exist\nnow: a later scenario version does not re-check stored keys), and\n`leak:<scenario version>` when grading prose appears in content the agent can read (the\nleaked text is cut to 60 characters). 404 when the scenario does not exist.",
         "operationId": "validate_answer_key_v1_scenarios__scenario_key__answer_keys_validate_post",
         "parameters": [
           {

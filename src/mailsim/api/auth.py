@@ -18,8 +18,9 @@ import re
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from mailsim.auth.principal import Principal, Role
@@ -110,7 +111,7 @@ def verify_key(session: Session, raw: str, *, now: datetime | None = None) -> Pr
         # an agent key lives only as long as its run: CANCELLED / PASSED / FAILED / ERROR
         # (however the run got there) ends it, even if no explicit revocation happened
         run = session.get(m.Run, found.run_id)
-        if run is None or run.status in {str(st) for st in TERMINAL}:
+        if run is None or run.status in {str(st) for st in TERMINAL} or run.replay_of is not None:
             raise InvalidCredential("API key revoked")
     return Principal(found.tenant_id, found.project_id, Role(found.role), found.run_id,
                      found.mailbox_id, found.id)  # fmt: skip
@@ -132,21 +133,29 @@ def revoke_scoped_key(session: Session, tenant_id: str, project_id: str, key_id:
     return True
 
 
-def revoke_agent_keys(
-    session: Session, tenant_id: str, project_id: str, run_id: str, *, keep: str | None = None
-) -> int:
-    """Revoke every live agent key of a run (except `keep`). Returns how many were revoked."""
+def _live_agent_keys(tenant_id: str, project_id: str, run_id: str) -> list[Any]:
+    return [m.ApiKey.tenant_id == tenant_id, m.ApiKey.project_id == project_id,
+            m.ApiKey.run_id == run_id, m.ApiKey.role == str(Role.AGENT),
+            m.ApiKey.revoked_at.is_(None)]  # fmt: skip
+
+
+def count_live_agent_keys(session: Session, tenant_id: str, project_id: str, run_id: str) -> int:
+    """Unrevoked, unexpired agent keys of a run."""
+    now = datetime.now(UTC)
+    return int(session.scalar(
+        select(func.count()).select_from(m.ApiKey).where(
+            *_live_agent_keys(tenant_id, project_id, run_id),
+            or_(m.ApiKey.expires_at.is_(None), m.ApiKey.expires_at > now),
+        )
+    ) or 0)  # fmt: skip
+
+
+def revoke_agent_keys(session: Session, tenant_id: str, project_id: str, run_id: str) -> int:
+    """Revoke every live agent key of a run. Returns how many were revoked."""
     moment = datetime.now(UTC)
     result = session.execute(
         update(m.ApiKey)
-        .where(
-            m.ApiKey.tenant_id == tenant_id,
-            m.ApiKey.project_id == project_id,
-            m.ApiKey.run_id == run_id,
-            m.ApiKey.role == str(Role.AGENT),
-            m.ApiKey.revoked_at.is_(None),
-            m.ApiKey.id != (keep or ""),
-        )  # fmt: skip
+        .where(*_live_agent_keys(tenant_id, project_id, run_id))
         .values(revoked_at=moment)
     )
     return int(getattr(result, "rowcount", 0) or 0)

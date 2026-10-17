@@ -1,4 +1,5 @@
 import { createContext, useContext } from 'react';
+import type { AgentCredential } from '../api/types';
 
 /**
  * An agent key held by this tab, per run. Keys are shown once by the API, so the dashboard
@@ -11,6 +12,14 @@ export interface HeldKey {
   prefix: string | null;
   mailboxAddress: string;
   mailboxId: string;
+  /** Key id when the API named it (AgentCredential.key_id on newer servers). */
+  keyId?: string | null;
+}
+
+/** AgentCredential.key_id where the server provides it (optional in the contract). */
+export function credentialKeyId(cred: Pick<AgentCredential, 'key_id'>): string | null {
+  const id = cred.key_id;
+  return typeof id === 'string' && id ? id : null;
 }
 
 export interface AgentKeyStore {

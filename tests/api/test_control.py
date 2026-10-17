@@ -143,13 +143,13 @@ def test_answer_keys_are_metadata_only_and_evaluator_listed(api):
     api.publish()
     out = api.call("POST", f"/v1/scenarios/{KEY}/answer-keys", json={"source": ANSWER_KEY},
                    expect=201).json()  # fmt: skip
-    assert out["version"] == 2 and out["source"] == "file" and out["scenario_versions"] == [1]
+    assert out["version"] == 3 and out["source"] == "file" and out["scenario_versions"] == [1]
     doc = yaml.safe_load(ANSWER_KEY)
     again = api.call("POST", f"/v1/scenarios/{KEY}/answer-keys", json={"document": doc},
                      expect=201).json()  # fmt: skip
     assert again["id"] == out["id"]
     listed = api.call("GET", f"/v1/scenarios/{KEY}/answer-keys", "evaluator", expect=200)
-    assert [(k["version"], k["source"]) for k in listed.json()] == [(1, "inline"), (2, "file")]
+    assert [(k["version"], k["source"]) for k in listed.json()] == [(1, "inline"), (3, "file")]
     secrets = [a["requirement"] for a in doc["answer_key"]["assertions"]]
     for text in (json.dumps(out), listed.text):
         assert "assertions" not in text and not [x for x in secrets if x in text]
@@ -233,8 +233,13 @@ def test_agent_credentials_route_issues_a_fresh_working_key(api):
     rid, (key1, mbx) = created["run"]["id"], api.agent(created)
     fresh = api.call("POST", f"/v1/runs/{rid}/agent-credentials", expect=201).json()
     assert fresh["api_key"] != key1 and fresh["mailbox_id"] == mbx
+    assert fresh["key_id"].startswith("key_")
     api.call("GET", f"/v1/mailboxes/{mbx}/folders", key=fresh["api_key"], expect=200)
-    api.call("GET", f"/v1/mailboxes/{mbx}/folders", key=key1, expect=401)  # superseded
+    # minting never revokes: the earlier key keeps working until revoked explicitly
+    api.call("GET", f"/v1/mailboxes/{mbx}/folders", key=key1, expect=200)
+    api.call("DELETE", f"/v1/keys/{fresh['key_id']}", expect=204)
+    api.call("GET", f"/v1/mailboxes/{mbx}/folders", key=fresh["api_key"], expect=401)
+    api.call("GET", f"/v1/mailboxes/{mbx}/folders", key=key1, expect=200)
 
 
 def test_events_pagination_is_complete_and_ordered(api):

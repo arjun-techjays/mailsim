@@ -5,7 +5,7 @@ import { useApi } from '../auth/session';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { CopyButton } from '../components/CopyButton';
 import { ErrorDisplay } from '../components/ErrorDisplay';
-import { connectionKey, keyPrefix, maskKey, useAgentKeys } from './agentKeys';
+import { connectionKey, credentialKeyId, keyPrefix, maskKey, useAgentKeys } from './agentKeys';
 
 type Pending = { kind: 'mint' } | { kind: 'revoke'; keyIds: string[] } | null;
 
@@ -25,8 +25,12 @@ export function KeyPanel({ conn, revealed, onReveal }: { conn: RunConnection; re
   const opener = useRef<HTMLElement | null>(null);
   const active = conn.agent_keys.filter((k) => !k.revoked);
   /** The listed key this tab holds (matched by its public prefix). */
-  const heldId = held?.prefix ? conn.agent_keys.find((k) => k.prefix === held.prefix)?.key_id : undefined;
-  const mintedNotice = useRef<HTMLParagraphElement>(null);
+  const heldId =
+    (held?.keyId && conn.agent_keys.some((k) => k.key_id === held.keyId) ? held.keyId : undefined) ??
+    (held?.prefix ? conn.agent_keys.find((k) => k.prefix === held.prefix)?.key_id : undefined);
+  /** Active keys other than the held one (known once the list includes the held key). */
+  const others = heldId ? active.filter((k) => k.key_id !== heldId) : [];
+  const mintedNotice = useRef<HTMLDivElement>(null);
   const keysHeading = useRef<HTMLHeadingElement>(null);
   const [focusAfter, setFocusAfter] = useState<'minted' | 'keys' | null>(null);
   useEffect(() => {
@@ -54,6 +58,7 @@ export function KeyPanel({ conn, revealed, onReveal }: { conn: RunConnection; re
         prefix: keyPrefix(cred.api_key),
         mailboxAddress: cred.mailbox_address,
         mailboxId: cred.mailbox_id,
+        keyId: credentialKeyId(cred),
       });
       setMinted(true);
       setFocusAfter('minted');
@@ -96,9 +101,19 @@ export function KeyPanel({ conn, revealed, onReveal }: { conn: RunConnection; re
       {held ? (
         <>
           {minted && (
-            <p className="notice" ref={mintedNotice} tabIndex={-1} data-testid="minted-notice">
-              New agent key minted. Copy it now: the API never shows it again. The run’s earlier agent keys were revoked.
-            </p>
+            <div className="notice" ref={mintedNotice} tabIndex={-1} data-testid="minted-notice">
+              <p>
+                New agent key minted. Copy it now: the API never shows it again.
+                {others.length > 0
+                  ? ` The run’s ${others.length === 1 ? 'other agent key still works' : `${others.length} other agent keys still work`} until you revoke ${others.length === 1 ? 'it' : 'them'}.`
+                  : ''}
+              </p>
+              {others.length > 0 && (
+                <button type="button" onClick={(e) => ask({ kind: 'revoke', keyIds: others.map((k) => k.key_id) }, e.currentTarget)}>
+                  Revoke the other {others.length === 1 ? 'key' : `${others.length} keys`}
+                </button>
+              )}
+            </div>
           )}
           <p>
             Key for <strong>{held.mailboxAddress}</strong>. It is held in this tab’s memory only: reloading the page
@@ -162,14 +177,10 @@ export function KeyPanel({ conn, revealed, onReveal }: { conn: RunConnection; re
       {pending?.kind === 'mint' && (
         <ConfirmDialog title="Mint a new agent key?" confirmLabel="Mint key" busy={mint.isPending} onConfirm={() => mint.mutate()} onCancel={close}>
           <p>
-            The server issues a new key for {conn.mailbox_address} and revokes this run’s other agent keys
-            {active.length > 0 && (
-              <>
-                {' '}
-                ({active.map((k) => k.key_id).join(', ')})
-              </>
-            )}
-            . An agent still using an old key gets 401 from then on.
+            The server issues a new key for {conn.mailbox_address}, shown once.{' '}
+            {active.length > 0
+              ? `The run’s existing agent key${active.length === 1 ? '' : 's'} (${active.map((k) => k.key_id).join(', ')}) keep${active.length === 1 ? 's' : ''} working; you can revoke ${active.length === 1 ? 'it' : 'them'} afterwards.`
+              : 'The run has no active agent key yet.'}
           </p>
         </ConfirmDialog>
       )}
