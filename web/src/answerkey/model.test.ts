@@ -2,6 +2,7 @@ import { AUTHORING_META } from '../mocks/authoring';
 import { clearAllDrafts, clearDraft, draftKey, loadDraft, saveDraft } from './draftStorage';
 import { labelsOf, personaOptions } from './useScenarioContext';
 import {
+  checksOff,
   defaultCheck,
   emptyDraft,
   fieldId,
@@ -78,6 +79,10 @@ describe('answer-key model', () => {
       rubric: 'x',
     });
     expect(b).toEqual({ id: 'b', type: 'semantic', requirement: 'q' });
+    // checks_default as the server reads it: false/no (any case) mean off too
+    expect([false, 'off', 'False', ' NO ', 'false'].every(checksOff)).toBe(true);
+    expect([true, 'on', 'yes', 'TRUE', undefined, 0].some(checksOff)).toBe(false);
+    expect(fromDocument({ answer_key: { checks_default: false } }, 'k').checksDefault).toBe('off');
     const empty = fromDocument({}, 'k');
     expect(empty).toMatchObject({ scenario: 'k', version: '', allVersions: true, checksDefault: 'on', assertions: [] });
     expect((toDocument({ ...emptyDraft('k', 1), version: 'x' }) as { answer_key: { version: unknown } }).answer_key.version).toBe('x');

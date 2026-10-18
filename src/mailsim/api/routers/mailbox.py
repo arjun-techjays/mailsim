@@ -18,7 +18,7 @@ from mailsim.api.errors import ErrorEnvelope
 from mailsim.api.pagination import page_messages
 from mailsim.api.routers._common import ATTACHMENT_RESPONSE, agent, attachment_response
 from mailsim.domain.errors import InvalidRequest, NotFound
-from mailsim.domain.models import CanonicalMessage
+from mailsim.domain.models import CanonicalMessage, refuse_system_labels
 from mailsim.engine.facades import AgentMailbox
 from mailsim.engine.pagination import check_page_size
 
@@ -118,6 +118,7 @@ def patch_message(
     if not (body.folder or body.add_labels or body.remove_labels or body.add_flags
             or body.remove_flags):  # fmt: skip
         raise InvalidRequest("empty patch: set folder, labels or flags")
+    refuse_system_labels([*body.add_labels, *body.remove_labels])  # before the first write
     mb = agent(request, principal)
     if body.folder is not None:
         _folder_name(mb, body.folder)  # validate before the first write

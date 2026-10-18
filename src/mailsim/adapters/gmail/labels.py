@@ -21,7 +21,7 @@ import threading
 from typing import Any
 
 from mailsim.domain.errors import InvalidRequest, NotFound
-from mailsim.domain.models import SYSTEM_FOLDERS, CanonicalMessage
+from mailsim.domain.models import SYSTEM_FOLDERS, CanonicalMessage, is_system_label
 
 USER_PREFIX = "Label_"
 FOLDER_LABEL = {"inbox": "INBOX", "sent": "SENT", "drafts": "DRAFT", "trash": "TRASH"}
@@ -61,7 +61,10 @@ def check_label_id(label_id: str) -> str:
     if label_id in UNMODELLED_LABELS or label_id.startswith("CATEGORY_"):
         return "unmodelled"
     if is_user_label_id(label_id):
-        user_label_name(label_id)
+        if is_system_label(user_label_name(label_id)):
+            # no user label can carry a system name (labels.create refuses it), so an id
+            # encoding one names nothing: SENT / DRAFT ... are never settable as user labels
+            raise NotFound(f"Invalid label: {label_id}")
         return "user"
     raise NotFound(f"Invalid label: {label_id}")
 

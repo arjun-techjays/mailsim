@@ -37,7 +37,9 @@ inactive run reads `RUN_NOT_ACTIVE` / "mailbox is not available" (operator route
 `SIMULATION_LIMIT_EXCEEDED` and the engine messages). The dashboard's run page shows every
 endpoint for a run (`GET /v1/runs/{run_id}/connection`), tests a key through any interface
 (`POST /v1/runs/{run_id}/connection-tests`) and shows which interface each action came through
-(`GET /v1/runs/{run_id}/activity`).
+(`GET /v1/runs/{run_id}/activity`). A connection test is an operator check, not agent activity:
+it only reads, arms no trigger, and is listed with the actor `connection_test` (never graded,
+never counted as an agent action). Only that operator route can mark a call this way.
 
 ## Run the API and dashboard locally
 
@@ -66,9 +68,9 @@ Expired idempotency records are swept on each claim; `python -m mailsim.serve sw
   publish (also for inline scenario assertions). Unknown names are errors with dotted paths
   (`answer_key.assertions.3.check.where.folder`), never a silent PASS or a forever-INCONCLUSIVE:
   folders (`inbox sent drafts trash archive`, any case), flags (`SEEN ANSWERED FLAGGED DELETED
-  DRAFT`), operations per `actor` (agent: the scenario agent operations; simulator:
+  DRAFT`, any case), operations per `actor` (any case; agent: the scenario agent operations; simulator:
   `persona.reply persona.failed`; controller: `create_run start cancel error reset inject tick
-  advance replay`), outcomes (`ok`, `any` or an error code), protocol `error_codes`, and the
+  advance replay`), outcomes (`ok`, `any` or an error code, any case), protocol `error_codes`, and the
   persona mailboxes and event ids (`evaluate_at.event`, temporal `first`/`then`) of **every**
   scenario version the key is compatible with (`scenario_versions`, all when omitted). Labels
   are free-form and not checked. A key that covers all versions (`scenario_versions` omitted)
@@ -79,7 +81,7 @@ Expired idempotency records are swept on each claim; `python -m mailsim.serve sw
 * **YAML booleans.** Only `true`/`false` are booleans; `on`/`off`/`yes`/`no` stay strings
   (YAML 1.2 rules), so a persona script's `on:` key and `checks_default: on` work unquoted.
   Where a boolean is expected (`once: yes`), those strings are still accepted.
-  `checks_default` also accepts `true`/`false`.
+  `checks_default` is `on` or `off`; `true`/`false` and `yes`/`no` (any case) work too.
 * **Evaluation errors.** `POST /v1/runs/{id}/evaluations` answers 404 when the requested
   `answer_key_version` does not exist and 409 CONFLICT when it (or every key) is not compatible
   with the run's scenario version (`details.answer_key_version`, `details.scenario_versions`,
@@ -100,6 +102,20 @@ Expired idempotency records are swept on each claim; `python -m mailsim.serve sw
   `Content-Security-Policy: sandbox`.
 
 ## Release notes
+
+* **QA-D (agent writes, connection tests).** System labels are derived, never written by the
+  agent: `SENT DRAFT DRAFTS INBOX TRASH ARCHIVE UNREAD STARRED ANSWERED DELETED` (any case)
+  can't be added or removed as labels through any interface (REST/MCP `INVALID_REQUEST`, Gmail
+  user-label ids spelling them 404, Graph categories 400, IMAP keywords `NO [CANNOT]`); the
+  `DRAFT` flag can't be put on mail that is not a draft nor taken off a draft
+  (`PERMISSION_DENIED`); agents can't insert/APPEND into Sent or Drafts, and only mail the
+  agent really sent may be moved or copied (back) into Sent. In answer keys, `where.label` on a
+  system label and `has_flag`/`lacks_flag: DRAFT` are graded from provenance (`SENT` = created
+  by a real send, `DRAFT` = a real draft, `INBOX`/`TRASH`/`ARCHIVE` = folder, `UNREAD`/
+  `STARRED`/`ANSWERED`/`DELETED` = flags), so stored labels can't fool them (older recordings
+  re-grade accordingly). Dashboard connection tests are recorded with the actor
+  `connection_test` (see above). Answer-key operation and outcome names match ignoring case;
+  `GET /v1/health` also reports `local_no_auth`.
 
 * **QA-A3 (evaluation, validation, runs).** Answer keys with unknown references are refused
   (validate and publish). New run status `REPLAYED`; replay runs are not evaluated and are

@@ -349,6 +349,16 @@ class RunPage(PageOut):
     items: list[RunOut]
 
 
+class HealthOut(_M):
+    """`GET /v1/health` (no credentials needed)."""
+
+    status: Literal["ok"]
+    version: str
+    local_no_auth: bool = Field(
+        default=False, description="true when the server runs in local no-auth mode"
+    )
+
+
 class MeOut(_M):
     """The calling credential's identity (`GET /v1/me`)."""
 

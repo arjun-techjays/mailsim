@@ -23,8 +23,12 @@ function fieldErrors(details: Record<string, unknown>): FieldError[] {
     .map((e) => ({ loc: Array.isArray(e.loc) ? e.loc.map(String) : [], msg: String(e.msg ?? '') }));
 }
 
-/** Renders an API error envelope (code, message, field errors, request id) as an alert. */
-export function ErrorDisplay({ error, title }: { error: unknown; title?: string }) {
+/**
+ * Renders an API error envelope (code, message, field errors, request id) as an alert. `hint`
+ * replaces the generic advice for the error code (null: none), for callers whose own buttons
+ * say what to do next.
+ */
+export function ErrorDisplay({ error, title, hint: hintOverride }: { error: unknown; title?: string; hint?: string | null }) {
   if (!isApiError(error)) {
     return (
       <div role="alert" className="error-box">
@@ -40,7 +44,7 @@ export function ErrorDisplay({ error, title }: { error: unknown; title?: string 
         ? 'Network error'
         : `${error.code} (HTTP ${error.status})`;
   const fields = fieldErrors(error.details);
-  const hint = HINTS[error.code];
+  const hint = hintOverride === undefined ? HINTS[error.code] : hintOverride;
   const otherDetails = Object.fromEntries(Object.entries(error.details).filter(([k]) => k !== 'errors'));
   return (
     <div role="alert" className="error-box" data-testid="api-error" data-error-code={error.code}>

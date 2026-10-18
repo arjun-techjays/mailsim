@@ -13,10 +13,14 @@ import pytest
 from mailsim import cli
 from mailsim.api.auth import hash_key, issue_key, revoke_key
 from mailsim.api.inprocess import asgi_request
+from mailsim.domain.errors import PermissionDenied
+from mailsim.engine.context import connection_test, use_connection_test
+from mailsim.engine.facades import AgentMailbox
 from mailsim.mcp.server import build_server, key_resolver
 from mailsim.protocols.server import ProtocolServers
 from mailsim.serve import mount_adapters
 from mailsim.store import models as m
+from mailsim.store.repos import Scope
 from mcp import Client
 from tests.api.conftest import KEY, open_agent
 from tests.api.test_ux_authoring import FakeListeners
@@ -114,7 +118,9 @@ def test_rest_connection_test_makes_a_real_call(run):
     assert res == {"interface": "rest", "ok": True, "status_code": 200, "error_code": None,
                    "error_message": None, "details": {"folders": 5},
                    "summary": "REST: agent key accepted, 5 folders visible (HTTP 200)"}  # fmt: skip
-    assert ("agent", "read", "rest") in run.interfaces()
+    # listed as the operator's connection test, never as an agent action (D-10)
+    assert run.interfaces()[-1] == ("connection_test", "read", "rest")
+    assert all(actor != "agent" for actor, _, _ in run.interfaces())
 
 
 def test_http_adapter_connection_tests(api, run):
@@ -129,6 +135,65 @@ def test_http_adapter_connection_tests(api, run):
                               "list_folders tool (HTTP 200)")  # fmt: skip
     seen = {i for _, _, i in run.interfaces()}
     assert {"gmail", "graph", "mcp_http"} <= seen  # every probe is in the run's activity
+
+
+def _read_trigger(s: dict) -> None:
+    open_agent(s)
+    s["events"].append({"id": "after-read",
+                        "trigger": {"type": "after_agent_action", "action": "read"},
+                        "event": {"type": "email.receive", "from": "vendor",
+                                  "to": "finance_manager", "subject": "You read it",
+                                  "body": "x"}})  # fmt: skip
+
+
+def test_connection_tests_are_not_agent_activity(api):
+    """D-10: probes are listed as `connection_test`, arm no trigger, write no event and are
+    not graded or counted; the agent's own calls (same key, same interface) still are."""
+    api.publish(_read_trigger)
+    run = Run(api)
+    mount_adapters(api.app)
+    seq = len(api.call("GET", f"/v1/runs/{run.id}/events?limit=500", expect=200).json()["items"])
+    for interface in ("rest", "gmail", "graph", "mcp_http", "mcp_stdio"):
+        assert run.test(interface)["ok"], interface
+    events = api.call("GET", f"/v1/runs/{run.id}/events?limit=500", expect=200).json()["items"]
+    assert len(events) == seq  # nothing armed, nothing written
+    probes = [a for a in run.activity(limit=500)["items"] if a["actor"] == "connection_test"]
+    assert {a["interface"] for a in probes} == {"rest", "gmail", "graph", "mcp_http"}
+    assert all(a["operation"] == "read" and a["outcome"] == "ok" for a in probes)
+    assert api.call("GET", f"/v1/runs/{run.id}", expect=200).json()["agent_actions"] == 0
+    # the agent's own read (same key) is an agent action and arms the read trigger
+    api.call("GET", f"/v1/mailboxes/{run.mbx}/folders", key=run.key, expect=200)
+    assert run.interfaces()[-1] == ("agent", "read", "rest")
+    events = api.call("GET", f"/v1/runs/{run.id}/events?limit=500", expect=200).json()["items"]
+    assert events[-1]["type"] == "event.armed"
+    # a probe of a run that is not running is refused and still not the agent's
+    ready = Run(api, start=False)
+    assert ready.test("rest")["error_code"] == "RUN_NOT_ACTIVE"
+    assert ready.interfaces()[-1] == ("connection_test", "read", "rest")
+
+
+def test_connection_test_marker_is_operator_only_and_read_only(api, run):
+    """Only the operator route sets the marker, in process: an agent request can't (there is
+    no header for it), and inside the marker an agent-key write is refused, not recorded as
+    the agent's."""
+    assert connection_test.get() is False
+    hdrs = {"X-Mailsim-Connection-Test": "1", "X-Connection-Test": "true"}
+    api.call("GET", f"/v1/mailboxes/{run.mbx}/folders", key=run.key, headers=hdrs, expect=200)
+    assert run.interfaces()[-1] == ("agent", "read", "rest")
+    scope = Scope(api.tenant_id, api.project_id)
+    mb = AgentMailbox(api.engine, scope, run.id, run.mbx)
+    inbox = mb.list_messages(folder="inbox").items
+    with use_connection_test():
+        with pytest.raises(PermissionDenied, match="connection test may only read"):
+            mb.send(to=["vendor@example.test"], subject="s", text="t")
+        with pytest.raises(PermissionDenied, match="connection test may only read"):
+            mb.mark_seen(inbox[0].id)  # a read that writes an event
+    assert connection_test.get() is False
+    tail = [(a["actor"], a["operation"], a["outcome"]) for a in run.activity(limit=500)["items"]]
+    assert tail[-2:] == [("connection_test", "send", "PERMISSION_DENIED"),
+                         ("connection_test", "read", "PERMISSION_DENIED")]  # fmt: skip
+    assert "SEEN" not in mb.get_message(inbox[0].id).flags
+    assert api.call("GET", f"/v1/runs/{run.id}", expect=200).json()["agent_actions"] == 0
 
 
 def test_adapters_not_served(run):
@@ -222,7 +287,8 @@ def test_listener_connection_tests_through_real_listeners(api, run):
         assert imap["details"]["port"] == servers.imap_port
         smtp = run.test("smtp")
         assert smtp["ok"] and smtp["summary"] == f"SMTP: AUTH as {AGENT} accepted"
-        assert {("agent", "read", "imap"), ("agent", "read", "smtp")} <= set(run.interfaces())
+        assert {("connection_test", "read", "imap"),
+                ("connection_test", "read", "smtp")} <= set(run.interfaces())  # fmt: skip
         assert servers.check_login("someone@else.test", run.key)[0] is False
         api.call("POST", f"/v1/runs/{run.id}/cancel", expect=200)
         ok, code, message = servers.check_login(AGENT, run.key)

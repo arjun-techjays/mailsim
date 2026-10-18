@@ -31,6 +31,6 @@ describe('session hooks', () => {
 
 describe('endpoints', () => {
   it('health is reachable without a key', async () => {
-    await expect(createApi({ baseUrl: API_BASE, apiKey: '' }).health()).resolves.toEqual({ status: 'ok', version: 'mock' });
+    await expect(createApi({ baseUrl: API_BASE, apiKey: '' }).health()).resolves.toEqual({ status: 'ok', version: 'mock', local_no_auth: false });
   });
 });

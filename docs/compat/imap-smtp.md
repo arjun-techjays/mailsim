@@ -56,7 +56,8 @@ Local no-auth mode (`serve --local-no-auth`) never applies to the listeners: the
 an agent key. Actions that come through the listeners are recorded with `interface` `imap` or
 `smtp` (`GET /v1/runs/{id}/activity`). The dashboard's connection test
 (`POST /v1/runs/{id}/connection-tests`) checks a key through the same LOGIN/AUTH code path
-without opening a connection.
+without opening a connection; that check is listed in the activity with the actor
+`connection_test`, not as an agent action.
 
 The listeners take an engine object (this package may not import `mailsim.engine.core`), so the
 composition root starts them:
@@ -99,9 +100,10 @@ Thunderbird: *Account Settings -> Add Mail Account -> Configure manually*. IMAP 
 `127.0.0.1`, port `1143`, connection security *None* (or *STARTTLS* with `--tls`; accept the
 self-signed certificate), authentication *Normal password*. SMTP server `127.0.0.1`, port
 `1587`, same security, *Normal password*. Username = mailbox address, password = agent key.
-Untick *Place a copy in: Sent* (Copies & Folders): the simulator already files every SMTP
-submission in `Sent`, so Thunderbird's own APPEND would create a duplicate (and spend an
-`insert` action).
+Untick *Place a copy in: Sent* (Copies & Folders): every SMTP submission is already filed in
+`Sent`, and an APPEND to `Sent` is refused (`NO [NOPERM]`). Keep drafts in a local folder
+(*Drafts & Templates*): an APPEND to `Drafts` is refused too (create drafts through another
+interface).
 
 ## IMAP profile
 
@@ -173,9 +175,9 @@ read-write `SELECT` marks the message seen through `AgentMailbox.mark_seen` (rec
 | `\Answered`   | `ANSWERED`  | also set by the engine when the agent replies               |
 | `\Flagged`    | `FLAGGED`   |                                                              |
 | `\Deleted`    | `DELETED`   | removed by `EXPUNGE`/`CLOSE`/`UID EXPUNGE` (engine `delete`) |
-| `\Draft`      | `DRAFT`     |                                                              |
+| `\Draft`      | `DRAFT`     | marks real drafts only: `+FLAGS`/`FLAGS` with it on a non-draft and `-FLAGS` on a draft answer `NO [NOPERM]`; `FLAGS` without it keeps a draft's |
 | `\Recent`     | -           | never set; ignored in STORE                                  |
-| keyword `foo` | user label `foo` | case-insensitive; labels that are not IMAP atoms are not shown |
+| keyword `foo` | user label `foo` | case-insensitive; labels that are not IMAP atoms are not shown; system label names (`Sent`, `Draft`, `Inbox`, ...) answer `NO [CANNOT]` |
 
 STORE with several kinds of change issues one `flag` and/or one `label` engine write per message
 (only when something changes). `.SILENT` suppresses the FETCH echo. `UID EXPUNGE` removes
@@ -186,7 +188,10 @@ each listed `\Deleted` message with its own engine `delete` (one action per mess
 `THREADID` the engine thread id, `MAILBOXID` the engine folder id.
 
 **APPEND** stores the literal verbatim via `insert_message` (Gmail `insert` semantics: no
-delivery), then applies the given flags/keywords; answers `[APPENDUID]`.
+delivery), then applies the given flags/keywords; answers `[APPENDUID]`. `Sent` and `Drafts`
+hold only what this account sent or drafted, so APPEND to them answers `NO [NOPERM]`, and so
+does `\Draft` in the APPEND flags (checked before anything is stored). An appended message is
+never sent mail: it can't be moved or copied into `Sent` either.
 
 **COPY/MOVE** use engine `copy`/`move` and answer `COPYUID`; a missing destination answers
 `NO [TRYCREATE]`.

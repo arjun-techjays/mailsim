@@ -422,6 +422,19 @@ def test_send_mail_and_its_errors(world):
     err(world.call("POST", "/me/sendMail", json={"message": spoof}), 403, "ErrorAccessDenied")
 
 
+def test_system_names_are_not_categories_and_isdraft_is_read_only(world):
+    """D-5: a category named like a system label (Sent, Draft, Inbox, ...) would forge "sent"
+    / "drafted" evidence; it is refused before anything is written. isDraft never changes."""
+    mid = invoice(world)["id"]
+    for name in ("SENT", "Draft", "inbox", "Unread"):
+        r = world.call("PATCH", f"/me/messages/{mid}", json={"isRead": True, "categories": [name]})
+        err(r, 400, "ErrorInvalidRequest")
+    after = world.get(f"/me/messages/{mid}")
+    assert after["isRead"] is False and after["categories"] == []  # nothing was applied
+    assert world.patch(f"/me/messages/{mid}", {"isDraft": True})["isDraft"] is False
+    assert world.messages("sentitems") == [] and world.messages("drafts") == []
+
+
 def test_drafts_lifecycle(world):
     draft = world.post("/me/messages", {"subject": "d1", "toRecipients": [
         {"emailAddress": {"address": "vendor@example.test"}}]})  # fmt: skip
@@ -431,8 +444,8 @@ def test_drafts_lifecycle(world):
     upd = world.patch(f"/me/messages/{draft['id']}", {
         "subject": "d2", "body": {"contentType": "text", "content": "body"},
         "ccRecipients": [{"emailAddress": {"address": "finance@example.test"}}],
-        "categories": ["Draft"], "isRead": True})  # fmt: skip
-    assert upd["id"] == draft["id"] and upd["subject"] == "d2" and upd["categories"] == ["Draft"]
+        "categories": ["Pending"], "isRead": True})  # fmt: skip
+    assert upd["id"] == draft["id"] and upd["subject"] == "d2" and upd["categories"] == ["Pending"]
     assert [r["emailAddress"]["address"] for r in upd["ccRecipients"]] == ["finance@example.test"]
     assert world.get(f"/me/messages/{draft['id']}")["subject"] == "d2"
     world.post(f"/me/messages/{draft['id']}/send", None, 202)

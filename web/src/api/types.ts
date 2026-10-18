@@ -36,6 +36,7 @@ export type FolderOut = S['FolderOut'];
 export type ErrorEnvelope = S['ErrorEnvelope'];
 export type ErrorBody = S['ErrorBody'];
 export type MeOut = S['MeOut'];
+export type HealthOut = S['HealthOut'];
 export type RunPage = S['RunPage'];
 export type ReportFormat = 'json' | 'junit' | 'markdown';
 

@@ -309,10 +309,14 @@ def test_store_flags_and_keywords(proto):
     assert ok(c.store("1", "+FLAGS", "(urgent $Label1 \\Recent)")) == [
         b"1 (FLAGS (\\Seen $Label1 urgent))"]  # fmt: skip
     assert ok(c.store("1", "FLAGS", "(\\Answered urgent)")) == [b"1 (FLAGS (\\Answered urgent))"]
-    assert ok(c.store("1:2", "+FLAGS.SILENT", "\\Draft")) == [None]
-    assert ok(c.uid("STORE", "2", "-FLAGS", "(\\Draft)")) == [b"2 (UID 2 FLAGS ())"]
+    # \Draft marks real drafts only (D-5): refused on received mail before anything is written
+    typ, data = c.store("1:2", "+FLAGS.SILENT", "(\\Seen \\Draft)")
+    assert typ == "NO" and data[0].startswith(b"[NOPERM] PERMISSION_DENIED: the \\Draft flag")
+    typ, data = c.store("1", "+FLAGS", "(\\Seen Sent)")  # a keyword spelling a system label
+    assert typ == "NO" and data[0].startswith(b"[CANNOT] INVALID_REQUEST: system labels")
+    assert ok(c.uid("STORE", "2", "-FLAGS", "(\\Draft)")) == [b"2 (UID 2 FLAGS ())"]  # no-op
     m = proto.mailbox.get_message(proto.mailbox.list_messages(folder="inbox").items[0].id)
-    assert sorted(m.flags) == ["ANSWERED", "DRAFT"] and "urgent" in m.labels
+    assert sorted(m.flags) == ["ANSWERED"] and "urgent" in m.labels
     ok(c.select("INBOX"))
     assert c.untagged_responses["FLAGS"] == [
         b"(\\Answered \\Flagged \\Deleted \\Seen \\Draft urgent)"]  # fmt: skip
@@ -426,13 +430,20 @@ def test_vanished_messages_stay_ghosts_until_a_full_sync(proto):
 # ------------------------------------------------------------------------ APPEND
 def test_append(proto):
     c = proto.imap()
-    ok(c.select("Drafts"))
-    typ, data = c.append("Drafts", "(\\Seen \\Draft keep)", '"15-Oct-2026 10:00:00 +0000"', RAW)
+    ok(c.select("Archive"))
+    typ, data = c.append("Archive", "(\\Seen keep)", '"15-Oct-2026 10:00:00 +0000"', RAW)
     assert typ == "OK" and c.untagged_responses["APPENDUID"][0].split()[1] == b"1"
     assert c.untagged_responses["EXISTS"][-1] == b"1"
     flags = fetch_map(ok(c.fetch("1", "(FLAGS BODY.PEEK[])")))[1]
-    assert b"FLAGS (\\Seen \\Draft keep)" in flags and RAW in flags  # stored octets verbatim
+    assert b"FLAGS (\\Seen keep)" in flags and RAW in flags  # stored octets verbatim
     assert ok(c.append("INBOX", None, None, RAW))
+    # D-5: Sent and Drafts hold only what this account sent or drafted; \Draft marks drafts
+    for folder, flag in (("Sent", None), ("Drafts", None), ("drafts", "(\\Draft)"),
+                         ("INBOX", "(\\Draft)"), ("INBOX", "(Sent)")):  # fmt: skip
+        typ, data = c.append(folder, flag, None, RAW)
+        assert typ == "NO" and (b"NOPERM" in data[0] or b"CANNOT" in data[0]), (folder, data)
+    assert proto.mailbox.list_messages(folder="sent").items == []
+    assert proto.mailbox.list_messages(folder="drafts").items == []
     assert c.append("Nope", None, None, RAW)[0] == "NO"
     typ, data = c.append("INBOX", None, None, b"Subject: no sender\r\n\r\nx\r\n")
     assert typ == "NO" and b"INVALID_REQUEST" in data[0]
@@ -443,6 +454,18 @@ def test_append(proto):
     assert raw.cmd(b"b APPEND INBOX")[-1].startswith(b"b BAD usage")
     assert raw.cmd(b"c APPEND INBOX NIL {1+}\r\nx")[-1].startswith(b"c BAD invalid APPEND")
     assert ("agent", "insert", "ok") in proto.actions()
+
+
+def test_store_keeps_a_drafts_draft_flag(proto):
+    """A real draft keeps \\Draft: FLAGS without it keeps it, -FLAGS \\Draft is refused."""
+    proto.mailbox.create_draft(to=["vendor@example.test"], subject="draft", text="x")
+    c = proto.imap()
+    ok(c.select("Drafts"))
+    assert ok(c.store("1", "FLAGS", "(\\Flagged)")) == [b"1 (FLAGS (\\Flagged \\Draft))"]
+    assert ok(c.store("1", "+FLAGS", "(\\Draft)")) == [b"1 (FLAGS (\\Flagged \\Draft))"]
+    typ, data = c.store("1", "-FLAGS", "(\\Draft)")
+    assert typ == "NO" and b"cannot be removed from a draft" in data[0]
+    assert "DRAFT" in proto.mailbox.list_messages(folder="drafts").items[0].flags
 
 
 # ------------------------------------------------------------------------ SEARCH

@@ -12,7 +12,7 @@ import { ErrorDisplay } from '../components/ErrorDisplay';
 import { JsonBlock } from '../components/JsonBlock';
 import { Badge, Empty, Loading } from '../components/Status';
 import { formatVirtual } from '../mailbox/mailFormat';
-import { interfaceLabel, outcomeKind, summarizeInput } from './activity';
+import { actorLabel, interfaceLabel, outcomeKind, summarizeInput } from './activity';
 import { runKeys } from './keys';
 import '../mailbox/browser.css';
 
@@ -71,7 +71,7 @@ export function ActivityPanel({
     lastAnnounce.current = Date.now();
     const latest = list[list.length - 1] as ActivityItem;
     setAnnouncement(
-      `${list.length} new action${list.length === 1 ? '' : 's'}. Latest: ${latest.actor} ${latest.operation} (${latest.outcome}) via ${interfaceLabel(latest.interface)}.`,
+      `${list.length} new action${list.length === 1 ? '' : 's'}. Latest: ${actorLabel(latest.actor)} ${latest.operation} (${latest.outcome}) via ${interfaceLabel(latest.interface)}.`,
     );
   }, []);
 
@@ -170,7 +170,8 @@ export function ActivityPanel({
       <p className="hint">
         Every operation the agent made, newest first: when (virtual time), what, whether it worked, and which interface it
         came through (REST, Gmail, Graph, MCP, IMAP or SMTP). Simulator and controller actions (persona replies, injected
-        emails) appear too. Open the Mailboxes tab to see the resulting messages.
+        emails) appear too. Key checks from <strong>Test connection</strong> are listed as “connection test”: they only
+        read, are not the agent’s actions and are never graded. Open the Mailboxes tab to see the resulting messages.
       </p>
       <div className="act-controls">
         {running && (
@@ -187,7 +188,7 @@ export function ActivityPanel({
             <option value="">Everyone</option>
             {actors.map((a) => (
               <option key={a} value={a}>
-                {a} only
+                {actorLabel(a)} only
               </option>
             ))}
           </select>
@@ -229,7 +230,7 @@ export function ActivityPanel({
             {shown.map((a) => (
               <tr key={a.id}>
                 <td>{formatVirtual(a.virtual_time)}</td>
-                <td>{a.actor}</td>
+                <td>{actorLabel(a.actor)}</td>
                 <th scope="row">{a.operation}</th>
                 <td>
                   <Badge value={a.outcome} kind={outcomeKind(a.outcome)} />

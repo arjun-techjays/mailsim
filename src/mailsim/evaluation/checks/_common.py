@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Any
 
 from mailsim.domain.clock import parse_ts
+from mailsim.domain.models import is_system_label
 from mailsim.evaluation.contract import AssertionDiff, AssertionOutcome, EvidenceRef, Status
 from mailsim.evaluation.registry import EvaluationContext
 from mailsim.evaluation.rules import pre_status
@@ -367,9 +368,12 @@ def select_messages(
             folder = folders.get(msg.get("folder_id", ""))
             if folder is None or _cf(folder.get("system_type")) != where.folder.casefold():
                 continue
-        labels = {_cf(x) for x in msg.get("labels") or []}
-        flags = {str(x).upper() for x in msg.get("flags") or []}
-        if where.label is not None and where.label.casefold() not in labels:
+        flags = {str(x).upper() for x in msg.get("flags") or []} - {"DRAFT"}
+        if msg.get("is_draft"):
+            flags.add("DRAFT")  # provenance: only a real draft is DRAFT, whatever was stored
+        if where.label is not None and not _has_label(
+            msg, where.label, flags, folders.get(msg.get("folder_id", "")), sent_ids
+        ):
             continue
         if where.has_flag is not None and where.has_flag.upper() not in flags:
             continue
@@ -416,6 +420,30 @@ def select_messages(
             continue
         picked.append(msg)
     return Selection(picked, excluded)
+
+
+def _has_label(msg: dict[str, Any], label: str, flags: set[str], folder: dict[str, Any] | None,
+               sent_ids: set[str] | None) -> bool:  # fmt: skip
+    """`label` on `msg`. A system label (SENT, DRAFT, INBOX, UNREAD, STARRED, ...) is derived
+    from provenance, folder and flags, never read from the stored labels (a stored one was put
+    there by hand): SENT = created by a real send (with `sent_ids`; else in Sent and not a
+    draft), DRAFT/DRAFTS = a real draft. Other labels are the stored ones, ignoring case."""
+    name = label.strip().casefold()
+    if not is_system_label(name):
+        return name in {_cf(x) for x in msg.get("labels") or []}
+    folder_type = _cf((folder or {}).get("system_type"))
+    if name == "sent":
+        if sent_ids is not None:
+            return msg["id"] in sent_ids
+        return folder_type == "sent" and not msg.get("is_draft")
+    if name in ("draft", "drafts"):
+        return bool(msg.get("is_draft"))
+    if name == "unread":
+        return "SEEN" not in flags and not msg.get("is_draft")
+    by_flag = {"starred": "FLAGGED", "answered": "ANSWERED", "deleted": "DELETED"}
+    if name in by_flag:
+        return by_flag[name] in flags
+    return folder_type == name  # inbox, trash, archive
 
 
 def where_dict(where: MessageWhere) -> dict[str, Any]:

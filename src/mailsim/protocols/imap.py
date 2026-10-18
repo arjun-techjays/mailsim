@@ -24,8 +24,8 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 from mailsim.api.agent_errors import agent_view
-from mailsim.domain.errors import SimError
-from mailsim.domain.models import CanonicalMessage
+from mailsim.domain.errors import PermissionDenied, SimError
+from mailsim.domain.models import CanonicalMessage, refuse_system_labels
 from mailsim.engine.context import use_interface
 from mailsim.mime.build import build_mime
 from mailsim.protocols import imapmime
@@ -160,6 +160,17 @@ def parse_search_date(tok: object) -> date:
         return date(int(m.group(3)), months.index(m.group(2).lower()) + 1, int(m.group(1)))
     except ValueError:
         raise ParseError(f"invalid date {astring(tok)!r}") from None
+
+
+def _check_draft_store(op: str, draft: bool, targets: list[CanonicalMessage]) -> None:
+    """STORE and \\Draft (before any write): it may not be added to a non-draft
+    (+FLAGS, FLAGS) nor removed from a draft (-FLAGS); FLAGS without it keeps a draft's."""
+    for msg in targets:
+        if draft and op != "-FLAGS" and not msg.is_draft:
+            raise PermissionDenied("the \\Draft flag marks drafts only: it cannot be set on "
+                                   "this message")  # fmt: skip
+        if draft and op == "-FLAGS" and msg.is_draft:
+            raise PermissionDenied("the \\Draft flag cannot be removed from a draft")
 
 
 def _flag_list(flags: list[str]) -> bytes:
@@ -840,8 +851,10 @@ class ImapSession:
                 raise ParseError(f"invalid flag {flag[:40]}")
             else:
                 keywords.add(flag)
+        refuse_system_labels(keywords)  # before any write: a keyword "Sent" is no system flag
         by_uid = self._sync(out, expunges=uid_mode)
         targets = self._targets(args[0], uid_mode, by_uid)
+        _check_draft_store(op, "DRAFT" in system, [msg for _, msg in targets])
         wanted = {k.lower() for k in keywords}
         for _seq, msg in targets:
             cur_sys, cur_kw = set(msg.flags), set(user_labels(msg))
@@ -854,6 +867,7 @@ class ImapSession:
                 rm_k = {k for k in cur_kw if k.lower() in wanted}
             else:
                 add_s, rm_s = system - cur_sys, (cur_sys & set(ENGINE_TO_IMAP)) - system
+                rm_s.discard("DRAFT")  # a draft stays a draft (checked above)
                 rm_k = {k for k in cur_kw if is_keyword(k) and k.lower() not in wanted}
             if add_s or rm_s:
                 self._mb.set_flags(msg.id, add=sorted(add_s), remove=sorted(rm_s))
@@ -958,6 +972,10 @@ class ImapSession:
                 keywords.append(flag)
             else:
                 raise ParseError(f"invalid flag {flag[:40]}")
+        if "DRAFT" in system:  # checked before anything is stored: drafts come from drafting
+            raise PermissionDenied("the \\Draft flag marks drafts only: an appended message is "
+                                   "not a draft")  # fmt: skip
+        refuse_system_labels(keywords)
         self._poll()  # UIDVALIDITY in APPENDUID must be current
         dest = self._folder(astring(args[0]))
         if dest is None:

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from mailsim.domain.errors import InvalidRequest
 
 
 class Address(BaseModel):
@@ -68,3 +71,31 @@ SYSTEM_FOLDERS: tuple[tuple[str, str], ...] = (
 )
 
 VALID_FLAGS = frozenset({"SEEN", "ANSWERED", "FLAGGED", "DELETED", "DRAFT"})
+
+# System label names, matched ignoring case. They are DERIVED from where a message is and how
+# it came to be (folder, flags, a real send or draft), never stored labels: an agent may not
+# add or remove them as labels, and grading never reads them from the stored label list.
+# INBOX/SENT/DRAFTS/TRASH/ARCHIVE and UNREAD are the canonical view's markers; DRAFT, STARRED,
+# ANSWERED and DELETED are the Gmail profile's system labels for the same facts.
+SYSTEM_LABELS = frozenset({"inbox", "sent", "drafts", "draft", "trash", "archive", "unread",
+                           "starred", "answered", "deleted"})  # fmt: skip
+
+
+def is_system_label(name: str) -> bool:
+    return name.strip().casefold() in SYSTEM_LABELS
+
+
+def system_labels_in(names: Iterable[str]) -> list[str]:
+    """The names in `names` that are system labels (in order, as given)."""
+    return [n for n in names if is_system_label(n)]
+
+
+def refuse_system_labels(names: Iterable[str]) -> None:
+    """INVALID_REQUEST when `names` contains a system label (see SYSTEM_LABELS)."""
+    bad = system_labels_in(names)
+    if bad:
+        raise InvalidRequest(
+            f"system labels cannot be added or removed: {', '.join(repr(n) for n in bad)} "
+            "(they follow the message's folder and flags)",
+            details={"labels": bad},
+        )

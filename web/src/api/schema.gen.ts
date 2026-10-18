@@ -11,7 +11,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Health */
+        /**
+         * Health
+         * @description Public liveness check. `local_no_auth` lets the dashboard learn, without a failing
+         *     request, whether to ask for the server's launch link (local no-auth mode).
+         */
         get: operations["health_v1_health_get"];
         put?: never;
         post?: never;
@@ -512,8 +516,11 @@ export interface paths {
          *     the caller's project). A key that is not a live agent key of this run is not tried at all:
          *     ok=false with `details.reason` invalid_key (error_code UNAUTHENTICATED: unknown, revoked,
          *     expired), not_agent_key or other_run (PERMISSION_DENIED; which run is never said). A probe
-         *     that is made is recorded in the run's activity like any agent call of that interface. The request body
-         *     (and so the key) is never logged, and the key never appears in the result.
+         *     that is made is a read-only operator check: it is listed in the run's activity with the
+         *     actor `connection_test` (and the interface it went through), never as an `agent` action, so
+         *     it is not graded, not counted in the agent's actions or efficiency, and arms no trigger. Only
+         *     this route can mark a call that way (server-side, in process). The request body (and so the
+         *     key) is never logged, and the key never appears in the result.
          *
          *     `error_code` when `ok` is false:
          *     - REST, MCP (HTTP): the /v1 envelope code (UNAUTHENTICATED, RUN_NOT_ACTIVE,
@@ -2006,6 +2013,25 @@ export interface components {
              */
             to: string[];
         };
+        /**
+         * HealthOut
+         * @description `GET /v1/health` (no credentials needed).
+         */
+        HealthOut: {
+            /**
+             * Local No Auth
+             * @description true when the server runs in local no-auth mode
+             * @default false
+             */
+            local_no_auth: boolean;
+            /**
+             * Status
+             * @constant
+             */
+            status: "ok";
+            /** Version */
+            version: string;
+        };
         /** InjectMessage */
         InjectMessage: {
             /** Cc */
@@ -2602,9 +2628,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["HealthOut"];
                 };
             };
         };

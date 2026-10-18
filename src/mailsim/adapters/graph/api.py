@@ -37,7 +37,7 @@ from mailsim.domain.errors import (
     PermissionDenied,
     UnsupportedOperation,
 )
-from mailsim.domain.models import SYSTEM_FOLDERS, CanonicalMessage
+from mailsim.domain.models import SYSTEM_FOLDERS, CanonicalMessage, refuse_system_labels
 from mailsim.engine.facades import AgentMailbox, facade_for
 from mailsim.providers.ids import graph_id
 
@@ -725,6 +725,8 @@ def update_message(message_id: str, ctx: Context, payload: Payload = None) -> JS
     ):
         raise InvalidRequest("categories must be a collection of strings")
     current = res.user_categories(m)
+    if categories is not None:  # before any write (the engine refuses them too)
+        refuse_system_labels(c for c in categories if c not in current)
     if content:
         # the engine replaces the draft's message (fresh flags DRAFT+SEEN, no labels): carry
         # the previous flags and categories over unless this PATCH changes them

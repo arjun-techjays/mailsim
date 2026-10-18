@@ -2189,6 +2189,33 @@
         "title": "ForwardRequest",
         "type": "object"
       },
+      "HealthOut": {
+        "additionalProperties": false,
+        "description": "`GET /v1/health` (no credentials needed).",
+        "properties": {
+          "local_no_auth": {
+            "default": false,
+            "description": "true when the server runs in local no-auth mode",
+            "title": "Local No Auth",
+            "type": "boolean"
+          },
+          "status": {
+            "const": "ok",
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "version"
+        ],
+        "title": "HealthOut",
+        "type": "object"
+      },
       "InjectMessage": {
         "additionalProperties": false,
         "properties": {
@@ -3755,17 +3782,14 @@
   "paths": {
     "/v1/health": {
       "get": {
+        "description": "Public liveness check. `local_no_auth` lets the dashboard learn, without a failing\nrequest, whether to ask for the server's launch link (local no-auth mode).",
         "operationId": "health_v1_health_get",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Health V1 Health Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/HealthOut"
                 }
               }
             },
@@ -5323,7 +5347,7 @@
     },
     "/v1/runs/{run_id}/connection-tests": {
       "post": {
-        "description": "Make a real call through the chosen interface with the given agent key, server-side.\n\nAlways 200 with `ok` and a summary (400 only for a malformed request, 404 for a run outside\nthe caller's project). A key that is not a live agent key of this run is not tried at all:\nok=false with `details.reason` invalid_key (error_code UNAUTHENTICATED: unknown, revoked,\nexpired), not_agent_key or other_run (PERMISSION_DENIED; which run is never said). A probe\nthat is made is recorded in the run's activity like any agent call of that interface. The request body\n(and so the key) is never logged, and the key never appears in the result.\n\n`error_code` when `ok` is false:\n- REST, MCP (HTTP): the /v1 envelope code (UNAUTHENTICATED, RUN_NOT_ACTIVE,\n  PERMISSION_DENIED, ...)\n- Gmail: the neutral code in `error.details[0].reason` (UNAUTHENTICATED, RUN_NOT_ACTIVE,\n  ...), else `error.status`\n- Graph: Graph's own code (InvalidAuthenticationToken; ErrorPreconditionFailed for a run\n  that is not running; ErrorAccessDenied ...)\n- IMAP: AUTHENTICATIONFAILED; SMTP: AUTHENTICATION_FAILED (credentials refused), or the\n  engine's code when it refused a valid key (RUN_NOT_ACTIVE, PERMISSION_DENIED)\n- IMAP/SMTP listener not running: LISTENER_DOWN\n- gmail / graph / mcp_http not mounted: null (summary \"... is not served by this server\")\n- unexpected failure: INTERNAL",
+        "description": "Make a real call through the chosen interface with the given agent key, server-side.\n\nAlways 200 with `ok` and a summary (400 only for a malformed request, 404 for a run outside\nthe caller's project). A key that is not a live agent key of this run is not tried at all:\nok=false with `details.reason` invalid_key (error_code UNAUTHENTICATED: unknown, revoked,\nexpired), not_agent_key or other_run (PERMISSION_DENIED; which run is never said). A probe\nthat is made is a read-only operator check: it is listed in the run's activity with the\nactor `connection_test` (and the interface it went through), never as an `agent` action, so\nit is not graded, not counted in the agent's actions or efficiency, and arms no trigger. Only\nthis route can mark a call that way (server-side, in process). The request body (and so the\nkey) is never logged, and the key never appears in the result.\n\n`error_code` when `ok` is false:\n- REST, MCP (HTTP): the /v1 envelope code (UNAUTHENTICATED, RUN_NOT_ACTIVE,\n  PERMISSION_DENIED, ...)\n- Gmail: the neutral code in `error.details[0].reason` (UNAUTHENTICATED, RUN_NOT_ACTIVE,\n  ...), else `error.status`\n- Graph: Graph's own code (InvalidAuthenticationToken; ErrorPreconditionFailed for a run\n  that is not running; ErrorAccessDenied ...)\n- IMAP: AUTHENTICATIONFAILED; SMTP: AUTHENTICATION_FAILED (credentials refused), or the\n  engine's code when it refused a valid key (RUN_NOT_ACTIVE, PERMISSION_DENIED)\n- IMAP/SMTP listener not running: LISTENER_DOWN\n- gmail / graph / mcp_http not mounted: null (summary \"... is not served by this server\")\n- unexpected failure: INTERNAL",
         "operationId": "connection_test_v1_runs__run_id__connection_tests_post",
         "parameters": [
           {

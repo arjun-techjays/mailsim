@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 from mailsim import __version__
 from mailsim.api.errors import install_error_handlers
@@ -12,6 +12,7 @@ from mailsim.api.interface import InterfaceAttribution
 from mailsim.api.limits import BodySizeLimit
 from mailsim.api.local_mode import LoopbackOnly
 from mailsim.api.routers import control, mailbox, simulator, ux
+from mailsim.api.schemas import HealthOut
 
 API_TITLE = "Mail API"
 API_VERSION = "1.0.0-wave0"
@@ -32,8 +33,11 @@ def create_app(**state: Any) -> FastAPI:
     app.add_middleware(InterfaceAttribution)  # actions.interface (api/interface.py)
 
     @app.get("/v1/health", tags=["meta"])
-    def health() -> dict[str, str]:
-        return {"status": "ok", "version": __version__}
+    def health(request: Request) -> HealthOut:
+        """Public liveness check. `local_no_auth` lets the dashboard learn, without a failing
+        request, whether to ask for the server's launch link (local no-auth mode)."""
+        local = getattr(request.app.state, "local_access", None) is not None
+        return HealthOut(status="ok", version=__version__, local_no_auth=local)
 
     for module in (control, simulator, mailbox, ux):
         app.include_router(module.router)

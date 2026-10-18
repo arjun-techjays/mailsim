@@ -152,6 +152,11 @@ const str = (v: unknown, d = '') => (typeof v === 'string' ? v : d);
 const obj = (v: unknown): Record<string, unknown> =>
   v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 
+/** `checks_default` as the server reads it: off, false and no (any case, or YAML false) mean off. */
+export function checksOff(v: unknown): boolean {
+  return v === false || (typeof v === 'string' && ['off', 'false', 'no'].includes(v.trim().toLowerCase()));
+}
+
 /** Reads a stored/parsed document into the form (unknown keys are dropped: the model is strict). */
 export function fromDocument(doc: Record<string, unknown>, scenario: string): KeyDraft {
   const body = obj(doc.answer_key);
@@ -164,7 +169,7 @@ export function fromDocument(doc: Record<string, unknown>, scenario: string): Ke
     version: body.version == null ? '' : String(body.version),
     allVersions: versions === null,
     scenarioVersions: versions ?? [],
-    checksDefault: body.checks_default === 'off' ? 'off' : 'on',
+    checksDefault: checksOff(body.checks_default) ? 'off' : 'on',
     assertions: assertions.map((raw) => {
       const a = obj(raw);
       const at = obj(a.evaluate_at);

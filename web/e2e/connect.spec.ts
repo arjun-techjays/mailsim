@@ -15,6 +15,21 @@ test.describe('connect + role detection', () => {
     });
   }
 
+  test('opening the dashboard and connecting makes no failing request (no 401 in the console)', async ({ page }) => {
+    const failures: string[] = [];
+    page.on('response', (r) => {
+      if (r.status() >= 400) failures.push(`${r.status()} ${r.request().method()} ${new URL(r.url()).pathname}`);
+    });
+    page.on('console', (m) => {
+      if (m.type() === 'error') failures.push(`console: ${m.text()}`);
+    });
+    const connect = new ConnectPage(page);
+    await connect.connectAs(KEYS.controller, 'controller');
+    await page.getByRole('link', { name: 'Continue' }).click();
+    await expect(page.getByRole('heading', { level: 1, name: 'Scenarios' })).toBeVisible();
+    expect(failures).toEqual([]);
+  });
+
   test('keeps the key out of localStorage and the URL', async ({ page }) => {
     const connect = new ConnectPage(page);
     await connect.connectAs(KEYS.controller, 'controller');

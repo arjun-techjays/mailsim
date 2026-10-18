@@ -213,7 +213,7 @@ export function createHandlers(db: MockDb = createMockDb()) {
     ...builderHandlers(db, { ok, fail, auth }), // builder (UX-F1)
     ...createAkeyHandlers(db, { auth, fail, ok, findRun, snapshot }), // UX-F2: answer keys, mailbox browser, activity
     ...createAuthoringHandlers({ auth, fail, ok }), // meta + YAML tools (shared)
-    http.get('*/v1/health', () => ok({ status: 'ok', version: 'mock' })),
+    http.get('*/v1/health', () => ok({ status: 'ok', version: 'mock', local_no_auth: db.localNoAuth === true })),
     // Additive endpoint planned by WS-A; shape beyond `role` is not relied upon.
     http.get('*/v1/me', ({ request }) => {
       const header = request.headers.get('authorization') ?? '';
