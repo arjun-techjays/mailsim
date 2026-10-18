@@ -124,3 +124,23 @@ test('import: the real server refuses a pack whose mailbox has a duplicate Messa
   await expect(page.getByRole('button', { name: 'Publish scenario' })).toBeDisabled();
   expect((await request.get(`/v1/scenarios/${id}`, { headers: headers() })).status()).toBe(404);
 });
+
+test('import: a new version of an existing scenario with a key pinned to it publishes both (review item 1)', async ({ page }) => {
+  const id = `e2e.pack-v2-${RUN}`;
+  const fixtures = Object.fromEntries(TRICKY.slice(0, 2).map((p, i) => [p, eml(`${id}-${i}`, `V ${i}`)]));
+  const v1 = zipPack('v1', { 'scenario.yaml': scenarioYaml(id, TRICKY.slice(0, 2)), 'answer_key.yaml': answerKeyYaml(id), ...fixtures });
+  await page.goto('/scenarios/import');
+  await page.getByLabel('Choose a .zip file').setInputFiles({ name: 'v1.zip', mimeType: 'application/zip', buffer: v1 });
+  await page.getByRole('button', { name: 'Publish scenario and answer key' }).click();
+  await expect(page.getByTestId('pack-published')).toContainText('Answer key version 1 is published');
+
+  const v2Scenario = scenarioYaml(id, TRICKY.slice(0, 2)).replace('  version: 1', '  version: 2');
+  const v2Key = answerKeyYaml(id).replace('  version: 1', '  version: 2\n  scenario_versions:\n    - 2');
+  const v2 = zipPack('v2', { 'scenario.yaml': v2Scenario, 'answer_key.yaml': v2Key, ...fixtures });
+  await page.getByLabel('Choose a .zip file').setInputFiles({ name: 'v2.zip', mimeType: 'application/zip', buffer: v2 });
+  await expect(page.getByTestId('pack-check')).toContainText('(its references are checked when the scenario is published)');
+  await expect(page.getByTestId('pack-key-errors')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Publish scenario and answer key' }).click();
+  await expect(page.getByTestId('pack-published')).toContainText(`${id} version 2 is published. Answer key version 2 is published`);
+  await expect(page.getByRole('heading', { name: '3. Published' })).toBeFocused();
+});

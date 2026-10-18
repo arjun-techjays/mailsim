@@ -4,7 +4,7 @@
 // as the builder and the answer-key editor (scenario: controller; answer key: controller or
 // evaluator), so every server-side rule applies, duplicate Message-IDs included.
 import { useQueryClient } from '@tanstack/react-query';
-import { useId, useState, type ChangeEvent } from 'react';
+import { useEffect, useId, useRef, useState, type ChangeEvent, type Ref } from 'react';
 import { Link } from 'react-router-dom';
 import { isApiError } from '../api/client';
 import type { AnswerKeyOut, ScenarioVersionOut, ValidationIssue } from '../api/types';
@@ -35,13 +35,6 @@ interface Published {
   keyError: unknown;
 }
 
-type Step =
-  | { kind: 'idle' }
-  | { kind: 'busy'; label: string }
-  | { kind: 'failed'; error: unknown; checked?: Checked }
-  | { kind: 'checked'; checked: Checked }
-  | { kind: 'published'; checked: Checked; published: Published };
-
 const str = (v: unknown) => (typeof v === 'string' || typeof v === 'number' ? String(v) : '');
 
 function Issues({ title, issues, testId }: { title: string; issues: ValidationIssue[]; testId: string }) {
@@ -64,7 +57,37 @@ function Importer() {
   const api = useApi();
   const queryClient = useQueryClient();
   const id = useId();
-  const [step, setStep] = useState<Step>({ kind: 'idle' });
+  const [busy, setBusy] = useState('');
+  const [checked, setChecked] = useState<Checked | null>(null);
+  const [failure, setFailure] = useState<{ error: unknown; publishing: boolean } | null>(null);
+  const [published, setPublished] = useState<Published | null>(null);
+  /** Text of the page's one live region (kept mounted, so changes are announced). */
+  const [status, setStatus] = useState('');
+  const resultHeading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (published) resultHeading.current?.focus();
+  }, [published]);
+
+  /**
+   * Answer-key pre-check. The API checks a key against the scenario versions that are STORED, so
+   * it can only be trusted when the pack's version is already stored and the key names no other
+   * version; otherwise (new scenario or new version) the key is checked after publishing.
+   */
+  const checkKey = async (scenarioId: string, version: number, source: string): Promise<{ errors: ValidationIssue[]; deferred: boolean }> => {
+    let stored: number[];
+    try {
+      stored = (await api.getScenario(scenarioId)).versions;
+    } catch (err) {
+      if (!isApiError(err) || err.status !== 404) throw err;
+      return { errors: [], deferred: true };
+    }
+    if (!stored.includes(version)) return { errors: [], deferred: true };
+    const key = await api.validateAnswerKey(scenarioId, { source });
+    const body = (key.document?.answer_key ?? {}) as { scenario_versions?: unknown };
+    const pinned = Array.isArray(body.scenario_versions) ? body.scenario_versions : [];
+    if (pinned.some((v) => !stored.includes(v as number))) return { errors: [], deferred: true };
+    return { errors: key.errors, deferred: false };
+  };
 
   const check = async (pack: Pack): Promise<Checked> => {
     const result = await api.builder.validate({ source: pack.source, fixtures: pack.fixtures });
@@ -78,27 +101,27 @@ function Importer() {
     const unused = Object.keys(pack.fixtures).filter((p) => !referenced.has(p));
     const warnings = [...result.warnings, ...unused.map((p) => ({ path: p, message: 'not listed by any mailbox: not published' }))];
     const scenarioId = str(scenario.id);
-    let keyErrors: ValidationIssue[] = [];
-    let keyDeferred = false;
-    if (pack.answerKeySource !== null && scenarioId) {
-      try {
-        const key = await api.validateAnswerKey(scenarioId, { source: pack.answerKeySource });
-        keyErrors = key.errors;
-      } catch (err) {
-        if (!isApiError(err) || err.status !== 404) throw err;
-        keyDeferred = true; // a new scenario: the key's references are checked after publishing it
-      }
-    }
-    return { pack, scenarioId, version: str(scenario.version), title: str(scenario.title), errors: result.errors, warnings, keyErrors, keyDeferred };
+    const key =
+      pack.answerKeySource !== null && scenarioId ? await checkKey(scenarioId, Number(scenario.version), pack.answerKeySource) : { errors: [], deferred: false };
+    return { pack, scenarioId, version: str(scenario.version), title: str(scenario.title), errors: result.errors, warnings, keyErrors: key.errors, keyDeferred: key.deferred };
   };
 
   const load = async (read: () => Promise<Pack>) => {
-    setStep({ kind: 'busy', label: 'Reading and checking the pack…' });
+    setBusy('Reading and checking the pack…');
+    setStatus('Reading and checking the pack…');
+    setChecked(null);
+    setPublished(null);
+    setFailure(null);
     try {
-      const checked = await check(await read());
-      setStep({ kind: 'checked', checked });
+      const next = await check(await read());
+      setChecked(next);
+      const problems = next.errors.length + next.keyErrors.length;
+      setStatus(problems > 0 ? `The pack has ${problems} problem(s).` : 'The pack is ready to publish.');
     } catch (error) {
-      setStep({ kind: 'failed', error });
+      setFailure({ error, publishing: false });
+      setStatus('Could not read the pack.');
+    } finally {
+      setBusy('');
     }
   };
 
@@ -118,38 +141,49 @@ function Importer() {
     });
   };
 
-  const publish = async (checked: Checked) => {
-    const { pack } = checked;
-    setStep({ kind: 'busy', label: 'Publishing…' });
+  const publish = async (ready: Checked) => {
+    const { pack } = ready;
+    setBusy('Publishing…');
+    setStatus('Publishing…');
+    setFailure(null);
     let scenario: ScenarioVersionOut;
     try {
       scenario = await api.builder.publish({ source: pack.source, fixtures: pack.fixtures });
     } catch (error) {
-      setStep({ kind: 'failed', error, checked });
+      setFailure({ error, publishing: true });
+      setStatus('Could not publish.');
+      setBusy('');
       return;
     }
-    const published: Published = { scenario, answerKey: null, keyErrors: [], keyError: null };
+    const out: Published = { scenario, answerKey: null, keyErrors: [], keyError: null };
     if (pack.answerKeySource !== null) {
       try {
         const body = { source: pack.answerKeySource };
-        const check = await api.validateAnswerKey(scenario.scenario_key, body);
-        published.keyErrors = check.errors;
-        if (check.ok) published.answerKey = await api.createAnswerKey(scenario.scenario_key, body);
+        const keyCheck = await api.validateAnswerKey(scenario.scenario_key, body);
+        out.keyErrors = keyCheck.errors;
+        if (keyCheck.ok) out.answerKey = await api.createAnswerKey(scenario.scenario_key, body);
       } catch (error) {
-        published.keyError = error;
+        out.keyError = error;
       }
     }
     await queryClient.invalidateQueries({ queryKey: ['scenarios'] });
     await queryClient.invalidateQueries({ queryKey: ['scenario', scenario.scenario_key] });
-    setStep({ kind: 'published', checked, published });
+    setPublished(out);
+    setBusy('');
+    setStatus(
+      `Published ${scenario.scenario_key} version ${scenario.version}.${
+        out.answerKey ? ' Answer key published.' : pack.answerKeySource !== null ? ' The answer key was not published.' : ''
+      }`,
+    );
   };
 
-  const busy = step.kind === 'busy';
-  const checked = step.kind === 'checked' || step.kind === 'published' ? step.checked : step.kind === 'failed' ? step.checked : undefined;
   const blocked = !!checked && (checked.errors.length > 0 || checked.keyErrors.length > 0);
 
   return (
     <>
+      <p role="status" className="visually-hidden" data-testid="pack-status">
+        {status}
+      </p>
       <section aria-labelledby={`${id}-pick`} className="card">
         <h2 id={`${id}-pick`}>1. Choose the pack</h2>
         <p className="hint">
@@ -160,13 +194,15 @@ function Importer() {
         </p>
         <div className="row">
           <label htmlFor={`${id}-folder`}>Choose a folder</label>
-          <input id={`${id}-folder`} type="file" multiple disabled={busy} onChange={onFolder} {...{ webkitdirectory: '', directory: '' }} />
+          <input id={`${id}-folder`} type="file" multiple disabled={!!busy} onChange={onFolder} {...{ webkitdirectory: '', directory: '' }} />
           <label htmlFor={`${id}-zip`}>Choose a .zip file</label>
-          <input id={`${id}-zip`} type="file" accept=".zip,application/zip" disabled={busy} onChange={onZip} />
+          <input id={`${id}-zip`} type="file" accept=".zip,application/zip" disabled={!!busy} onChange={onZip} />
         </div>
-        {busy && <p role="status">{step.label}</p>}
+        <p className="hint" aria-hidden="true" data-testid="pack-busy">
+          {busy}
+        </p>
       </section>
-      {step.kind === 'failed' && <ErrorDisplay error={step.error} title={step.checked ? 'Could not publish' : 'Could not read the pack'} />}
+      {failure && <ErrorDisplay error={failure.error} title={failure.publishing ? 'Could not publish' : 'Could not read the pack'} />}
       {checked && (
         <section aria-labelledby={`${id}-check`} className="card" data-testid="pack-check">
           <h2 id={`${id}-check`}>2. Check</h2>
@@ -209,27 +245,39 @@ function Importer() {
               </ul>
             </details>
           )}
-          {step.kind !== 'published' && (
+          {!published && (
             <p className="row">
-              <button type="button" className="b-primary" disabled={busy || blocked} onClick={() => void publish(checked)}>
+              <button
+                type="button"
+                className="b-primary"
+                disabled={!!busy || blocked}
+                aria-describedby={blocked ? `${id}-blocked` : undefined}
+                onClick={() => void publish(checked)}
+              >
                 {checked.pack.answerKeySource !== null ? 'Publish scenario and answer key' : 'Publish scenario'}
               </button>
-              {blocked && <span className="hint">Fix the problems in the pack and choose it again.</span>}
+              {blocked && (
+                <span id={`${id}-blocked`} className="hint">
+                  Fix the problems in the pack and choose it again.
+                </span>
+              )}
             </p>
           )}
         </section>
       )}
-      {step.kind === 'published' && <Result published={step.published} />}
+      {published && <Result published={published} headingRef={resultHeading} />}
     </>
   );
 }
 
-function Result({ published }: { published: Published }) {
+function Result({ published, headingRef }: { published: Published; headingRef: Ref<HTMLHeadingElement> }) {
   const { scenario, answerKey, keyErrors, keyError } = published;
   const key = encodeURIComponent(scenario.scenario_key);
   return (
-    <section role="status" aria-labelledby="pack-done-h" className="card" data-testid="pack-published">
-      <h2 id="pack-done-h">3. Published</h2>
+    <section aria-labelledby="pack-done-h" className="card" data-testid="pack-published">
+      <h2 id="pack-done-h" tabIndex={-1} ref={headingRef}>
+        3. Published
+      </h2>
       <p>
         <code>{scenario.scenario_key}</code> version {scenario.version} is published.
         {answerKey && ` Answer key version ${answerKey.version} is published (hidden from agents).`}

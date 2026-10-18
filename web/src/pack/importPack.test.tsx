@@ -11,12 +11,12 @@ afterEach(() => server.events.removeAllListeners());
 const enc = new TextEncoder();
 const eml = (id: string, subject = 'Hello') => ['From: vendor@example.test', 'To: finance@example.test', `Subject: ${subject}`, `Message-ID: <${id}@example.test>`, '', 'Hi', ''].join('\r\n');
 
-function scenarioYaml(id = 'pack.demo', fixtures = ['fixtures/001-deal-.eml', 'fixtures/002-b.eml']): string {
+function scenarioYaml(id = 'pack.demo', fixtures = ['fixtures/001-deal-.eml', 'fixtures/002-b.eml'], version = 1): string {
   return [
     'schema_version: "1.1"',
     'scenario:',
     `  id: ${id}`,
-    '  version: 1',
+    `  version: ${version}`,
     '  title: Pack demo',
     '  environment:',
     '    seed: 1',
@@ -42,12 +42,13 @@ function scenarioYaml(id = 'pack.demo', fixtures = ['fixtures/001-deal-.eml', 'f
   ].join('\n');
 }
 
-function keyYaml(scenario = 'pack.demo', checksDefault = 'on'): string {
+function keyYaml(scenario = 'pack.demo', checksDefault = 'on', pinned: number[] = [], version = 1): string {
   return [
     'answer_key_version: "1.0"',
     'answer_key:',
     `  scenario: ${scenario}`,
-    '  version: 1',
+    `  version: ${version}`,
+    ...(pinned.length ? ['  scenario_versions:', ...pinned.map((v) => `    - ${v}`)] : []),
     `  checks_default: ${checksDefault}`,
     '  assertions:',
     '    - id: nothing-sent',
@@ -123,6 +124,13 @@ describe('buildPack and readFolderPack', () => {
     const tooMany = Array.from({ length: PACK_LIMITS.maxEntries + 1 }, (_, i) => folderFile(`p/${i}.txt`, 'x'));
     await expect(readFolderPack(tooMany)).rejects.toThrow('the folder has 401 files');
     await expect(readFolderPack([folderFile('../scenario.yaml', 'x')])).rejects.toThrow('unsafe path in the folder');
+    await expect(readFolderPack([folderFile('p/fixtures/a\u202egpj.eml', 'x')])).rejects.toThrow('unsafe path in the folder');
+    // a git checkout: .git/ litter does not count toward the 400 files...
+    const litter = Array.from({ length: 450 }, (_, i) => folderFile(`p/.git/objects/${i}`, 'x'));
+    expect((await readFolderPack([...litter, folderFile('p/scenario.yaml', 'a: 1')])).map((e) => e.path)).toEqual(['p/scenario.yaml']);
+    // ...but a huge folder is refused before anything is read
+    const huge = Array.from({ length: PACK_LIMITS.maxFolderFiles + 1 }, (_, i) => ({ name: `${i}`, webkitRelativePath: `p/.git/${i}`, size: 1 }) as unknown as File);
+    await expect(readFolderPack(huge)).rejects.toThrow(`the folder has ${PACK_LIMITS.maxFolderFiles + 1} files`);
     const big = folderFile('p/a.eml', 'x');
     Object.defineProperty(big, 'size', { value: PACK_LIMITS.maxEntryBytes + 1 });
     await expect(readFolderPack([big])).rejects.toThrow('p/a.eml is larger than');
@@ -183,7 +191,8 @@ describe('Import scenario pack page', () => {
     expect(errors).toHaveTextContent('1 problem(s) in the scenario');
     expect(errors).toHaveTextContent('duplicate Message-ID <same@example.test>');
     expect(screen.getByRole('button', { name: 'Publish scenario' })).toBeDisabled();
-    expect(screen.getByText('Fix the problems in the pack and choose it again.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Publish scenario' })).toHaveAccessibleDescription('Fix the problems in the pack and choose it again.');
+    expect(screen.getByTestId('pack-status')).toHaveTextContent('The pack has 1 problem(s).');
 
     // the scenario exists already: the answer key is fully checked before anything is published
     const existing = [folderFile('f/scenario.yaml', scenarioYaml('finance.invoice-bank-change')), folderFile('f/answer_key.yaml', keyYaml('finance.invoice-bank-change', 'maybe'))];
@@ -249,6 +258,34 @@ describe('Import scenario pack page', () => {
     const check = await screen.findByTestId('pack-check');
     expect(check).toHaveTextContent('(no id) version ?');
     expect(screen.getByTestId('pack-errors')).toBeInTheDocument();
+  });
+
+  it('re-importing an existing scenario: a new version defers the key check; the same version checks it now', async () => {
+    const { user } = await openImport();
+    const F = 'finance.invoice-bank-change'; // seeded with versions 1-3
+    const mail = [folderFile('f/fixtures/001-deal-.eml', eml('r1')), folderFile('f/fixtures/002-b.eml', eml('r2'))];
+    // new version 4 whose key pins [4]: the API would call version 4 unknown until it is published
+    await user.upload(screen.getByLabelText('Choose a folder'), [folderFile('f/scenario.yaml', scenarioYaml(F, undefined, 4)), folderFile('f/answer_key.yaml', keyYaml(F, 'on', [4], 9)), ...mail]);
+    const check = await screen.findByTestId('pack-check');
+    expect(check).toHaveTextContent('(its references are checked when the scenario is published)');
+    expect(screen.queryByTestId('pack-key-errors')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Publish scenario and answer key' }));
+    expect(await screen.findByTestId('pack-published')).toHaveTextContent(`${F} version 4 is published. Answer key version 9 is published`);
+    await waitFor(() => expect(screen.getByRole('heading', { name: '3. Published' })).toHaveFocus());
+    expect(screen.getByTestId('pack-status')).toHaveTextContent(`Published ${F} version 4. Answer key published.`);
+
+    // the same (stored) version: the key is checked before publishing
+    await user.upload(screen.getByLabelText('Choose a folder'), [folderFile('f/scenario.yaml', scenarioYaml(F)), folderFile('f/answer_key.yaml', keyYaml(F, 'on', [1], 9)), ...mail]);
+    await waitFor(() => expect(screen.getByTestId('pack-check')).not.toHaveTextContent('(its references'));
+    expect(screen.queryByTestId('pack-key-errors')).toBeNull();
+    // ...unless the key also names a version that is not stored yet
+    await user.upload(screen.getByLabelText('Choose a folder'), [folderFile('f/scenario.yaml', scenarioYaml(F)), folderFile('f/answer_key.yaml', keyYaml(F, 'on', [1, 7], 9)), ...mail]);
+    await waitFor(() => expect(screen.getByTestId('pack-check')).toHaveTextContent('(its references are checked when the scenario is published)'));
+    // a scenario lookup that fails for another reason is reported
+    server.use(http.get('*/v1/scenarios/:key', () => HttpResponse.json({ error: { code: 'INTERNAL', message: 'lookup broke', details: {}, request_id: 'r9' } }, { status: 500 })));
+    await user.upload(screen.getByLabelText('Choose a folder'), [folderFile('f/scenario.yaml', scenarioYaml(F)), folderFile('f/answer_key.yaml', keyYaml(F)), ...mail]);
+    expect(await screen.findByText(/lookup broke/)).toBeInTheDocument();
+    expect(screen.getByTestId('pack-status')).toHaveTextContent('Could not read the pack.');
   });
 
   it('is linked from the scenarios page and gated to controllers', async () => {
