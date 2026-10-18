@@ -87,17 +87,21 @@ export function readZipPack(bytes: Uint8Array): Promise<ZipEntry[]> {
 
 /** A folder picked with <input webkitdirectory>: the same limits as a .zip, checked before reading. */
 export async function readFolderPack(files: readonly File[]): Promise<ZipEntry[]> {
-  const wanted = files.filter((f) => {
-    const name = f.webkitRelativePath || f.name;
-    return !litter(name) && (SCENARIO.test(leaf(name)) || ANSWER_KEY.test(leaf(name)) || /\.eml$/i.test(name));
-  });
-  const skipped = files.filter((f) => !wanted.includes(f) && !litter(f.webkitRelativePath || f.name));
   // Litter (.git/, .DS_Store, ...) does not count, but a huge folder is refused outright.
   if (files.length > PACK_LIMITS.maxFolderFiles) throw new PackError(`the folder has ${files.length} files (at most ${PACK_LIMITS.maxFolderFiles})`);
+  const wanted: File[] = [];
+  const skipped: File[] = [];
+  for (const f of files) {
+    const name = f.webkitRelativePath || f.name;
+    if (litter(name)) continue;
+    (SCENARIO.test(leaf(name)) || ANSWER_KEY.test(leaf(name)) || /\.eml$/i.test(name) ? wanted : skipped).push(f);
+  }
   const counted = wanted.length + skipped.length;
   if (counted > PACK_LIMITS.maxEntries) throw new PackError(`the folder has ${counted} files (at most ${PACK_LIMITS.maxEntries})`);
   let total = 0;
-  const out: ZipEntry[] = skipped.map((f) => ({ path: f.webkitRelativePath || f.name, data: new Uint8Array() }));
+  // never read, only listed: a name with unsafe characters is shown quoted (escaped)
+  const shown = (name: string) => safeEntryPath(name) ?? JSON.stringify(name);
+  const out: ZipEntry[] = skipped.map((f) => ({ path: shown(f.webkitRelativePath || f.name), data: new Uint8Array() }));
   for (const f of wanted) {
     const path = safeEntryPath(f.webkitRelativePath || f.name);
     if (path === null) throw new PackError(`unsafe path in the folder: ${JSON.stringify(f.webkitRelativePath)}`);

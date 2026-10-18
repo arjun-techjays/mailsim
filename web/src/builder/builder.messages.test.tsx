@@ -10,6 +10,10 @@ import { templateDraft } from './template';
 afterEach(() => server.events.removeAllListeners());
 vi.setConfig({ testTimeout: 30_000 });
 
+/** The upload status/report of the Finance Manager mailbox (each mailbox has its own). */
+const financeReport = (s: ReturnType<typeof within>) =>
+  within(s.getByRole('region', { name: /^Mailbox of Finance Manager/ })).getByTestId('upload-report');
+
 const EML = ['From: Ann <ann@outside.test>', 'To: finance@example.test', 'Subject: Hello there', 'Message-ID: <hello@outside.test>', '', 'Hi!', ''].join('\r\n');
 
 describe('initial messages', () => {
@@ -167,9 +171,8 @@ describe('initial messages', () => {
     expect(items[1]).toHaveTextContent('uploaded .eml');
     expect(items[1]).toHaveTextContent('fixtures/hello-there.eml');
     expect(items[2]).toHaveTextContent('fixtures/Plain_name-.eml');
-    const report = s.getAllByTestId('upload-report')[0]!;
+    const report = financeReport(s);
     await waitFor(() => expect(report).toHaveTextContent('Added 2 new message(s): fixtures/hello-there.eml, fixtures/Plain_name-.eml.'));
-    expect(report).toHaveTextContent('Added 2 new message(s): fixtures/hello-there.eml, fixtures/Plain_name-.eml.');
     expect(report).toHaveTextContent('invoice-001.eml: already in the scenario as fixtures/invoice-001.eml');
     expect(report).toHaveTextContent('Hello-again-.eml: same Message-ID <hello@outside.test> as fixtures/hello-there.eml, already in this mailbox');
 
@@ -234,9 +237,8 @@ describe('initial messages', () => {
       new File([mail('inv')], 'invoice-001.eml'), // already there
       new File([mail('stray')], 'stray.eml'), // matches nothing: held
     ]);
-    const report = s.getAllByTestId('upload-report')[0]!;
+    const report = financeReport(s);
     await waitFor(() => expect(report).toHaveTextContent('Filled 2 message file(s) the scenario lists.'));
-    expect(report).toHaveTextContent('Filled 2 message file(s) the scenario lists.');
     expect(report).toHaveTextContent('004-fw.eml: uploaded twice for fixtures/004-fw.eml');
     expect(report).toHaveTextContent('x.eml: matches several messages (fixtures/a/x.eml, fixtures/b/x.eml)');
     expect(report).toHaveTextContent('invoice-001.eml: already in the scenario as fixtures/invoice-001.eml');
@@ -259,7 +261,7 @@ describe('initial messages', () => {
     expect(two).toHaveTextContent('2 files do not match any message the scenario lists: new-1.eml, new-2-.eml.');
     await user.click(within(two).getByRole('button', { name: 'Add these 2 as new messages' }));
     await waitFor(() => expect(s.getAllByTestId('initial-message')).toHaveLength(8));
-    await waitFor(() => expect(s.getAllByTestId('upload-report')[0]!).toHaveTextContent('Added 2 new message(s): fixtures/new-1.eml, fixtures/new-2-.eml.'));
+    await waitFor(() => expect(financeReport(s)).toHaveTextContent('Added 2 new message(s): fixtures/new-1.eml, fixtures/new-2-.eml.'));
     expect(s.queryByTestId('unmatched-uploads')).toBeNull();
     // a single held file
     await user.upload(input, new File([mail('n3')], 'new-3.eml'));

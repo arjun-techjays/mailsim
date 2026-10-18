@@ -19,6 +19,16 @@ KEY_FILE = EXAMPLE_DIR / "answer_key.yaml"
 SCENARIO = "finance.invoice-bank-change"
 
 
+def run_secret(capsys, secrets, *argv):
+    """`run_cli`, asserting that none of `secrets` appears in stdout or stderr."""
+    code = cli.main(list(argv))
+    out = capsys.readouterr()
+    for secret in secrets:
+        assert secret not in out.out and secret not in out.err
+    parse = lambda text: json.loads(text) if text.strip() else None  # noqa: E731
+    return code, parse(out.out), parse(out.err)
+
+
 @pytest.fixture()
 def cli_env(db_engine, tmp_path, monkeypatch):
     monkeypatch.setenv("MAILSIM_DATABASE_URL", db_engine.url.render_as_string(hide_password=False))
@@ -87,11 +97,7 @@ def test_publish_through_the_api_with_a_key_from_the_environment(capsys, cli_env
     secrets = (keys["controller_key"], keys["evaluator_key"])
 
     def run_cli(capsys, *argv):  # noqa: F811 - the shared helper, plus a no-key-in-output check
-        code = cli.main(list(argv))
-        out = capsys.readouterr()
-        assert not any(k in out.out + out.err for k in secrets)
-        parse = lambda text: json.loads(text) if text.strip() else None  # noqa: E731
-        return code, parse(out.out), parse(out.err)
+        return run_secret(capsys, secrets, *argv)
 
     monkeypatch.setenv("CTL_KEY", keys["controller_key"])
     monkeypatch.setenv("EVAL_KEY", keys["evaluator_key"])
@@ -161,17 +167,18 @@ def test_api_mode_refuses_agent_keys_and_reports_partial_publishes(capsys, cli_e
                           run_id=run_id, mailbox_id=mailbox)  # fmt: skip
     monkeypatch.setenv("AGENT_KEY", agent.api_key)
     monkeypatch.setenv("CTL_KEY", keys["controller_key"])
+    secrets = (agent.api_key, keys["controller_key"])
     for argv in (("publish", str(EXAMPLE)), ("answer-key", "publish", str(KEY_FILE))):
-        code, _, err = run_cli(capsys, *argv, "--api-key-env", "AGENT_KEY")
-        assert code == 2 and err["code"] in ("PERMISSION_DENIED", "UNAUTHENTICATED"), err
+        code, _, err = run_secret(capsys, secrets, *argv, "--api-key-env", "AGENT_KEY")
+        assert code == 2 and err["code"] == "PERMISSION_DENIED", err
 
     # the scenario is published, the key is refused: the error says what WAS published
     bad = tmp_path / "bad-key.yaml"
     data = yaml.safe_load(KEY_FILE.read_text())
     data["answer_key"]["scenario_versions"] = [99]
     bad.write_text(yaml.safe_dump(data))
-    code, _, err = run_cli(capsys, "publish", str(EXAMPLE), "--answer-key", str(bad),
-                           "--api-key-env", "CTL_KEY")  # fmt: skip
+    code, _, err = run_secret(capsys, secrets, "publish", str(EXAMPLE), "--answer-key", str(bad),
+                              "--api-key-env", "CTL_KEY")  # fmt: skip
     assert code == 2 and "unknown scenario versions" in err["message"]
     assert err["published"]["scenario_version_id"] == version_id
     assert err["published"]["project_id"] == project
@@ -185,19 +192,20 @@ def test_api_mode_reports_a_response_that_is_not_json(capsys, cli_env, keys, mon
 
     monkeypatch.setattr(inprocess, "asgi_request", broken)
     monkeypatch.setenv("CTL_KEY", keys["controller_key"])
-    code, _, err = run_cli(capsys, "publish", str(EXAMPLE), "--api-key-env", "CTL_KEY")
+    secrets = (keys["controller_key"],)
+    code, _, err = run_secret(capsys, secrets, "publish", str(EXAMPLE), "--api-key-env", "CTL_KEY")
     assert code == 2 and err["code"] == "INVALID_RESPONSE" and err["details"] == {"status": 502}
 
     async def cut(*_a, **_k):
         return inprocess.InProcessResponse(status=200, headers={}, body=b"{}", truncated=True)
 
     monkeypatch.setattr(inprocess, "asgi_request", cut)
-    code, _, err = run_cli(capsys, "publish", str(EXAMPLE), "--api-key-env", "CTL_KEY")
+    code, _, err = run_secret(capsys, secrets, "publish", str(EXAMPLE), "--api-key-env", "CTL_KEY")
     assert code == 2 and err["code"] == "INVALID_RESPONSE"
 
     async def listing(*_a, **_k):
         return inprocess.InProcessResponse(status=200, headers={}, body=b"[]")
 
     monkeypatch.setattr(inprocess, "asgi_request", listing)
-    code, _, err = run_cli(capsys, "publish", str(EXAMPLE), "--api-key-env", "CTL_KEY")
+    code, _, err = run_secret(capsys, secrets, "publish", str(EXAMPLE), "--api-key-env", "CTL_KEY")
     assert code == 2 and err["code"] == "INVALID_RESPONSE"

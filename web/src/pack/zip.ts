@@ -46,11 +46,12 @@ export function crc32(data: Uint8Array): number {
 
 /**
  * Refused anywhere in a path: backslash, C0/DEL/C1 controls, zero-width characters and LRM/RLM,
- * bidi embeddings/overrides/isolates, line/paragraph separators and BOM (names that would
+ * bidi embeddings/overrides/isolates and ALM (U+061C), word joiner and invisible operators
+ * (U+2060-2064), Mongolian vowel separator (U+180E), line/paragraph separators and BOM (names that would
  * display differently from what they are).
  */
 // eslint-disable-next-line no-control-regex -- control characters are exactly what is refused
-const UNSAFE_CHARS = /[\\\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/;
+const UNSAFE_CHARS = /[\\\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\u061c\u180e\ufeff]/;
 
 /** A relative path with no empty, `.` or `..` segments, drive letters or unsafe characters. */
 export function safeEntryPath(name: string): string | null {

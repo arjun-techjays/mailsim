@@ -142,6 +142,9 @@ describe('buildPack and readFolderPack', () => {
     await expect(readFolderPack(Array.from({ length: 6 }, half))).rejects.toThrow('exceed');
     const plain = new File(['a: 1'], 'scenario.yaml'); // a single file picked without a folder
     expect((await readFolderPack([plain, folderFile('p/readme.md', 'x')])).map((e) => e.path)).toEqual(['p/readme.md', 'scenario.yaml']);
+    // a file that is never read is only listed; an unsafe name is shown escaped
+    const odd = 'p/notes\u202etxt.md';
+    expect((await readFolderPack([folderFile(odd, 'x')])).map((e) => e.path)).toEqual([JSON.stringify(odd)]);
   });
 });
 
