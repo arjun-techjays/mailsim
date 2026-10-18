@@ -5,7 +5,7 @@ import { bytesToBase64, fileBytes } from '../builder/files';
 import { PackError, readZip, safeEntryPath, type ZipEntry, type ZipLimits } from './zip';
 
 /** Same limits as the API: 5 MB per message file, 200 files, 25 MB of files per scenario. */
-export const PACK_LIMITS: ZipLimits & { maxFixtures: number; maxDocumentBytes: number } = {
+export const PACK_LIMITS: ZipLimits & { maxFixtures: number; maxDocumentBytes: number; maxFolderFiles: number } = {
   maxZipBytes: 30 * 1024 * 1024,
   maxEntries: 400,
   maxEntryBytes: 5 * 1024 * 1024,
@@ -13,6 +13,8 @@ export const PACK_LIMITS: ZipLimits & { maxFixtures: number; maxDocumentBytes: n
   maxRatio: 100,
   maxFixtures: 200,
   maxDocumentBytes: 1024 * 1024,
+  /** Every file of a picked folder, litter included (a hard cap so the browser never stalls). */
+  maxFolderFiles: 20_000,
 };
 
 const SCENARIO = /^scenario\.(ya?ml|json)$/;
@@ -90,7 +92,10 @@ export async function readFolderPack(files: readonly File[]): Promise<ZipEntry[]
     return !litter(name) && (SCENARIO.test(leaf(name)) || ANSWER_KEY.test(leaf(name)) || /\.eml$/i.test(name));
   });
   const skipped = files.filter((f) => !wanted.includes(f) && !litter(f.webkitRelativePath || f.name));
-  if (files.length > PACK_LIMITS.maxEntries) throw new PackError(`the folder has ${files.length} files (at most ${PACK_LIMITS.maxEntries})`);
+  // Litter (.git/, .DS_Store, ...) does not count, but a huge folder is refused outright.
+  if (files.length > PACK_LIMITS.maxFolderFiles) throw new PackError(`the folder has ${files.length} files (at most ${PACK_LIMITS.maxFolderFiles})`);
+  const counted = wanted.length + skipped.length;
+  if (counted > PACK_LIMITS.maxEntries) throw new PackError(`the folder has ${counted} files (at most ${PACK_LIMITS.maxEntries})`);
   let total = 0;
   const out: ZipEntry[] = skipped.map((f) => ({ path: f.webkitRelativePath || f.name, data: new Uint8Array() }));
   for (const f of wanted) {

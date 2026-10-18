@@ -44,11 +44,18 @@ export function crc32(data: Uint8Array): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-/** A relative path with no empty, `.` or `..` segments, backslashes, drive letters or controls. */
+/**
+ * Refused anywhere in a path: backslash, C0/DEL/C1 controls, zero-width characters and LRM/RLM,
+ * bidi embeddings/overrides/isolates, line/paragraph separators and BOM (names that would
+ * display differently from what they are).
+ */
+// eslint-disable-next-line no-control-regex -- control characters are exactly what is refused
+const UNSAFE_CHARS = /[\\\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/;
+
+/** A relative path with no empty, `.` or `..` segments, drive letters or unsafe characters. */
 export function safeEntryPath(name: string): string | null {
   const path = name.replace(/^\.\//, '');
-  // eslint-disable-next-line no-control-regex -- control characters are exactly what is refused
-  if (!path || path.startsWith('/') || /[\\\u0000-\u001f\u007f]/.test(path) || /^[A-Za-z]:/.test(path)) return null;
+  if (!path || path.startsWith('/') || UNSAFE_CHARS.test(path) || /^[A-Za-z]:/.test(path)) return null;
   const parts = path.replace(/\/$/, '').split('/');
   return parts.some((p) => p === '' || p === '.' || p === '..') ? null : path;
 }
@@ -139,7 +146,7 @@ export async function readZip(bytes: Uint8Array, limits: ZipLimits): Promise<Zip
     if (dataStart + csize > bytes.length) throw new PackError(`the .zip entry ${path} is damaged`);
     const raw = bytes.subarray(dataStart, dataStart + csize);
     if (method === 0 && csize !== usize) throw new PackError(`the .zip entry ${path} is damaged`);
-    const data = method === 0 ? raw.slice() : await inflate(raw, usize, limits.maxTotalBytes);
+    const data = method === 0 ? raw.slice() : await inflate(raw, usize, limits.maxTotalBytes - (total - usize));
     if (data.length !== usize || crc32(data) !== crc) throw new PackError(`the .zip entry ${path} is damaged (checksum mismatch)`);
     entries.push({ path, data });
   }

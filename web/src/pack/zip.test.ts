@@ -40,7 +40,7 @@ describe('readZip', () => {
   });
 
   it('refuses unsafe, duplicate, linked, encrypted or oddly compressed entries', async () => {
-    for (const name of ['../x.eml', '/etc/passwd', 'a/../../b', 'C:evil', 'a\\b', 'a\u0000b', 'a//b', '']) {
+    for (const name of ['../x.eml', '/etc/passwd', 'a/../../b', 'C:evil', 'a\\b', 'a\u0000b', 'a//b', '', 'invoice\u202egpj.eml']) {
       await refused([{ name, data: 'x' }], /unsafe path/);
     }
     await refused([{ name: 'a.eml', data: 'x' }, { name: 'a.eml', data: 'y' }], /lists a.eml twice/);
@@ -72,6 +72,12 @@ describe('readZip', () => {
 });
 
 describe('safeEntryPath and crc32', () => {
+  it('refuses C1 controls, bidi, zero-width, separators and BOM (display spoofing)', () => {
+    const spoofers = ['\u0080', '\u009f', '\u200b', '\u200c', '\u200d', '\u200e', '\u200f', '\u202a', '\u202e', '\u2066', '\u2069', '\u2028', '\u2029', '\ufeff', '\u007f', '\u001f'];
+    for (const ch of spoofers) expect(safeEntryPath(`fixtures/a${ch}b.eml`), JSON.stringify(ch)).toBeNull();
+    expect(safeEntryPath('fixtures/a\u00a0b\u2030.eml')).toBe('fixtures/a\u00a0b\u2030.eml'); // just outside the ranges
+  });
+
   it('normalises a leading ./ and keeps everything else', () => {
     expect(safeEntryPath('./a/b-.eml')).toBe('a/b-.eml');
     expect(safeEntryPath('a/')).toBe('a/');
