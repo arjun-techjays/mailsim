@@ -315,11 +315,11 @@ interface UploadReport {
   skipped: { name: string; reason: string }[];
 }
 
+/** Content of the always-mounted upload live region. */
 function UploadSummary({ report }: { report: UploadReport }) {
   const { filled, added, skipped } = report;
-  if (filled.length + added.length + skipped.length === 0) return null;
   return (
-    <div role="status" className="b-upload-report" data-testid="upload-report">
+    <>
       {filled.length > 0 && <p>Filled {filled.length} message file(s) the scenario lists.</p>}
       {added.length > 0 && <p>Added {added.length} new message(s): {added.join(', ')}.</p>}
       {skipped.length > 0 && (
@@ -334,8 +334,18 @@ function UploadSummary({ report }: { report: UploadReport }) {
           </ul>
         </>
       )}
-    </div>
+    </>
   );
+}
+
+/** React keys for a mailbox's message list: the path, plus its occurrence number when listed twice. */
+function messageKeys(paths: readonly string[]): string[] {
+  const seen = new Map<string, number>();
+  return paths.map((p) => {
+    const n = (seen.get(p) ?? 0) + 1;
+    seen.set(p, n);
+    return n === 1 ? p : `${p}#${n}`;
+  });
 }
 
 function MailboxMessages({ mailboxIndex }: { mailboxIndex: number }) {
@@ -419,8 +429,8 @@ function MailboxMessages({ mailboxIndex }: { mailboxIndex: number }) {
         <p className="muted">Empty: the mailbox starts with no messages.</p>
       ) : (
         <ol className="b-messages">
-          {mailbox.messages.map((path, j) => (
-            <MessageItem key={`${j}:${path}`} mailboxIndex={mailboxIndex} index={j} path={path} owner={mailbox.owner} />
+          {messageKeys(mailbox.messages).map((key, j) => (
+            <MessageItem key={key} mailboxIndex={mailboxIndex} index={j} path={mailbox.messages[j] as string} owner={mailbox.owner} />
           ))}
         </ol>
       )}
@@ -440,10 +450,11 @@ function MailboxMessages({ mailboxIndex }: { mailboxIndex: number }) {
             disabled={busy}
             onChange={(e) => void onUpload(e)}
           />
-          {busy && <span role="status">Reading files…</span>}
         </div>
       )}
-      {report && <UploadSummary report={report} />}
+      <div role="status" className="b-upload-report" data-testid="upload-report">
+        {busy ? <p>Reading files…</p> : report && <UploadSummary report={report} />}
+      </div>
       {held.length > 0 && (
         <div className="notice" role="note" data-testid="unmatched-uploads">
           <p>
