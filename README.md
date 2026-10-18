@@ -82,6 +82,13 @@ Expired idempotency records are swept on each claim; `python -m mailsim.serve sw
   (YAML 1.2 rules), so a persona script's `on:` key and `checks_default: on` work unquoted.
   Where a boolean is expected (`once: yes`), those strings are still accepted.
   `checks_default` is `on` or `off`; `true`/`false` and `yes`/`no` (any case) work too.
+* **System labels and flags in `where`** are graded from what happened, not from what is
+  stored: `label: SENT` = sent by a real send, `DRAFT`/`DRAFTS` = a real draft, `INBOX`/`TRASH`/
+  `ARCHIVE` = the folder, `UNREAD` = not seen; `ANSWERED` (label or `has_flag`) in the agent's
+  mailbox = the agent really replied to or forwarded it. `STARRED`/`FLAGGED` and `DELETED` are
+  flags the agent sets itself: they show what it did to a message, not that it did the work,
+  so pair them with an `action` check (e.g. `operation: reply`) when that is what you grade.
+  Labels match ignoring case and surrounding blanks.
 * **Evaluation errors.** `POST /v1/runs/{id}/evaluations` answers 404 when the requested
   `answer_key_version` does not exist and 409 CONFLICT when it (or every key) is not compatible
   with the run's scenario version (`details.answer_key_version`, `details.scenario_versions`,
@@ -116,6 +123,15 @@ Expired idempotency records are swept on each claim; `python -m mailsim.serve sw
   re-grade accordingly). Dashboard connection tests are recorded with the actor
   `connection_test` (see above). Answer-key operation and outcome names match ignoring case;
   `GET /v1/health` also reports `local_no_auth`.
+  Follow-ups: a refused system-label / DRAFT / Sent-Drafts write is recorded as a refused agent
+  `label` / `flag` / `insert` action on every interface (also when an adapter refuses it before
+  its first write). IMAP APPEND to `Sent` answers OK without storing anything; APPEND to `Drafts`
+  from this mailbox's address makes a real draft. `where.label: answered` and
+  `has_flag: ANSWERED` count only messages the agent really replied to or forwarded.
+  **Breaking:** moving controller-seeded Sent history out of `Sent` and back is refused (only
+  mail sent during the run counts as sent). `/openapi.json` and `/docs` are served to operators
+  only (controller / evaluator keys, the local no-auth operator): no credential 401, agent key
+  404.
 
 * **QA-A3 (evaluation, validation, runs).** Answer keys with unknown references are refused
   (validate and publish). New run status `REPLAYED`; replay runs are not evaluated and are

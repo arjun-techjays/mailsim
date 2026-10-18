@@ -84,6 +84,12 @@ class MessageWhere(_Strict):
     # check unless explicitly allowed: the agent must not be able to forge evidence.
     include_agent_created: bool = False
 
+    # labels match ignoring case and surrounding blanks, the same in every grading path
+    @field_validator("label", mode="before")
+    @classmethod
+    def _label_case(cls, v: Any) -> Any:
+        return v.strip().casefold() if isinstance(v, str) else v
+
 
 class StateCheck(_Strict):
     where: MessageWhere = Field(default_factory=MessageWhere)

@@ -173,12 +173,12 @@ export function validateAnswerKeyDoc(doc: unknown, versions: number[]): { errors
         });
       }
       countErrors(check.count, `${c}.count`, errors);
-      // Reference checks at deep paths (QA-A3): unknown folders and operations.
+      // Reference checks at deep paths (QA-A3): unknown folders and operations (any case, like the server).
       const where = isObj(check.where) ? check.where : null;
-      if (where && typeof where.folder === 'string' && !KNOWN_FOLDERS.includes(where.folder)) {
+      if (where && typeof where.folder === 'string' && !KNOWN_FOLDERS.includes(where.folder.toLowerCase())) {
         errors.push(issue(`${c}.where.folder`, `unknown folder ${JSON.stringify(where.folder)}; use one of ${KNOWN_FOLDERS.join(', ')}`));
       }
-      if (isObj(check.forbid) && typeof check.forbid.operation === 'string' && check.forbid.operation && !AUTHORING_META.agent_operations.includes(check.forbid.operation)) {
+      if (isObj(check.forbid) && typeof check.forbid.operation === 'string' && check.forbid.operation && !AUTHORING_META.agent_operations.includes(check.forbid.operation.trim().toLowerCase())) {
         errors.push(issue(`${c}.forbid.operation`, `unknown operation ${JSON.stringify(check.forbid.operation)}`));
       }
     }

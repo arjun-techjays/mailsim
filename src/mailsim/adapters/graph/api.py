@@ -37,7 +37,7 @@ from mailsim.domain.errors import (
     PermissionDenied,
     UnsupportedOperation,
 )
-from mailsim.domain.models import SYSTEM_FOLDERS, CanonicalMessage, refuse_system_labels
+from mailsim.domain.models import SYSTEM_FOLDERS, CanonicalMessage, is_system_label
 from mailsim.engine.facades import AgentMailbox, facade_for
 from mailsim.providers.ids import graph_id
 
@@ -725,8 +725,8 @@ def update_message(message_id: str, ctx: Context, payload: Payload = None) -> JS
     ):
         raise InvalidRequest("categories must be a collection of strings")
     current = res.user_categories(m)
-    if categories is not None:  # before any write (the engine refuses them too)
-        refuse_system_labels(c for c in categories if c not in current)
+    if categories is not None:  # system names: refused (and recorded) before any write
+        ctx.mb.check_labels(mid, add=[c for c in categories if c not in current])
     if content:
         # the engine replaces the draft's message (fresh flags DRAFT+SEEN, no labels): carry
         # the previous flags and categories over unless this PATCH changes them
@@ -739,14 +739,16 @@ def update_message(message_id: str, ctx: Context, payload: Payload = None) -> JS
         if "SEEN" not in m.flags and "SEEN" not in add:
             remove = list(dict.fromkeys([*remove, "SEEN"]))
         if categories is None:
-            categories = current
+            categories = [c for c in current if not is_system_label(c)]
         current = []
     if add or remove:
         ctx.mb.set_flags(mid, add=add, remove=remove)
     if categories is not None:
         wanted = list(dict.fromkeys(categories))
         plus = [c for c in wanted if c not in current]
-        minus = [c for c in current if c not in wanted]
+        # a stored system-named label (seeded mail) is not a category the agent can drop:
+        # leave it, so replacing the set never fails halfway
+        minus = [c for c in current if c not in wanted and not is_system_label(c)]
         if plus or minus:
             ctx.mb.modify_labels(mid, add=plus, remove=minus)
     return ok(render(ctx.request, ctx.mb.get_message(mid)))

@@ -16,7 +16,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from mailsim.api.auth import InvalidCredential, verify_key
 from mailsim.api.local_mode import MODE_HEADER, TOKEN_HEADER, LocalAccess
 from mailsim.auth.principal import Principal, Role
-from mailsim.domain.errors import PermissionDenied, UnsupportedOperation
+from mailsim.domain.errors import NotFound, PermissionDenied, UnsupportedOperation
 
 bearer = HTTPBearer(auto_error=False, description="Sandbox-issued API key (role-scoped)")
 OPERATOR_ROLES = frozenset({Role.CONTROLLER, Role.EVALUATOR})
@@ -87,12 +87,25 @@ def agent_for_mailbox(
 
 agent_for_mailbox.mailsim_roles = frozenset({Role.AGENT})  # type: ignore[attr-defined]
 
+
+def docs_reader(principal: Annotated[Principal, Depends(get_principal)]) -> Principal:
+    """The API description (`/openapi.json`, `/docs`) names operator and grading routes, so
+    only operators read it: controller / evaluator keys and the local no-auth operator. No
+    credential: 401; any other key (an agent's): 404, as if there were nothing there."""
+    if principal.local_operator or principal.role in OPERATOR_ROLES:
+        return principal
+    raise NotFound("not found")
+
+
+docs_reader.mailsim_roles = OPERATOR_ROLES  # type: ignore[attr-defined]
+
 Controller = Annotated[Principal, Depends(require_role(Role.CONTROLLER))]
 Evaluator = Annotated[Principal, Depends(require_role(Role.EVALUATOR))]
 Inspector = Annotated[Principal, Depends(require_role(Role.CONTROLLER, Role.EVALUATOR))]
 # any valid credential (identity introspection only: GET /v1/me)
 Authenticated = Annotated[Principal, Depends(require_role(*Role))]
 Agent = Annotated[Principal, Depends(agent_for_mailbox)]
+DocsReader = Annotated[Principal, Depends(docs_reader)]
 
 
 def not_implemented(owner: str) -> UnsupportedOperation:

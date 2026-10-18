@@ -41,7 +41,7 @@ from mailsim.domain.errors import (
     PermissionDenied,
     UnsupportedOperation,
 )
-from mailsim.domain.models import Address, CanonicalMessage
+from mailsim.domain.models import Address, CanonicalMessage, is_system_label, system_label_error
 from mailsim.engine.facades import AgentMailbox, DraftThreading
 from mailsim.engine.pagination import decode_cursor, encode_cursor
 from mailsim.mime.build import build_mime
@@ -119,6 +119,21 @@ def history_record(
     if kind in LABEL_EVENTS:  # the change feed carries no label delta: refetch the message
         return record, {"labelAdded", "labelRemoved"}
     return record, set()
+
+
+def _system_names(label_ids: list[str]) -> list[str]:
+    """Label names in a request that only the system sets: DRAFT (drafts come from the drafts
+    API) and user-label ids spelling a system name (no such user label can exist)."""
+    out = ["DRAFT"] if "DRAFT" in label_ids else []
+    for label_id in label_ids:
+        if lb.is_user_label_id(label_id):
+            try:
+                name = lb.user_label_name(label_id)
+            except NotFound:
+                continue  # malformed: answered 404 by the id check
+            if is_system_label(name):
+                out.append(name)
+    return out
 
 
 class GmailService:
@@ -305,11 +320,11 @@ class GmailService:
         add, remove = list(dict.fromkeys(add)), list(dict.fromkeys(remove))
         if set(add) & set(remove):
             raise InvalidRequest("a label cannot be both added and removed")
+        # DRAFT, or a Label_ id spelling a system name: refused and recorded before any write
+        self.mb.check_labels(msg.id, add=_system_names(add), remove=_system_names(remove))
         for label_id in (*add, *remove):
             if lb.check_label_id(label_id) == "unmodelled":
                 raise UnsupportedOperation(f"label {label_id} is not supported")
-        if "DRAFT" in add or "DRAFT" in remove:
-            raise InvalidRequest("Invalid label: DRAFT changes only through the drafts API")
         folder = self._target_folder(msg, add, remove)
         own = set(lb.user_labels(msg))
         add_names = [n for n in (lb.user_label_name(x) for x in add if lb.is_user_label_id(x))
@@ -412,11 +427,12 @@ class GmailService:
         """Gmail `insert`/`import`: place without sending. Labels decide the folder (TRASH >
         INBOX > SENT > archived), the read state (no UNREAD = read) and stars/user labels; each
         of those beyond the insert itself is a separate write."""
+        error = system_label_error(_system_names(label_ids))  # DRAFT (use drafts), Label_SENT..
+        if error is not None:
+            self.mb.record_refused("insert", error, size=len(raw))
         for label_id in label_ids:
             if lb.check_label_id(label_id) == "unmodelled":
                 raise UnsupportedOperation(f"label {label_id} is not supported")
-        if "DRAFT" in label_ids:
-            raise InvalidRequest("Invalid label: DRAFT (create drafts through the drafts API)")
         folder = next((lb.LABEL_FOLDER[x] for x in ("TRASH", "INBOX", "SENT") if x in label_ids),
                       "archive")  # fmt: skip
         mid = str(self.mb.insert_message(raw, folder=folder)["message_id"])

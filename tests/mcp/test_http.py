@@ -77,7 +77,7 @@ def test_unsupported_methods_and_mounting_through_serve(world):
     assert "mcp-session-id" not in r.headers  # stateless: credentials are per request
     assert client.get("/mcp", headers={**ACCEPT, **auth}).status_code == 405
     assert client.put("/mcp", headers=auth).status_code == 405
-    assert "/mcp" not in client.get("/openapi.json").json()["paths"]
+    assert "/mcp" not in client.get("/openapi.json", headers=auth).json()["paths"]
     assert ok(world.http("controller", app=app), "get_run_status", {"run_id": world.run})
 
 

@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from mailsim.domain.errors import InvalidRequest
+from mailsim.domain.errors import InvalidRequest, PermissionDenied
 
 
 class Address(BaseModel):
@@ -90,12 +90,34 @@ def system_labels_in(names: Iterable[str]) -> list[str]:
     return [n for n in names if is_system_label(n)]
 
 
+def system_label_error(names: Iterable[str]) -> InvalidRequest | None:
+    """The refusal for a label write naming system labels (None when it names none)."""
+    bad = system_labels_in(names)
+    if not bad:
+        return None
+    return InvalidRequest(
+        f"system labels cannot be added or removed: {', '.join(repr(n) for n in bad)} "
+        "(they follow the message's folder and flags)",
+        details={"labels": bad},
+    )
+
+
 def refuse_system_labels(names: Iterable[str]) -> None:
     """INVALID_REQUEST when `names` contains a system label (see SYSTEM_LABELS)."""
-    bad = system_labels_in(names)
-    if bad:
-        raise InvalidRequest(
-            f"system labels cannot be added or removed: {', '.join(repr(n) for n in bad)} "
-            "(they follow the message's folder and flags)",
-            details={"labels": bad},
-        )
+    error = system_label_error(names)
+    if error is not None:
+        raise error
+
+
+def draft_flag_error(
+    is_draft: bool, add: Iterable[str], remove: Iterable[str]
+) -> PermissionDenied | None:
+    """DRAFT marks a real draft: the refusal for putting it on other mail (forged "drafted"
+    evidence) or taking it off a draft. None when the change is allowed (or changes nothing)."""
+    if "DRAFT" in add and not is_draft:
+        return PermissionDenied("the DRAFT flag marks drafts only: it cannot be set on this "
+                                "message", details={"flag": "DRAFT"})  # fmt: skip
+    if "DRAFT" in remove and is_draft:
+        return PermissionDenied("the DRAFT flag cannot be removed from a draft",
+                                details={"flag": "DRAFT"})  # fmt: skip
+    return None

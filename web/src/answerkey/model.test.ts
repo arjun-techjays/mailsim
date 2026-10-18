@@ -1,3 +1,4 @@
+import { validateAnswerKeyDoc } from '../mocks/akey';
 import { AUTHORING_META } from '../mocks/authoring';
 import { clearAllDrafts, clearDraft, draftKey, loadDraft, saveDraft } from './draftStorage';
 import { labelsOf, personaOptions } from './useScenarioContext';
@@ -83,6 +84,16 @@ describe('answer-key model', () => {
     expect([false, 'off', 'False', ' NO ', 'false'].every(checksOff)).toBe(true);
     expect([true, 'on', 'yes', 'TRUE', undefined, 0].some(checksOff)).toBe(false);
     expect(fromDocument({ answer_key: { checks_default: false } }, 'k').checksDefault).toBe('off');
+    // the mock validator mirrors the server: operation / folder names and checks_default any case
+    const key = (check: Record<string, unknown>, checksDefault: unknown = 'on') => ({
+      answer_key_version: '1.0',
+      answer_key: { scenario: 'k', version: 1, checks_default: checksDefault, assertions: [{ id: 'a', type: 'policy', requirement: 'r', check }] },
+    });
+    expect(validateAnswerKeyDoc(key({ forbid: { operation: 'SEND' }, unless: { where: { folder: 'Sent' } } }, 'True'), [1]).errors).toEqual([]);
+    expect(validateAnswerKeyDoc(key({ forbid: { operation: 'teleport' } }, 'maybe'), [1]).errors.map((e) => e.path)).toEqual([
+      'answer_key.checks_default',
+      'answer_key.assertions.0.check.forbid.operation',
+    ]);
     const empty = fromDocument({}, 'k');
     expect(empty).toMatchObject({ scenario: 'k', version: '', allVersions: true, checksDefault: 'on', assertions: [] });
     expect((toDocument({ ...emptyDraft('k', 1), version: 'x' }) as { answer_key: { version: unknown } }).answer_key.version).toBe('x');

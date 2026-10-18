@@ -15,8 +15,13 @@ from datetime import datetime
 from typing import Any
 
 from mailsim.auth.principal import Principal, Role
-from mailsim.domain.errors import PermissionDenied
-from mailsim.domain.models import AttachmentRef, CanonicalMessage
+from mailsim.domain.errors import PermissionDenied, SimError
+from mailsim.domain.models import (
+    AttachmentRef,
+    CanonicalMessage,
+    draft_flag_error,
+    system_label_error,
+)
 from mailsim.engine.core import (
     AGENT,
     CONTROLLER,
@@ -133,6 +138,31 @@ class AgentMailbox:
         simulation): a guarded, budgeted `send` attempt recorded as EXTERNAL_DELIVERY_BLOCKED
         (never delivered). Raises that refusal (or the guard's error)."""
         self._e.record_external_blocked(*self._a(), recipients, actor=AGENT)
+
+    def record_refused(self, operation: str, error: SimError, *, message_id: str | None = None,
+                       add: Sequence[str] = (), remove: Sequence[str] = (),
+                       folder: str | None = None, size: int | None = None) -> None:  # fmt: skip
+        """Audit an agent `label`/`flag`/`insert` write the interface refused before its first
+        write (system labels, the DRAFT flag, Sent/Drafts): recorded like the engine's own
+        refusal (guarded, budgeted, in the activity). Raises that refusal (or the guard's)."""
+        self._e.record_refused(*self._a(), operation, error, message_id=message_id, add=add,
+                               remove=remove, folder=folder, size=size, actor=AGENT)  # fmt: skip
+
+    def check_labels(self, message_id: str | None, *, add: Sequence[str] = (),
+                     remove: Sequence[str] = ()) -> None:  # fmt: skip
+        """Before a multi-write change: refuse (and record) a label write naming system labels.
+        No-op when it names none."""
+        error = system_label_error([*add, *remove])
+        if error is not None:
+            self.record_refused("label", error, message_id=message_id, add=add, remove=remove)
+
+    def check_draft_flag(self, message: CanonicalMessage, *, add: Sequence[str] = (),
+                         remove: Sequence[str] = ()) -> None:  # fmt: skip
+        """Before a multi-write change: refuse (and record) a DRAFT flag change that would
+        forge or erase a draft. No-op when allowed."""
+        error = draft_flag_error(message.is_draft, add, remove)
+        if error is not None:
+            self.record_refused("flag", error, message_id=message.id, add=add, remove=remove)
 
     def forward(self, message_id: str, *, to: list[str], text: str = "",
                 cc: list[str] | None = None) -> dict[str, Any]:  # fmt: skip

@@ -182,11 +182,14 @@ def test_role_dependencies_enforce_roles():
         agent_for_mailbox("mbx_1", ctl)
 
 
-def test_unauthenticated_docs_do_not_name_the_simulator():
-    """/openapi.json and /docs are reachable by agents: title and description stay neutral."""
+def test_api_docs_need_an_operator_and_stay_neutral():
+    """/openapi.json and /docs name operator and grading routes: no credential, no document
+    (roles: tests/api/test_hardening.py). Title and description stay neutral anyway."""
     c = client()
-    info = c.get("/openapi.json").json()["info"]
-    docs = c.get("/docs").text.lower()
-    for text in (info["title"].lower(), info["description"].lower(), docs):
+    for path in ("/openapi.json", "/docs", "/redoc", "/docs/oauth2-redirect"):
+        assert c.get(path).status_code in (401, 404), path
+    assert c.get("/openapi.json").status_code == 401 and c.get("/docs").status_code == 401
+    info = create_app().openapi()["info"]
+    for text in (info["title"].lower(), info["description"].lower()):
         for word in ("mailsim", "simulat", "sandbox", "testing"):
             assert word not in text

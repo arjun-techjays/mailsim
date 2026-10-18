@@ -25,7 +25,7 @@ from mailsim.api.pagination import decode_sequence_cursor, encode_sequence_curso
 from mailsim.api.schemas import MAX_RAW_B64_CHARS, normalise_addresses
 from mailsim.auth.principal import Role
 from mailsim.domain.errors import InvalidRequest, NotFound, UnsupportedOperation
-from mailsim.domain.models import CanonicalMessage, refuse_system_labels
+from mailsim.domain.models import CanonicalMessage
 from mailsim.domain.states import TERMINAL
 from mailsim.engine.facades import AgentMailbox, Controller, EvaluatorView
 from mailsim.engine.pagination import MAX_PAGE_SIZE, check_page_size
@@ -279,7 +279,8 @@ def get_attachment(mb: AgentMailbox, a: AttachmentArgs, _: Deps) -> JSON:
 def manage_labels(mb: AgentMailbox, a: ManageLabelsArgs, _: Deps) -> JSON:
     if not (a.folder or a.add_labels or a.remove_labels or a.add_flags or a.remove_flags):
         raise InvalidRequest("nothing to change: set folder, labels or flags")
-    refuse_system_labels([*a.add_labels, *a.remove_labels])  # before the first write
+    # system labels: refused (and recorded) before the first write
+    mb.check_labels(a.message_id, add=a.add_labels, remove=a.remove_labels)
     if a.folder is not None:
         _folder_name(mb, a.folder)  # validate before the first write
         mb.move(a.message_id, a.folder)

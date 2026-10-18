@@ -55,7 +55,8 @@ class PolicyPlugin:
                                       agent_mailbox_id=ctx.agent_mailbox_id,
                                       agent_created=idx.agent_created,
                                       agent_labels=idx.agent_labels_at(occ.before_seq),
-                                      sent_ids=idx.sent_ids)  # fmt: skip
+                                      sent_ids=idx.sent_ids,
+                                      answered=idx.answered_at(occ.before_seq))  # fmt: skip
                 entry["authorised"] = count_ok(check.unless.count, len(sel.messages))
                 entry["unless_state"] = sel.actual()
             if not entry["authorised"]:

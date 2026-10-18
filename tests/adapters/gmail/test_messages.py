@@ -224,11 +224,17 @@ def test_insert_and_import(gm):
     r = gm.call("POST", "/messages", 403, json={"raw": b64(raw), "labelIds": ["SENT"]})
     assert gm.error(r)[1] == "PERMISSION_DENIED"
     assert gm.actions()[-1] == ("insert", "PERMISSION_DENIED") and gm.ids(q="in:sent") == []
-    # a user-label id spelling a system label names no label (none can be created)
-    for name in ("SENT", "Draft", "inbox"):
+    # a user-label id spelling a system label is refused like DRAFT, and recorded (D-5)
+    for name in ("SENT", "Draft", "inbox", "Archive"):
         fake = "Label_" + name.encode().hex()
-        r = gm.call("POST", "/messages", 404, json={"raw": b64(raw), "labelIds": ["INBOX", fake]})
-        assert gm.error(r)[1] == "NOT_FOUND"
+        r = gm.call("POST", "/messages", 400, json={"raw": b64(raw), "labelIds": ["INBOX", fake]})
+        assert gm.error(r)[1] == "INVALID_REQUEST"
+        assert gm.actions()[-1] == ("insert", "INVALID_REQUEST")
+    # no user label can carry a system name, so labels.create refuses them all, any case
+    for name in ("Archive", "drafts", "Starred", "ANSWERED", "spam"):
+        r = gm.call("POST", "/labels", 400, json={"name": name})
+        assert gm.error(r)[1] == "INVALID_REQUEST", name
+    r = gm.call("GET", "/labels/Label_" + b"Archive".hex(), 404)  # and an id spelling one is none
     theirs = [m for m in gm.ev.state(gm.run)["messages"] if m["mailbox_id"] == gm.vendor_mb]
     assert theirs == []  # insert never delivers
     r = gm.call("POST", "/messages", 400, json={"raw": b64(raw), "labelIds": ["DRAFT"]})
@@ -268,7 +274,9 @@ def test_modify_folders_flags_labels(gm):
     assert modify(add=["STARRED"], remove=["STARRED"], expect=400)[1] == "INVALID_REQUEST"
     assert modify(add=["DRAFT"], expect=400)[1] == "INVALID_REQUEST"
     for fake in ("Label_" + n.encode().hex() for n in ("SENT", "draft", "Inbox")):  # D-5
-        assert modify(add=[fake], expect=404)[1] == "NOT_FOUND"
+        assert modify(add=[fake], expect=400)[1] == "INVALID_REQUEST"
+        assert modify(remove=[fake], expect=400)[1] == "INVALID_REQUEST"
+        assert gm.actions()[-1] == ("label", "INVALID_REQUEST")  # recorded like the engine's
     assert modify(add=["IMPORTANT"], expect=501)[1] == "UNSUPPORTED_OPERATION"
     assert modify(add=["CATEGORY_UPDATES"], expect=501)[1] == "UNSUPPORTED_OPERATION"
     assert modify(add=["no-such-folder"], expect=404)[1] == "NOT_FOUND"

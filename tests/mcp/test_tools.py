@@ -114,6 +114,9 @@ def test_agent_writes_and_external_delivery_policy(world):
     drafted = err(a, "manage_labels", {"message_id": first["id"], "add_flags": ["DRAFT"]})
     assert drafted["code"] == "PERMISSION_DENIED"
     assert ok(a, "get_message", {"message_id": first["id"]})["folder"] == "Archive"
+    outcomes = [(x["operation"], x["outcome"]) for x in
+                world.engine.actions(world.env.scope, world.run) if x["actor"] == "agent"]  # fmt: skip
+    assert ("label", "INVALID_REQUEST") in outcomes and ("flag", "PERMISSION_DENIED") in outcomes
     assert ok(a, "delete_message", {"message_id": first["id"]}) == {"deleted": first["id"]}
     actions = world.engine.actions(world.env.scope, world.run)
     assert {("agent", "send"), ("agent", "reply"), ("agent", "delete")} <= {

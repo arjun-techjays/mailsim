@@ -100,10 +100,9 @@ Thunderbird: *Account Settings -> Add Mail Account -> Configure manually*. IMAP 
 `127.0.0.1`, port `1143`, connection security *None* (or *STARTTLS* with `--tls`; accept the
 self-signed certificate), authentication *Normal password*. SMTP server `127.0.0.1`, port
 `1587`, same security, *Normal password*. Username = mailbox address, password = agent key.
-Untick *Place a copy in: Sent* (Copies & Folders): every SMTP submission is already filed in
-`Sent`, and an APPEND to `Sent` is refused (`NO [NOPERM]`). Keep drafts in a local folder
-(*Drafts & Templates*): an APPEND to `Drafts` is refused too (create drafts through another
-interface).
+Thunderbird's defaults work: every SMTP submission is already filed in `Sent`, so its *Place
+a copy in: Sent* APPEND answers OK without storing a second copy, and a draft it saves to
+`Drafts` (APPEND with your address as `From`) becomes a real draft (see APPEND below).
 
 ## IMAP profile
 
@@ -187,11 +186,23 @@ each listed `\Deleted` message with its own engine `delete` (one action per mess
 **Objects.** `EMAILID` is the engine message id (unchanged by MOVE; COPY creates a new id),
 `THREADID` the engine thread id, `MAILBOXID` the engine folder id.
 
-**APPEND** stores the literal verbatim via `insert_message` (Gmail `insert` semantics: no
-delivery), then applies the given flags/keywords; answers `[APPENDUID]`. `Sent` and `Drafts`
-hold only what this account sent or drafted, so APPEND to them answers `NO [NOPERM]`, and so
-does `\Draft` in the APPEND flags (checked before anything is stored). An appended message is
-never sent mail: it can't be moved or copied into `Sent` either.
+**APPEND** to `INBOX`, `Trash` or `Archive` stores the literal verbatim via `insert_message`
+(Gmail `insert` semantics: no delivery), then applies the given flags/keywords; answers
+`[APPENDUID]`. An appended message is never sent mail: it can't be moved or copied into `Sent`.
+`\Draft` in the flags or a keyword spelling a system label is refused before anything is
+stored (`NO [NOPERM]` / `NO [CANNOT]`) and recorded as a refused `insert`.
+`Sent` and `Drafts` hold only what this account sent or drafted:
+
+- **APPEND to `Sent`** (a client filing its copy after an SMTP send) answers OK and stores
+  nothing: the submission already filed the real sent copy. When the appended message's
+  `Message-ID` is one of the sent messages there, `[APPENDUID]` reports its UID; otherwise a
+  plain `OK` (SMTP assigns its own `Message-ID`, so a client's copy usually doesn't match).
+- **APPEND to `Drafts`** with this mailbox's address as `From` (a client saving a draft)
+  creates a **real draft** through the engine's draft path (the `draft` operation and
+  permission): it is graded as the agent's draft and can be sent later from any interface.
+  Its MIME is rebuilt from the parsed recipients, subject, text/HTML body and threading
+  headers (not stored verbatim); attachments are refused (`NO [CANNOT]`); `\Flagged` and
+  keywords are applied, `\Draft`/`\Seen` are implied. Any other `From` answers `NO [NOPERM]`.
 
 **COPY/MOVE** use engine `copy`/`move` and answer `COPYUID`; a missing destination answers
 `NO [TRYCREATE]`.
@@ -250,7 +261,7 @@ Unexpected failures answer `451 4.3.0 internal error`; details are only logged.
   headers are replaced; the assigned `Message-ID` is returned in the `250` DATA reply.
 - **No attachments over SMTP** (`554 5.6.1 attachments are not accepted on this submission
   path`): the agent send operations
-  carry text/HTML only. APPEND accepts any MIME.
+  carry text/HTML only. APPEND to `INBOX`/`Trash`/`Archive` accepts any MIME.
 - **Replies whose headers resolve to nothing** cost two actions (`draft` + `send`).
 - **APPEND date-time** is accepted and ignored (internal date = virtual clock).
 - **Folders are fixed**; no user folders, no hierarchy.

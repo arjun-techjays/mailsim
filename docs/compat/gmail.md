@@ -155,7 +155,9 @@ fixed state, no duplicates or gaps.
 once is 400); removing the current folder label archives it (removing `TRASH` restores it to
 where it was trashed from); `DRAFT` cannot be added or removed (400); adding `SENT` to mail this
 account did not send is 403. A `Label_...` id that spells a system label name (`SENT`, `DRAFT`,
-`INBOX`, `UNREAD`, ...) names no label (404): no user label can carry one. Changes that are already
+`INBOX`, `ARCHIVE`, `UNREAD`, ...) is refused like `DRAFT` (400, before any write, recorded as a
+refused `label`; in `insert`, a refused `insert`); elsewhere (list filters, `labels.get`) such
+an id names no label (404). Changes that are already
 in effect cost nothing (also `trash` of a trashed and `untrash` of a non-trashed message). Otherwise the writes are, in order: folder move, user labels, flags,
 each a separate budgeted write; if a later write fails the earlier ones stay applied.
 
@@ -176,7 +178,8 @@ settings live in an **adapter-side registry**:
 Renaming or deleting a label rewrites it on every message carrying it (one `label` write per
 message). This is **not atomic**: if a write fails (budget, run ended), the messages already
 rewritten keep the change and the error is returned; repeat the call to finish. Names are
-unique case-insensitively (409 on conflict); system names are reserved.
+unique case-insensitively (409 on conflict); system names are reserved (Gmail's, any case,
+and `DRAFTS`/`ARCHIVE`: the same list every interface refuses as labels).
 
 ## Search (`q`)
 

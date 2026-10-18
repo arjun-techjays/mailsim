@@ -37,6 +37,7 @@ from mailsim.domain.models import (
     Address,
     AttachmentRef,
     CanonicalMessage,
+    draft_flag_error,
     refuse_system_labels,
 )
 from mailsim.domain.states import NO_BUILD, TERMINAL, RunStatus, check_transition
@@ -226,7 +227,9 @@ class SimEngine:
                 except (ValueError, OverflowError, RecursionError) as exc:
                     # untyped failures (e.g. header injection) become audited INVALID_REQUESTs
                     raise InvalidRequest(f"invalid input: {exc}"[:300]) from exc
-                if probe and run.next_seq != seq_start:  # e.g. a read that marks mail seen
+                if probe and (run.next_seq != seq_start or ctx.gen.counter != run.id_counter):
+                    # wrote an event (e.g. a read that marks mail seen) or drew ids (which
+                    # would need an ids.reserved event): not read-only
                     raise PermissionDenied("a connection test may only read")
                 if actor == AGENT and not probe:
                     if counts_against_budget(operation):
@@ -1461,7 +1464,12 @@ class SimEngine:
             return
         if target.system_type == "sent" and not row.is_draft and self._was_sent(c, row.id):
             return
-        what = "a draft" if row.is_draft else "received mail"
+        if row.is_draft:
+            what = "a draft"
+        elif target.system_type == "sent":  # received, appended or seeded: never sent from here
+            what = "a message this account did not send"
+        else:
+            what = "a message that is not a draft"
         raise PermissionDenied(
             f"{what} cannot be placed in {target.name}: it holds only messages this account "
             f"{'sent' if target.system_type == 'sent' else 'drafted'}",
@@ -1523,14 +1531,32 @@ class SimEngine:
 
     @staticmethod
     def _check_draft_flag(row: m.Message, add: Sequence[str], remove: Sequence[str]) -> None:
-        """DRAFT marks a real draft: the agent may not put it on other mail (that would forge
-        "drafted" evidence) nor take it off a draft. Requests that change nothing pass."""
-        if "DRAFT" in add and not row.is_draft:
-            raise PermissionDenied("the DRAFT flag marks drafts only: it cannot be set on "
-                                   "this message", details={"flag": "DRAFT"})  # fmt: skip
-        if "DRAFT" in remove and row.is_draft:
-            raise PermissionDenied("the DRAFT flag cannot be removed from a draft",
-                                   details={"flag": "DRAFT"})  # fmt: skip
+        error = draft_flag_error(row.is_draft, add, remove)
+        if error is not None:
+            raise error
+
+    def record_refused(self, scope: Scope, run_id: str, mailbox_id: str, operation: str,
+                       error: SimError, *, message_id: str | None = None,
+                       add: Sequence[str] = (), remove: Sequence[str] = (),
+                       folder: str | None = None, size: int | None = None,
+                       actor: str = AGENT) -> None:  # fmt: skip
+        """An agent `label` / `flag` / `insert` write an interface refused BEFORE its first
+        write (system labels, the DRAFT flag, Sent/Drafts placement; see domain.models),
+        recorded exactly like the engine's own refusal of that write: the command guard
+        (RUNNING run, permission, own mailbox, budget), then the operation failing with
+        `error`'s code, budgeted like the write. Nothing is written. Always raises (the
+        guard's error, else `error`)."""
+        if operation not in ("label", "flag", "insert"):
+            raise ValueError(f"not an auditable refusal: {operation!r}")
+        if operation == "insert":
+            input_: dict[str, Any] = {"bytes": size or 0, "folder": folder or ""}
+        else:
+            input_ = {"message_id": message_id, "add": list(add), "remove": list(remove)}
+
+        def fn(c: Ctx) -> None:
+            raise error
+
+        self._command(scope, run_id, actor, operation, input_, fn, mailbox_id=mailbox_id)
 
     def delete(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str,
                *, actor: str = AGENT) -> None:  # fmt: skip

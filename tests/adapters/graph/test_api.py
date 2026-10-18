@@ -431,8 +431,23 @@ def test_system_names_are_not_categories_and_isdraft_is_read_only(world):
         err(r, 400, "ErrorInvalidRequest")
     after = world.get(f"/me/messages/{mid}")
     assert after["isRead"] is False and after["categories"] == []  # nothing was applied
+    acts = [(a["actor"], a["operation"], a["outcome"]) for a in world.ctl.actions(world.run)]
+    assert acts.count(("agent", "label", "INVALID_REQUEST")) == 4  # each refusal recorded
     assert world.patch(f"/me/messages/{mid}", {"isDraft": True})["isDraft"] is False
     assert world.messages("sentitems") == [] and world.messages("drafts") == []
+
+
+def test_stored_system_names_never_break_a_category_replacement(world):
+    """Seeded mail may carry a stored label named like a system label: replacing the
+    categories leaves it alone instead of failing halfway."""
+    mid = invoice(world)["id"]
+    inv = next(m for m in world.mb().list_messages(folder="inbox").items
+               if m.subject == "Invoice INV-001")  # fmt: skip
+    world.env.engine.modify_labels(world.env.scope, world.run, world.mailbox, inv.id,
+                                   add=["SENT"], actor="controller")  # fmt: skip
+    upd = world.patch(f"/me/messages/{mid}", {"isRead": True, "categories": ["Review"]})
+    assert upd["isRead"] is True and "Review" in upd["categories"]
+    assert world.patch(f"/me/messages/{mid}", {"categories": []})["isRead"] is True
 
 
 def test_drafts_lifecycle(world):

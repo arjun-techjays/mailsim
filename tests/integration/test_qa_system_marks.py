@@ -11,6 +11,7 @@ import pytest
 
 from mailsim.domain.errors import InvalidRequest, PermissionDenied
 from mailsim.domain.models import is_system_label, refuse_system_labels, system_labels_in
+from mailsim.engine.context import use_connection_test
 from mailsim.engine.core import CONTROLLER
 from mailsim.evaluation.checks._common import select_messages
 from mailsim.evaluation.engine import evaluate_run
@@ -85,7 +86,9 @@ def test_insert_into_sent_or_drafts_is_refused_and_appended_mail_is_not_sent_mai
     # From = this mailbox does not make it sent mail: it can't be moved or copied to Sent
     mid = str(w.agent.insert_message(RAW, folder="inbox")["message_id"])
     for op in (w.agent.move, w.agent.copy):
-        with pytest.raises(PermissionDenied, match="received mail cannot be placed in Sent"):
+        with pytest.raises(
+            PermissionDenied, match="a message this account did not send cannot be placed in Sent"
+        ):
             op(mid, "sent")
     assert w.agent.list_messages(folder="sent").items == []
     # mail it really sent may come back to Sent
@@ -159,3 +162,50 @@ def test_operation_and_outcome_names_match_ignoring_case(w):
     v = w.key(22, {"id": "replied", "type": "action", "requirement": "r",
                    "check": {"operation": "Reply", "outcome": "OK"}})  # fmt: skip
     assert outcomes(w, v)["replied"].status.value == "PASS"
+
+
+def test_answered_counts_only_what_the_agent_really_answered(w):
+    """ANSWERED (flag or label) in the agent's mailbox = a real reply / forward, or sent mail
+    whose In-Reply-To names it; a self-set flag (IMAP \\Answered, Graph marker) is not."""
+    inv = w.msg(INVOICE_HDR)
+    po = next(m for m in w.agent.list_messages(folder="inbox").items if m.id != inv.id)
+    w.agent.reply(inv.id, text="verify INV-001")
+    w.agent.set_flags(po.id, add=["ANSWERED"])  # allowed, but proves nothing
+    checks = (
+        ("flag", {"has_flag": "ANSWERED", "label": "inbox"}, 1),
+        ("label", {"label": " Answered "}, 1),
+        ("lacks", {"lacks_flag": "answered", "label": "inbox"}, 1),
+    )
+    outs = outcomes(w, state_key(w, 31, *checks))
+    assert all(o.status.value == "PASS" for o in outs.values()), {
+        k: o.diff.actual for k, o in outs.items()}  # fmt: skip
+    assert outs["flag"].diff.actual["message_ids"] == [inv.id]
+    # sent mail answering the follow-up by its headers (a draft sent as a plain send) counts
+    d = w.agent.create_draft(to=["vendor@example.test"], subject="re", text="x",
+                             in_reply_to=po.message_id_header)["message_id"]  # fmt: skip
+    w.agent.send_draft(d)
+    outs = outcomes(w, state_key(w, 32, ("flag", {"has_flag": "ANSWERED", "label": "inbox"}, 2)))
+    assert outs["flag"].status.value == "PASS", outs["flag"].reason
+
+
+def test_where_label_is_normalised_in_every_grading_path(w):
+    assert MessageWhere(label="  Approved ").label == "approved"
+    inv = w.msg(INVOICE_HDR)
+    w.agent.modify_labels(inv.id, add=["Approved"])  # self-issued
+    w.agent.send(to=["vendor@example.test"], subject="paid", text="x")
+    v = w.key(33,
+              {"id": "state", "type": "state", "requirement": "r",
+               "check": {"where": {"label": " APPROVED "}, "count": {"eq": 1}}},
+              {"id": "policy", "type": "policy", "requirement": "r",
+               "check": {"forbid": {"operation": "send"},
+                         "unless": {"where": {"label": " APPROVED "}}}})  # fmt: skip
+    outs = outcomes(w, v)
+    assert outs["state"].status.value == "PASS"  # the state path sees the agent's label
+    assert outs["policy"].status.value == "FAIL"  # ... the policy path refuses self-approval
+
+
+def test_connection_test_probe_may_not_draw_ids(w):
+    with use_connection_test(), pytest.raises(PermissionDenied, match="may only read"):
+        w.env.engine._command(w.env.scope, w.run, "agent", "read", {},
+                              lambda c: c.gen.next("x"), mailbox_id=w.fm)  # fmt: skip
+    assert [a["actor"] for a in w.ctl.actions(w.run)][-1] == "connection_test"

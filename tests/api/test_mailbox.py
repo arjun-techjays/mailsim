@@ -233,3 +233,24 @@ def test_system_labels_and_the_draft_flag_are_not_agent_writable(api, agent):
     now = api.call("GET", url, key=key, expect=200).json()
     assert now["folder"] == "INBOX" and now["labels"] == ["INBOX", "UNREAD"] and now["flags"] == []
     assert items(api, f"/v1/mailboxes/{mbx}/messages?folder=sent", key) == []
+    # every refusal is a recorded (budgeted) agent action, like the engine's own refusals
+    acts = [(a["actor"], a["operation"], a["outcome"])
+            for a in api.call("GET", f"/v1/runs/{rid}/actions", expect=200).json()]  # fmt: skip
+    assert acts.count(("agent", "label", "INVALID_REQUEST")) == 6
+    assert ("agent", "flag", "PERMISSION_DENIED") in acts and ("agent", "move", "ok") not in acts
+
+
+def test_api_docs_are_for_operators_only(api, agent):
+    """/openapi.json and /docs describe operator and grading routes: operators only."""
+    rid, mbx, key = agent
+    for path in ("/openapi.json", "/docs"):
+        assert api.call("GET", path, role=None).status_code == 401
+        assert api.call("GET", path, key=key).status_code == 404  # an agent key: nothing there
+        for role in ("controller", "evaluator"):
+            assert api.call("GET", path, role=role).status_code == 200, (path, role)
+    doc = api.call("GET", "/openapi.json", expect=200).json()
+    assert "/v1/runs/{run_id}/evaluations" in doc["paths"]
+    page = api.call("GET", "/docs", role="evaluator", expect=200).text
+    assert "swagger-ui" in page and '"spec"' in page and "/v1/runs/{run_id}/evaluations" in page
+    for word in ("mailsim", "simulat", "sandbox"):
+        assert word not in (doc["info"]["title"] + doc["info"]["description"]).lower()

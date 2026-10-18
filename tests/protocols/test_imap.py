@@ -311,7 +311,7 @@ def test_store_flags_and_keywords(proto):
     assert ok(c.store("1", "FLAGS", "(\\Answered urgent)")) == [b"1 (FLAGS (\\Answered urgent))"]
     # \Draft marks real drafts only (D-5): refused on received mail before anything is written
     typ, data = c.store("1:2", "+FLAGS.SILENT", "(\\Seen \\Draft)")
-    assert typ == "NO" and data[0].startswith(b"[NOPERM] PERMISSION_DENIED: the \\Draft flag")
+    assert typ == "NO" and data[0].startswith(b"[NOPERM] PERMISSION_DENIED: the DRAFT flag")
     typ, data = c.store("1", "+FLAGS", "(\\Seen Sent)")  # a keyword spelling a system label
     assert typ == "NO" and data[0].startswith(b"[CANNOT] INVALID_REQUEST: system labels")
     assert ok(c.uid("STORE", "2", "-FLAGS", "(\\Draft)")) == [b"2 (UID 2 FLAGS ())"]  # no-op
@@ -438,12 +438,16 @@ def test_append(proto):
     assert b"FLAGS (\\Seen keep)" in flags and RAW in flags  # stored octets verbatim
     assert ok(c.append("INBOX", None, None, RAW))
     # D-5: Sent and Drafts hold only what this account sent or drafted; \Draft marks drafts
-    for folder, flag in (("Sent", None), ("Drafts", None), ("drafts", "(\\Draft)"),
-                         ("INBOX", "(\\Draft)"), ("INBOX", "(Sent)")):  # fmt: skip
-        typ, data = c.append(folder, flag, None, RAW)
-        assert typ == "NO" and (b"NOPERM" in data[0] or b"CANNOT" in data[0]), (folder, data)
+    assert c.append("Sent", "(\\Seen)", None, RAW) == ("OK", [b"APPEND completed"])  # no-op
+    for folder, flag, code in (("Drafts", None, b"NOPERM"), ("drafts", "(\\Draft)", b"NOPERM"),
+                               ("INBOX", "(\\Draft)", b"NOPERM"), ("INBOX", "(Sent)", b"CANNOT")):  # fmt: skip
+        typ, data = c.append(folder, flag, None, RAW)  # From is someone else
+        assert typ == "NO" and code in data[0], (folder, data)
     assert proto.mailbox.list_messages(folder="sent").items == []
     assert proto.mailbox.list_messages(folder="drafts").items == []
+    refused = [a for a in proto.actions() if a[1] == "insert" and a[2] != "ok"]
+    assert refused == [("agent", "insert", "PERMISSION_DENIED")] * 3 + [
+        ("agent", "insert", "INVALID_REQUEST")]  # every refusal recorded  # fmt: skip
     assert c.append("Nope", None, None, RAW)[0] == "NO"
     typ, data = c.append("INBOX", None, None, b"Subject: no sender\r\n\r\nx\r\n")
     assert typ == "NO" and b"INVALID_REQUEST" in data[0]
@@ -454,6 +458,67 @@ def test_append(proto):
     assert raw.cmd(b"b APPEND INBOX")[-1].startswith(b"b BAD usage")
     assert raw.cmd(b"c APPEND INBOX NIL {1+}\r\nx")[-1].startswith(b"c BAD invalid APPEND")
     assert ("agent", "insert", "ok") in proto.actions()
+
+
+def test_thunderbird_flow_send_file_a_copy_and_save_a_draft(proto):
+    """SMTP send, the client's APPEND of its copy to Sent (OK, nothing new stored), then a draft
+    saved by APPEND to Drafts: a real draft (read back over IMAP, sendable later)."""
+    msg = (b"From: Finance <finance@example.test>\r\nTo: vendor@example.test\r\n"
+           b"Subject: hello\r\nMessage-ID: <tb-1@example.test>\r\n\r\nhi there\r\n")  # fmt: skip
+    s = proto.smtp()
+    s.sendmail(AGENT, ["vendor@example.test"], msg)
+    s.quit()
+    [sent] = proto.mailbox.list_messages(folder="sent").items
+    c = proto.imap()
+    assert c.append("Sent", "(\\Seen)", None, msg) == ("OK", [b"APPEND completed"])
+    own = msg.replace(b"<tb-1@example.test>", sent.message_id_header.encode())
+    typ, data = c.append("Sent", "(\\Seen)", None, own)  # its Message-ID: the UID of that copy
+    assert typ == "OK" and data[0].split()[2] == str(sent.imap_uid).encode() + b"]"
+    assert [m.id for m in proto.mailbox.list_messages(folder="sent").items] == [sent.id]
+
+    draft = (b"From: finance@example.test\r\nTo: Vendor <vendor@example.test>\r\n"
+             b"Subject: draft reply\r\nIn-Reply-To: <invoice-001@example.test>\r\n"
+             b"Content-Type: text/plain; charset=utf-8\r\n\r\ndraft body\r\n")  # fmt: skip
+    typ, data = c.append("Drafts", "(\\Seen \\Draft \\Flagged $Pending)", None, draft)
+    assert typ == "OK" and data[0].startswith(b"[APPENDUID ")
+    ok(c.select("Drafts"))
+    got = fetch_map(ok(c.fetch("1", "(FLAGS BODY.PEEK[])")))[1]
+    assert b"draft body" in got and b"Subject: draft reply" in got and b"In-Reply-To:" in got
+    assert all(f in got for f in (b"\\Draft", b"\\Seen", b"\\Flagged", b"$Pending"))
+    [d] = proto.mailbox.list_messages(folder="drafts").items
+    assert d.is_draft and [a.email for a in d.to] == ["vendor@example.test"]
+    assert ("agent", "draft", "ok") in proto.actions()
+    proto.mailbox.send_draft(d.id)  # a real draft: it can be sent
+    assert len(proto.mailbox.list_messages(folder="sent").items) == 2
+    with_attachment = draft.replace(b"Content-Type: text/plain; charset=utf-8\r\n\r\ndraft body\r\n",
+                                    b'Content-Type: multipart/mixed; boundary="b"\r\n\r\n--b\r\n'
+                                    b"Content-Type: text/plain\r\n\r\nx\r\n--b\r\n"
+                                    b"Content-Type: application/pdf\r\n"
+                                    b'Content-Disposition: attachment; filename="a.pdf"\r\n\r\n'
+                                    b"%PDF\r\n--b--\r\n")  # fmt: skip
+    typ, data = c.append("Drafts", None, None, with_attachment)
+    assert typ == "NO" and b"CANNOT" in data[0]
+    typ, data = c.append("Drafts", "(Inbox)", None, draft)
+    assert typ == "NO" and b"CANNOT" in data[0]
+    typ, data = c.append("Sent", None, None, b"not a message at all")
+    assert typ == "OK"
+
+
+def test_store_flags_replacement_leaves_stored_system_names_alone(proto):
+    """Seeded mail may carry a stored label named like a system label (not a keyword the agent
+    may drop): FLAGS replacement leaves it, instead of failing after the flag write."""
+    first = proto.mailbox.list_messages(folder="inbox").items[0]
+    proto.env.engine.modify_labels(proto.env.scope, proto.run, proto.mailbox_id, first.id,
+                                   add=["Sent", "keep"], actor="controller")  # fmt: skip
+    c = proto.imap()
+    ok(c.select("INBOX"))
+    uid = str(first.imap_uid).encode()
+    assert ok(c.uid("STORE", uid.decode(), "FLAGS", "(\\Seen)")) == [
+        b"1 (UID " + uid + b" FLAGS (\\Seen Sent))"]  # the stored name stays  # fmt: skip
+    labels = proto.mailbox.get_message(first.id).labels
+    assert "Sent" in labels and "keep" not in labels
+    refused = [a for a in proto.actions() if a[2] != "ok"]
+    assert refused == []
 
 
 def test_store_keeps_a_drafts_draft_flag(proto):

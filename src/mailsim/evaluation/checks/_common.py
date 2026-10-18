@@ -87,6 +87,17 @@ class Occurrence:
         return out
 
 
+@dataclass(frozen=True)
+class Answered:
+    """What the agent actually answered (see RunIndex.answered_at)."""
+
+    message_ids: set[str]
+    headers: set[str]
+
+    def __contains__(self, msg: dict[str, Any]) -> bool:
+        return msg["id"] in self.message_ids or msg.get("message_id_header") in self.headers
+
+
 class RunIndex:
     """Placement of actions, events and agent-created messages within one recorded run."""
 
@@ -135,6 +146,19 @@ class RunIndex:
             for label in e["payload"].get("add") or []:
                 last_adder[(mid, str(label).casefold())] = e["actor"]
         return {k for k, actor in last_adder.items() if actor == AGENT}
+
+    def answered_at(self, cutoff: int) -> Answered:
+        """Provenance of ANSWERED up to `cutoff`: messages the agent really replied to or
+        forwarded (a recorded ok `reply` / `forward`, incl. a draft sent as one) and the
+        Message-IDs its sent mail answers (In-Reply-To). A flag or label set by hand is not."""
+        ids = {str(o.input.get("message_id")) for o in self.occurrences_in(cutoff)
+               if o.actor == AGENT and o.outcome == "ok"
+               and o.operation in ("reply", "forward") and o.input.get("message_id")}  # fmt: skip
+        headers = {str(e["payload"]["message"]["in_reply_to"]) for e in self.events_in(cutoff)
+                   if e["type"] == "message.sent" and e["actor"] == AGENT
+                   and isinstance(e["payload"].get("message"), dict)
+                   and e["payload"]["message"].get("in_reply_to")}  # fmt: skip
+        return Answered(ids, headers)
 
     # ------------------------------------------------------------------ windows
     def events_in(self, cutoff: int) -> list[dict[str, Any]]:
@@ -342,6 +366,7 @@ def select_messages(
     agent_created: set[str],
     agent_labels: set[tuple[str, str]] | None = None,
     sent_ids: set[str] | None = None,
+    answered: Answered | None = None,
 ) -> Selection:
     """Apply a MessageWhere to a state snapshot (all conditions AND-ed).
 
@@ -371,6 +396,12 @@ def select_messages(
         flags = {str(x).upper() for x in msg.get("flags") or []} - {"DRAFT"}
         if msg.get("is_draft"):
             flags.add("DRAFT")  # provenance: only a real draft is DRAFT, whatever was stored
+        if answered is not None and msg.get("mailbox_id") == agent_mailbox_id:
+            # in the agent's mailbox ANSWERED = it really replied / forwarded (the agent can
+            # set the flag itself); elsewhere the flag is the simulation's own
+            flags.discard("ANSWERED")
+            if msg in answered:
+                flags.add("ANSWERED")
         if where.label is not None and not _has_label(
             msg, where.label, flags, folders.get(msg.get("folder_id", "")), sent_ids
         ):
