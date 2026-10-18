@@ -51,7 +51,8 @@ def _parser() -> argparse.ArgumentParser:
     pub.add_argument("path", type=Path,
                      help="scenario.yaml / .json, or a pack directory that contains one")  # fmt: skip
     pub.add_argument("--answer-key", type=Path, default=None,
-                     help="also publish this answer key (same transaction / request order)")  # fmt: skip
+                     help="also publish this answer key: in the same transaction (direct mode), or "
+                     "right after the scenario (--api-key-env)")  # fmt: skip
     _target_arguments(pub)
 
     ak = sub.add_parser("answer-key", help="hidden answer keys (evaluator-only content)")
@@ -154,9 +155,20 @@ def _default_scope(session_factory: Any, wanted: str | None) -> repos.Scope:
     return repos.Scope(found[0].tenant_id, found[0].id)
 
 
-def _key_out(row: Any, key: str) -> dict[str, Any]:  # metadata only, never assertion content
-    return {"answer_key_id": row.id, "scenario_key": key, "version": row.version,
-            "scenario_versions": row.scenario_versions}  # fmt: skip
+def _key_out(key_id: str, scenario_key: str, version: int,
+             scenario_versions: list[int] | None) -> dict[str, Any]:  # fmt: skip
+    """Answer-key metadata for the output (never assertion content)."""
+    return {"answer_key_id": key_id, "scenario_key": scenario_key, "version": version,
+            "scenario_versions": scenario_versions}  # fmt: skip
+
+
+def _with_key(out: dict[str, Any], key_out: dict[str, Any], scenario_too: bool) -> dict[str, Any]:
+    """`answer-key publish` prints the key's fields; `publish --answer-key` nests them."""
+    if scenario_too:
+        out["answer_key"] = key_out
+    else:
+        out.update(key_out)
+    return out
 
 
 def _publish(args: argparse.Namespace, sf: Any, blobs: Any, sim: SimEngine) -> dict[str, Any]:
@@ -174,23 +186,22 @@ def _publish(args: argparse.Namespace, sf: Any, blobs: Any, sim: SimEngine) -> d
         return _publish_via_api(args, sf, blobs, sim, loaded, key_path, key_doc)
     scope = _default_scope(sf, args.project)
     out: dict[str, Any] = {"project_id": scope.project_id}
-    with sf.begin() as s:  # scenario and answer key: both or neither
+    with sf.begin() as s:  # direct mode: scenario and answer key are stored both or neither
         if loaded is not None:
             row = create_scenario_version(s, scope, loaded, blobs)
             out.update(scenario_key=loaded.key, scenario_version_id=row.id, version=row.version,
                        spec_hash=row.spec_hash)  # fmt: skip
         if key_doc is not None:
-            key_row = create_answer_key_version(s, scope, key_doc, blobs)
-            key_out = _key_out(key_row, key_doc.answer_key.scenario)
-            if loaded is None:
-                out.update(key_out)
-            else:
-                out["answer_key"] = key_out
+            k = create_answer_key_version(s, scope, key_doc, blobs)
+            _with_key(out, _key_out(k.id, key_doc.answer_key.scenario, k.version,
+                                    k.scenario_versions), loaded is not None)  # fmt: skip
     return out
 
 
 def _publish_via_api(args: argparse.Namespace, sf: Any, blobs: Any, sim: SimEngine,
                      loaded: Any, key_path: Path | None, key_doc: Any) -> dict[str, Any]:  # fmt: skip
+    """Through the API routes, in-process. Two requests (scenario, then key): when the key is
+    refused, the error output names the scenario version that WAS published."""
     import asyncio
 
     from mailsim.api.app import create_app
@@ -205,7 +216,16 @@ def _publish_via_api(args: argparse.Namespace, sf: Any, blobs: Any, sim: SimEngi
     def call(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
         data = json.dumps(body).encode() if body is not None else b""
         resp = asyncio.run(asgi_request(app, method, path, headers=headers, body=data))
-        result: dict[str, Any] = json.loads(resp.body or b"{}")
+        try:
+            if resp.truncated:
+                raise ValueError("truncated")
+            result = json.loads(resp.body or b"{}")
+            if not isinstance(result, dict):
+                raise ValueError("not an object")
+        except ValueError:
+            raise ApiFailure({"code": "INVALID_RESPONSE", "details": {"status": resp.status},
+                              "message": f"{method} {path} answered HTTP {resp.status} without "
+                                         "a JSON object"}) from None  # fmt: skip
         if resp.status >= 400:
             raise ApiFailure(result.get("error") or {"code": str(resp.status), "message": ""})
         return result
@@ -223,14 +243,15 @@ def _publish_via_api(args: argparse.Namespace, sf: Any, blobs: Any, sim: SimEngi
                    version=row["version"], spec_hash=row["spec_hash"])  # fmt: skip
     if key_path is not None:
         scenario = key_doc.answer_key.scenario
-        ak = call("POST", f"/v1/scenarios/{quote(scenario, safe='')}/answer-keys",
-                  {"source": key_path.read_text(encoding="utf-8")})  # fmt: skip
-        key_out = {"answer_key_id": ak["id"], "scenario_key": ak["scenario_key"],
-                   "version": ak["version"], "scenario_versions": ak["scenario_versions"]}  # fmt: skip
-        if loaded is None:
-            out.update(key_out)
-        else:
-            out["answer_key"] = key_out
+        try:
+            ak = call("POST", f"/v1/scenarios/{quote(scenario, safe='')}/answer-keys",
+                      {"source": key_path.read_text(encoding="utf-8")})  # fmt: skip
+        except ApiFailure as exc:
+            if loaded is not None:  # the scenario is published; say so next to the key's error
+                exc.error = {**exc.error, "published": dict(out)}
+            raise
+        _with_key(out, _key_out(ak["id"], ak["scenario_key"], ak["version"],
+                                ak["scenario_versions"]), loaded is not None)  # fmt: skip
     return out
 
 

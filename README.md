@@ -113,7 +113,8 @@ Expired idempotency records are swept on each claim; `python -m mailsim.serve sw
 * **QA D-1 (scenario packs, duplicate mail).** Validate and publish refuse a mailbox that
   starts with the same message twice: a fixture listed twice in one mailbox, or two fixtures
   with the same `Message-ID` (the error names both fixtures, at
-  `scenario.mailboxes.<i>.initial_messages.<j>.fixture`). The same message in several mailboxes
+  `scenario.mailboxes[i].initial_messages[j].fixture`; API issue paths spell it dotted,
+  `scenario.mailboxes.0.initial_messages.2.fixture`). The same message in several mailboxes
   is fine; scheduled events and persona replies get unique generated ids. **Breaking:** a scenario
   that relied on duplicate initial messages no longer publishes (every bundled scenario passes).
   In the builder, uploaded `.eml` files fill the fixtures a pasted YAML lists, matched by exact
@@ -135,15 +136,28 @@ lists (paths relative to it) and, optionally, `answer_key.yaml`; the leadership 
 * **CLI:** `sim publish <dir|scenario.yaml> [--answer-key answer_key.yaml]` and
   `sim answer-key publish <answer_key.yaml>` publish into an EXISTING project: `--project <id>`,
   else `MAILSIM_LOCAL_PROJECT_ID`, else the only project in the database (the one the local
-  no-auth dashboard uses); they never create a project. Directly, the scenario and its answer key
-  are stored in one transaction. With `--api-key-env VAR` the CLI goes through the API's routes
-  (roles: scenarios need a controller key, answer keys a controller or evaluator key; the
-  project is the key's) against the database in `MAILSIM_DATABASE_URL`, in-process: there is no
-  `--api-url`, because nothing in `src/` may open a network connection. Keys are read from the
-  environment only and never printed.
+  no-auth dashboard uses); they never create a project.
+  * **Without `--api-key-env` this is privileged operator access:** the CLI writes straight to
+    the database in `MAILSIM_DATABASE_URL` with no key and no role checks (anyone who can run it
+    with that URL is the operator). The scenario and its answer key are stored in one
+    transaction.
+  * **With `--api-key-env VAR`** the CLI goes through the API's routes with the key in that
+    environment variable (roles: scenarios need a controller key, answer keys a controller or
+    evaluator key; the project is the key's). It publishes the scenario, then the key; if the key
+    is refused, the error output names the scenario version that was published (`published`).
+    Keys are read from the environment only and never printed.
+  * **Same database and blob store as the server:** set `MAILSIM_DATABASE_URL` and
+    `MAILSIM_BLOB_DIR` to the server's values (fixtures are stored in the blob directory; with a
+    different one, runs of the published version miss their messages).
+  * **No `--api-url` (trade-off):** nothing in `src/` may open a network connection (ruff
+    banned-api and the safety test keep external delivery impossible), so the CLI cannot call a
+    server over HTTP. It runs the same API routes in-process against the server's database
+    instead, which means it must run on a machine that can reach that database and blob
+    directory.
 
 ```bash
 export MAILSIM_DATABASE_URL=postgresql+psycopg://mailsim:mailsim@localhost:54329/mailsim
+export MAILSIM_BLOB_DIR=var/blobs        # the server's blob directory
 uv run sim publish scenarios/leadership/cbo --answer-key scenarios/leadership/cbo/answer_key.yaml
 MAILSIM_CONTROLLER_KEY=... uv run sim publish scenarios/leadership/cbo --api-key-env MAILSIM_CONTROLLER_KEY
 ```

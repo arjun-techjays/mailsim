@@ -138,3 +138,66 @@ def test_publish_without_project_uses_the_local_project(capsys, tmp_path, monkey
         assert code == 2 and err["code"] == "NOT_FOUND"  # the scenario is not in that project
         code, out, _ = run_cli(capsys, "publish", str(EXAMPLE), "--answer-key", str(KEY_FILE))
         assert code == 0 and out["project_id"] == second
+
+
+def test_api_mode_refuses_agent_keys_and_reports_partial_publishes(capsys, cli_env, keys,
+                                                                   monkeypatch, session_factory,
+                                                                   tmp_path):  # fmt: skip
+    from sqlalchemy import select
+
+    from mailsim.api.auth import issue_key
+    from mailsim.store import models as m
+
+    project = keys["project_id"]
+    version_id = run_cli(capsys, "publish", str(EXAMPLE), "--project", project)[1][
+        "scenario_version_id"
+    ]
+    run_id = run_cli(capsys, "run-create", version_id, "--project", project)[1]["run_id"]
+    with session_factory.begin() as s:
+        mailbox = (
+            s.execute(select(m.Mailbox.id).where(m.Mailbox.run_id == run_id)).scalars().first()
+        )
+        agent = issue_key(s, tenant_id=keys["tenant_id"], project_id=project, role="agent",
+                          run_id=run_id, mailbox_id=mailbox)  # fmt: skip
+    monkeypatch.setenv("AGENT_KEY", agent.api_key)
+    monkeypatch.setenv("CTL_KEY", keys["controller_key"])
+    for argv in (("publish", str(EXAMPLE)), ("answer-key", "publish", str(KEY_FILE))):
+        code, _, err = run_cli(capsys, *argv, "--api-key-env", "AGENT_KEY")
+        assert code == 2 and err["code"] in ("PERMISSION_DENIED", "UNAUTHENTICATED"), err
+
+    # the scenario is published, the key is refused: the error says what WAS published
+    bad = tmp_path / "bad-key.yaml"
+    data = yaml.safe_load(KEY_FILE.read_text())
+    data["answer_key"]["scenario_versions"] = [99]
+    bad.write_text(yaml.safe_dump(data))
+    code, _, err = run_cli(capsys, "publish", str(EXAMPLE), "--answer-key", str(bad),
+                           "--api-key-env", "CTL_KEY")  # fmt: skip
+    assert code == 2 and "unknown scenario versions" in err["message"]
+    assert err["published"]["scenario_version_id"] == version_id
+    assert err["published"]["project_id"] == project
+
+
+def test_api_mode_reports_a_response_that_is_not_json(capsys, cli_env, keys, monkeypatch):
+    from mailsim.api import inprocess
+
+    async def broken(*_a, **_k):
+        return inprocess.InProcessResponse(status=502, headers={}, body=b"<html>oops")
+
+    monkeypatch.setattr(inprocess, "asgi_request", broken)
+    monkeypatch.setenv("CTL_KEY", keys["controller_key"])
+    code, _, err = run_cli(capsys, "publish", str(EXAMPLE), "--api-key-env", "CTL_KEY")
+    assert code == 2 and err["code"] == "INVALID_RESPONSE" and err["details"] == {"status": 502}
+
+    async def cut(*_a, **_k):
+        return inprocess.InProcessResponse(status=200, headers={}, body=b"{}", truncated=True)
+
+    monkeypatch.setattr(inprocess, "asgi_request", cut)
+    code, _, err = run_cli(capsys, "publish", str(EXAMPLE), "--api-key-env", "CTL_KEY")
+    assert code == 2 and err["code"] == "INVALID_RESPONSE"
+
+    async def listing(*_a, **_k):
+        return inprocess.InProcessResponse(status=200, headers={}, body=b"[]")
+
+    monkeypatch.setattr(inprocess, "asgi_request", listing)
+    code, _, err = run_cli(capsys, "publish", str(EXAMPLE), "--api-key-env", "CTL_KEY")
+    assert code == 2 and err["code"] == "INVALID_RESPONSE"
