@@ -110,6 +110,44 @@ Expired idempotency records are swept on each claim; `python -m mailsim.serve sw
   reports runs without a build as `(no build)` (was `unspecified`): `builds=unspecified` no
   longer selects them, use `builds=(no build)`.
 
+* **QA D-1 (scenario packs, duplicate mail).** Validate and publish refuse a mailbox that
+  starts with the same message twice: a fixture listed twice in one mailbox, or two fixtures
+  with the same `Message-ID` (the error names both fixtures, at
+  `scenario.mailboxes.<i>.initial_messages.<j>.fixture`). The same message in several mailboxes
+  is fine; scheduled events and persona replies get unique generated ids. **Breaking:** a scenario
+  that relied on duplicate initial messages no longer publishes (every bundled scenario passes).
+  In the builder, uploaded `.eml` files fill the fixtures a pasted YAML lists, matched by exact
+  file name (a trailing `-` is kept), and never add a second copy; files that match nothing are
+  held until you choose to add them. New dashboard page **Scenarios → Import scenario pack**.
+
+## Scenario packs: import from the dashboard or the CLI
+
+A pack is a folder (or a `.zip` of one) with `scenario.yaml` (or `.json`), the `.eml` files it
+lists (paths relative to it) and, optionally, `answer_key.yaml`; the leadership inboxes under
+`scenarios/leadership/` are packs. Other files are not read.
+
+* **Dashboard:** Scenarios → *Import scenario pack* → choose the folder or the `.zip`. The pack
+  is checked (scenario problems, answer-key problems, unused files), then one click publishes
+  the scenario and its answer key. Needs a controller key or the local no-auth operator. The
+  `.zip` reader refuses encrypted, ZIP64, symlinked, oddly compressed or unsafe (`..`, absolute)
+  entries and stops inflating at the declared size; limits: 30 MB `.zip`, 400 entries,
+  200 `.eml` files of at most 5 MB, 25 MB unpacked.
+* **CLI:** `sim publish <dir|scenario.yaml> [--answer-key answer_key.yaml]` and
+  `sim answer-key publish <answer_key.yaml>` publish into an EXISTING project: `--project <id>`,
+  else `MAILSIM_LOCAL_PROJECT_ID`, else the only project in the database (the one the local
+  no-auth dashboard uses); they never create a project. Directly, the scenario and its answer key
+  are stored in one transaction. With `--api-key-env VAR` the CLI goes through the API's routes
+  (roles: scenarios need a controller key, answer keys a controller or evaluator key; the
+  project is the key's) against the database in `MAILSIM_DATABASE_URL`, in-process: there is no
+  `--api-url`, because nothing in `src/` may open a network connection. Keys are read from the
+  environment only and never printed.
+
+```bash
+export MAILSIM_DATABASE_URL=postgresql+psycopg://mailsim:mailsim@localhost:54329/mailsim
+uv run sim publish scenarios/leadership/cbo --answer-key scenarios/leadership/cbo/answer_key.yaml
+MAILSIM_CONTROLLER_KEY=... uv run sim publish scenarios/leadership/cbo --api-key-env MAILSIM_CONTROLLER_KEY
+```
+
 ## Local development: Claude Code CLI provider and no-auth dashboard
 
 Both are **local-only conveniences, off by default**.
