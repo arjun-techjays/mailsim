@@ -139,9 +139,20 @@ export function validateDocument(doc: unknown, fixtures: Record<string, string>)
   dupes(owners).forEach((d) => err('scenario.mailboxes', `more than one mailbox for persona ${pyRepr(d)}`));
   mailboxes.forEach((m, i) => {
     if (!ids.includes(owners[i] as string)) err(`scenario.mailboxes[${i}].owner`, `unknown persona ${pyRepr(owners[i])}`);
+    const seenPaths = new Map<string, number>();
+    const seenIds = new Map<string, [number, string]>();
     list(m.initial_messages).forEach((im, j) => {
       const path = String(obj(im).fixture ?? '');
-      if (!(path in fixtures)) err(`scenario.mailboxes[${i}].initial_messages[${j}].fixture`, `fixture not found: ${path}`);
+      const at = `scenario.mailboxes[${i}].initial_messages[${j}].fixture`;
+      if (!(path in fixtures)) return err(at, `fixture not found: ${path}`);
+      // like the server: one mailbox never starts with the same message twice
+      if (seenPaths.has(path)) return err(at, `fixture ${path} is listed more than once in the mailbox of ${pyRepr(owners[i])} (also initial_messages.${seenPaths.get(path)})`);
+      seenPaths.set(path, j);
+      const mid = /^Message-ID:\s*(\S+)/im.exec(b64decode(fixtures[path] as string))?.[1];
+      if (!mid) return;
+      const twin = seenIds.get(mid);
+      if (twin) return err(at, `duplicate Message-ID ${mid} in the mailbox of ${pyRepr(owners[i])}: fixture ${path} has the same Message-ID as ${twin[1]} (initial_messages.${twin[0]})`);
+      seenIds.set(mid, [j, path]);
     });
   });
 

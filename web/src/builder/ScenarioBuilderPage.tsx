@@ -125,12 +125,15 @@ function Builder({ mode, scenarioKey, initial, storageKey, restored, restoredFix
       return { form, fixtures: { ...d.fixtures, [path]: b64 }, info: { ...d.info, [path]: info } };
     });
   }, []);
-  const removeMessage = useCallback((owner: string, path: string) => {
+  const fillFixture = useCallback((path: string, b64: string, info: FixtureInfo) => {
+    setDraft((d) => ({ ...d, fixtures: { ...d.fixtures, [path]: b64 }, info: { ...d.info, [path]: info } }));
+  }, []);
+  const removeMessage = useCallback((owner: string, index: number) => {
     setDraft((d) => {
       const form = structuredClone(d.form);
       const mailbox = form.mailboxes.find((m) => m.owner === owner);
-      if (mailbox) mailbox.messages = mailbox.messages.filter((p) => p !== path);
-      if (referencedFixtures(form).includes(path)) return { ...d, form };
+      const [path] = mailbox ? mailbox.messages.splice(index, 1) : [];
+      if (path === undefined || referencedFixtures(form).includes(path)) return { ...d, form };
       const { [path]: _gone, ...fixtures } = d.fixtures;
       const { [path]: _goneInfo, ...info } = d.info;
       return { form, fixtures, info };
@@ -306,7 +309,7 @@ function Builder({ mode, scenarioKey, initial, storageKey, restored, restoredFix
     }
   };
 
-  const value: BuilderValue = { api, draft, meta, idLocked, issues, updateForm, addFixture, removeMessage, setInfo };
+  const value: BuilderValue = { api, draft, meta, idLocked, issues, updateForm, addFixture, fillFixture, removeMessage, setInfo };
   const counts = (id: SectionId) => issues.filter((i) => i.section === id).length;
   const index = SECTIONS.findIndex((s) => s.id === section);
   const behind = mode === 'edit' && minVersion !== null && !(Number(num(draft.form.version)) >= minVersion);
