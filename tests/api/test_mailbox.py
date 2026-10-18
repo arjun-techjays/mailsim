@@ -240,6 +240,20 @@ def test_system_labels_and_the_draft_flag_are_not_agent_writable(api, agent):
     assert ("agent", "flag", "PERMISSION_DENIED") in acts and ("agent", "move", "ok") not in acts
 
 
+def test_draft_flag_and_label_list_caps_are_checked_before_the_first_write(api, agent):
+    rid, mbx, key = agent
+    first = items(api, f"/v1/mailboxes/{mbx}/messages?folder=inbox", key)[0]
+    url = f"/v1/mailboxes/{mbx}/messages/{first['id']}"
+    r = api.call("PATCH", url, key=key, json={"folder": "archive", "add_flags": ["DRAFT"]})
+    assert "marks drafts only" in err(r, 403, "PERMISSION_DENIED")["message"]
+    for body in ({"add_labels": [f"l{i}" for i in range(51)]}, {"remove_labels": ["x" * 201]}):
+        err(api.call("PATCH", url, key=key, json={"folder": "archive", **body}), 400,
+            "INVALID_REQUEST")  # fmt: skip
+    assert api.call("GET", url, key=key, expect=200).json()["folder"] == "INBOX"  # not moved
+    ok = api.call("PATCH", url, key=key, json={"add_labels": [f"l{i}" for i in range(50)]})
+    assert ok.status_code == 200
+
+
 def test_api_docs_are_for_operators_only(api, agent):
     """/openapi.json and /docs describe operator and grading routes: operators only."""
     rid, mbx, key = agent

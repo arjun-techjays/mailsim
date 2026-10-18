@@ -2798,8 +2798,10 @@
           },
           "add_labels": {
             "items": {
+              "maxLength": 200,
               "type": "string"
             },
+            "maxItems": 50,
             "title": "Add Labels",
             "type": "array"
           },
@@ -2823,8 +2825,10 @@
           },
           "remove_labels": {
             "items": {
+              "maxLength": 200,
               "type": "string"
             },
+            "maxItems": 50,
             "title": "Remove Labels",
             "type": "array"
           }

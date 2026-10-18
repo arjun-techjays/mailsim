@@ -119,8 +119,12 @@ def patch_message(
             or body.remove_flags):  # fmt: skip
         raise InvalidRequest("empty patch: set folder, labels or flags")
     mb = agent(request, principal)
-    # system labels: refused (and recorded) before the first write
+    # system labels and the DRAFT flag: refused (and recorded) before the first write
     mb.check_labels(message_id, add=body.add_labels, remove=body.remove_labels)
+    if "DRAFT" in body.add_flags or "DRAFT" in body.remove_flags:  # forging / erasing a draft
+        mb.check_draft_flag(
+            mb.get_message(message_id), add=body.add_flags, remove=body.remove_flags
+        )
     if body.folder is not None:
         _folder_name(mb, body.folder)  # validate before the first write
         mb.move(message_id, body.folder)

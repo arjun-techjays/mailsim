@@ -50,6 +50,18 @@ def _strings(body: dict[str, Any], key: str) -> list[str]:
     return value
 
 
+MAX_LABEL_IDS = 50  # per request list; a user label id is "Label_" + hex of a <= 225-char name
+MAX_LABEL_ID_CHARS = 512
+
+
+def _label_ids(body: dict[str, Any], key: str) -> list[str]:
+    value = _strings(body, key)
+    if len(value) > MAX_LABEL_IDS or any(len(v) > MAX_LABEL_ID_CHARS for v in value):
+        raise InvalidRequest(f"'{key}' takes at most {MAX_LABEL_IDS} label ids of at most "
+                             f"{MAX_LABEL_ID_CHARS} characters")  # fmt: skip
+    return value
+
+
 def _thread_id(body: dict[str, Any]) -> str | None:
     value = body.get("threadId")
     if value is not None and not isinstance(value, str):
@@ -102,7 +114,7 @@ def get_message(request: Request, user_id: str, message_id: str, gmail: Gmail,
 
 def _insert(gmail: GmailService, body: dict[str, Any], raw: bytes | None) -> dict[str, Any]:
     data = raw if raw is not None else decode_raw(body.get("raw"))
-    return _labelled(gmail.insert(data, _strings(body, "labelIds")))
+    return _labelled(gmail.insert(data, _label_ids(body, "labelIds")))
 
 
 @router.post(BASE + "/messages")
@@ -125,15 +137,15 @@ def send_message(request: Request, user_id: str, gmail: Gmail, body: JsonBody = 
 def modify_message(request: Request, user_id: str, message_id: str, gmail: Gmail,
                    body: JsonBody = None) -> Response:  # fmt: skip
     body = body or {}
-    msg = gmail.modify(gmail.message(message_id), _strings(body, "addLabelIds"),
-                       _strings(body, "removeLabelIds"))  # fmt: skip
+    msg = gmail.modify(gmail.message(message_id), _label_ids(body, "addLabelIds"),
+                       _label_ids(body, "removeLabelIds"))  # fmt: skip
     return _out(request, _labelled(msg))
 
 
 @router.post(BASE + "/messages/batchModify")
 def batch_modify(user_id: str, gmail: Gmail, body: JsonBody = None) -> Response:
     body = body or {}
-    add, remove = _strings(body, "addLabelIds"), _strings(body, "removeLabelIds")
+    add, remove = _label_ids(body, "addLabelIds"), _label_ids(body, "removeLabelIds")
     for gid in _ids(body):
         gmail.modify(gmail.message(gid), add, remove)
     return _no_content()
@@ -198,7 +210,7 @@ def _thread_summary(gmail: GmailService, thread_id: str) -> dict[str, Any]:
 def modify_thread(request: Request, user_id: str, thread_id: str, gmail: Gmail,
                   body: JsonBody = None) -> Response:  # fmt: skip
     body = body or {}
-    add, remove = _strings(body, "addLabelIds"), _strings(body, "removeLabelIds")
+    add, remove = _label_ids(body, "addLabelIds"), _label_ids(body, "removeLabelIds")
     for msg in gmail.thread(thread_id):
         gmail.modify(msg, add, remove)
     return _out(request, _thread_summary(gmail, thread_id))

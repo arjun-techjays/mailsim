@@ -85,7 +85,8 @@ Expired idempotency records are swept on each claim; `python -m mailsim.serve sw
 * **System labels and flags in `where`** are graded from what happened, not from what is
   stored: `label: SENT` = sent by a real send, `DRAFT`/`DRAFTS` = a real draft, `INBOX`/`TRASH`/
   `ARCHIVE` = the folder, `UNREAD` = not seen; `ANSWERED` (label or `has_flag`) in the agent's
-  mailbox = the agent really replied to or forwarded it. `STARRED`/`FLAGGED` and `DELETED` are
+  mailbox = the agent really replied to it (a reply, or sent mail whose `In-Reply-To` names it and
+  that went to its sender; a forward is not an answer). `STARRED`/`FLAGGED` and `DELETED` are
   flags the agent sets itself: they show what it did to a message, not that it did the work,
   so pair them with an `action` check (e.g. `operation: reply`) when that is what you grade.
   Labels match ignoring case and surrounding blanks.
@@ -127,11 +128,17 @@ Expired idempotency records are swept on each claim; `python -m mailsim.serve sw
   `label` / `flag` / `insert` action on every interface (also when an adapter refuses it before
   its first write). IMAP APPEND to `Sent` answers OK without storing anything; APPEND to `Drafts`
   from this mailbox's address makes a real draft. `where.label: answered` and
-  `has_flag: ANSWERED` count only messages the agent really replied to or forwarded.
+  `has_flag: ANSWERED` count only messages the agent really replied to (forwards don't count).
   **Breaking:** moving controller-seeded Sent history out of `Sent` and back is refused (only
   mail sent during the run counts as sent). `/openapi.json` and `/docs` are served to operators
   only (controller / evaluator keys, the local no-auth operator): no credential 401, agent key
-  404.
+  404. A browser can't send a key when you open `/docs`, so read them with curl or an API
+  client (`curl -H "Authorization: Bearer $CONTROLLER_KEY" http://127.0.0.1:8000/openapi.json`);
+  the dashboard and `openapi/openapi.json` are unaffected.
+  Thunderbird over IMAP: a sent copy filed into `Sent` is accepted and not stored twice; a draft
+  saved into `Drafts` becomes a real draft, but drafts with attachments can't be saved over IMAP
+  (`NO [CANNOT]`) and the draft is rebuilt from its parts, so client headers such as
+  `X-Mozilla-*` are not kept.
 
 * **QA-A3 (evaluation, validation, runs).** Answer keys with unknown references are refused
   (validate and publish). New run status `REPLAYED`; replay runs are not evaluated and are

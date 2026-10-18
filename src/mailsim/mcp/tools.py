@@ -279,8 +279,10 @@ def get_attachment(mb: AgentMailbox, a: AttachmentArgs, _: Deps) -> JSON:
 def manage_labels(mb: AgentMailbox, a: ManageLabelsArgs, _: Deps) -> JSON:
     if not (a.folder or a.add_labels or a.remove_labels or a.add_flags or a.remove_flags):
         raise InvalidRequest("nothing to change: set folder, labels or flags")
-    # system labels: refused (and recorded) before the first write
+    # system labels and the DRAFT flag: refused (and recorded) before the first write
     mb.check_labels(a.message_id, add=a.add_labels, remove=a.remove_labels)
+    if "DRAFT" in a.add_flags or "DRAFT" in a.remove_flags:  # forging / erasing a draft
+        mb.check_draft_flag(mb.get_message(a.message_id), add=a.add_flags, remove=a.remove_flags)
     if a.folder is not None:
         _folder_name(mb, a.folder)  # validate before the first write
         mb.move(a.message_id, a.folder)

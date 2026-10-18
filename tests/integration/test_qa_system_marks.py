@@ -180,12 +180,84 @@ def test_answered_counts_only_what_the_agent_really_answered(w):
     assert all(o.status.value == "PASS" for o in outs.values()), {
         k: o.diff.actual for k, o in outs.items()}  # fmt: skip
     assert outs["flag"].diff.actual["message_ids"] == [inv.id]
-    # sent mail answering the follow-up by its headers (a draft sent as a plain send) counts
+    # sent mail naming the PO in In-Reply-To but sent to someone other than its sender
+    # (procurement@) answers nothing
     d = w.agent.create_draft(to=["vendor@example.test"], subject="re", text="x",
                              in_reply_to=po.message_id_header)["message_id"]  # fmt: skip
     w.agent.send_draft(d)
-    outs = outcomes(w, state_key(w, 32, ("flag", {"has_flag": "ANSWERED", "label": "inbox"}, 2)))
+    outs = outcomes(w, state_key(w, 32, ("flag", {"has_flag": "ANSWERED", "label": "inbox"}, 1)))
     assert outs["flag"].status.value == "PASS", outs["flag"].reason
+
+
+def _answer_by_header(w: W, header: str, to: list[str], cc: list[str] | None = None) -> None:
+    d = w.agent.create_draft(to=to, cc=cc, subject="re", text="x",
+                             in_reply_to=header)["message_id"]  # fmt: skip
+    w.agent.send_draft(d)  # a plain send carrying In-Reply-To
+
+
+def _answered_ids(w: W, version: int) -> list[str]:
+    outs = outcomes(w, state_key(w, version, ("a", {"has_flag": "ANSWERED", "label": "inbox"}, 0)))
+    return sorted(outs["a"].diff.actual["message_ids"])
+
+
+def test_a_forward_is_not_an_answer(w):
+    inv = w.msg(INVOICE_HDR)
+    w.agent.forward(inv.id, to=["vendor@example.test"], text="fyi")
+    v = state_key(w, 40, ("not", {"lacks_flag": "ANSWERED", "subject_contains": "Invoice INV-001",
+                                  "from": "vendor@example.test", "label": "inbox"}, 1))  # fmt: skip
+    out = outcomes(w, v)["not"]
+    assert out.status.value == "PASS" and out.diff.actual["message_ids"] == [inv.id]
+    assert _answered_ids(w, 46) == []
+
+
+def test_answering_by_header_needs_the_sender_among_the_recipients(w):
+    inv = w.msg(INVOICE_HDR)
+    _answer_by_header(w, inv.message_id_header, ["finance@example.test"])  # to self
+    assert _answered_ids(w, 41) == []
+    _answer_by_header(w, inv.message_id_header, ["Vendor@Example.test"])  # its sender, any case
+    assert _answered_ids(w, 42) == [inv.id]
+
+
+def test_a_reply_operation_sent_only_to_self_answers_nothing(w):
+    """e.g. SMTP mail to self whose In-Reply-To resolves to a `reply` of the invoice."""
+    inv = w.msg(INVOICE_HDR)
+    w.agent.reply(inv.id, text="memo", to=["finance@example.test"])
+    assert ("reply", "ok") in w.agent_actions() and _answered_ids(w, 47) == []
+    w.agent.reply(inv.id, text="ack")  # to its sender
+    assert _answered_ids(w, 48) == [inv.id]
+
+
+def test_reply_all_including_the_sender_answers(w):
+    inv = w.msg(INVOICE_HDR)
+    _answer_by_header(w, inv.message_id_header, ["finance@example.test"],
+                      cc=["vendor@example.test"])  # fmt: skip
+    assert _answered_ids(w, 43) == [inv.id]
+
+
+def test_a_repeated_message_id_counts_only_the_copy_whose_sender_was_answered(w):
+    hdr = "<dup@corpus.example.test>"
+    for sender in ("vendor@example.test", "someone@example.test"):
+        w.ctl.inject(
+            w.run,
+            w.fm,
+            (
+                f"From: {sender}\r\nTo: finance@example.test\r\n"
+                f"Subject: dup\r\nMessage-ID: {hdr}\r\n\r\nx\r\n"
+            ).encode(),
+        )
+    mine = {m.from_.email: m.id for m in w.agent.list_messages(folder="inbox").items
+            if m.message_id_header == hdr}  # fmt: skip
+    _answer_by_header(w, hdr, ["vendor@example.test"])
+    assert _answered_ids(w, 44) == [mine["vendor@example.test"]]
+
+
+def test_reply_to_header_counts_as_the_sender(w):
+    w.ctl.inject(w.run, w.fm, (b"From: noreply@example.test\r\nReply-To: Vendor <vendor@example.test>"
+                               b"\r\nTo: finance@example.test\r\nSubject: rt\r\n"
+                               b"Message-ID: <rt@example.test>\r\n\r\nx\r\n"))  # fmt: skip
+    rt = w.msg("<rt@example.test>")
+    _answer_by_header(w, "<rt@example.test>", ["vendor@example.test"])
+    assert _answered_ids(w, 45) == [rt.id]
 
 
 def test_where_label_is_normalised_in_every_grading_path(w):

@@ -1535,6 +1535,20 @@ class SimEngine:
         if error is not None:
             raise error
 
+    def insert_noop(self, scope: Scope, run_id: str, mailbox_id: str, folder: str, size: int,
+                    *, actor: str = AGENT) -> None:  # fmt: skip
+        """An insert that stores nothing (IMAP APPEND of a client's copy to Sent, already
+        filed by its SMTP send): the normal `insert` guard (RUNNING run, permission, own
+        mailbox, budget), recorded as an ok `insert` with `stored: false`. No event, no
+        message: it is evidence of nothing."""
+
+        def fn(c: Ctx) -> dict[str, Any]:
+            return {"stored": False}
+
+        self._command(scope, run_id, actor, "insert",
+                      {"bytes": size, "folder": folder, "stored": False}, fn,
+                      mailbox_id=mailbox_id)  # fmt: skip
+
     def record_refused(self, scope: Scope, run_id: str, mailbox_id: str, operation: str,
                        error: SimError, *, message_id: str | None = None,
                        add: Sequence[str] = (), remove: Sequence[str] = (),

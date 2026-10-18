@@ -502,6 +502,24 @@ def test_thunderbird_flow_send_file_a_copy_and_save_a_draft(proto):
     assert typ == "NO" and b"CANNOT" in data[0]
     typ, data = c.append("Sent", None, None, b"not a message at all")
     assert typ == "OK"
+    assert c.append("Sent", None, None, b"") == ("OK", [b"APPEND completed"])  # unparsable
+    noops = [a for a in proto.ctl.actions(proto.run)
+             if a["operation"] == "insert" and a["input"].get("stored") is False]  # fmt: skip
+    assert len(noops) == 4 and all(a["actor"] == "agent" and a["outcome"] == "ok" for a in noops)
+
+
+def test_append_to_sent_is_guarded_like_an_insert(make_proto):
+    """APPEND to Sent stores nothing but still needs the insert permission and a live run."""
+
+    def no_insert(s):
+        open_agent(s)
+        s["agent"]["prohibited_operations"] = ["external_delivery", "insert"]
+
+    proto = make_proto(no_insert)
+    c = proto.imap()
+    typ, data = c.append("Sent", None, None, RAW)
+    assert typ == "NO" and b"NOPERM" in data[0]
+    assert ("agent", "insert", "PERMISSION_DENIED") in proto.actions()
 
 
 def test_store_flags_replacement_leaves_stored_system_names_alone(proto):

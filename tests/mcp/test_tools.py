@@ -111,8 +111,9 @@ def test_agent_writes_and_external_delivery_policy(world):
     forged = err(a, "manage_labels", {"message_id": first["id"], "folder": "inbox",
                                       "add_labels": ["SENT"]})  # fmt: skip
     assert forged["code"] == "INVALID_REQUEST" and "system labels" in forged["message"]
-    drafted = err(a, "manage_labels", {"message_id": first["id"], "add_flags": ["DRAFT"]})
-    assert drafted["code"] == "PERMISSION_DENIED"
+    drafted = err(a, "manage_labels", {"message_id": first["id"], "folder": "inbox",
+                                       "add_flags": ["DRAFT"]})  # fmt: skip
+    assert drafted["code"] == "PERMISSION_DENIED"  # refused before the move
     assert ok(a, "get_message", {"message_id": first["id"]})["folder"] == "Archive"
     outcomes = [(x["operation"], x["outcome"]) for x in
                 world.engine.actions(world.env.scope, world.run) if x["actor"] == "agent"]  # fmt: skip

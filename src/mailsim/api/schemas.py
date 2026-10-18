@@ -276,10 +276,14 @@ class ForwardRequest(_M):
     text: str = ""
 
 
+MAX_PATCH_LABELS = 50
+LabelName = Annotated[str, Field(max_length=200)]
+
+
 class MessagePatch(_M):
     folder: str | None = None
-    add_labels: list[str] = Field(default_factory=list)
-    remove_labels: list[str] = Field(default_factory=list)
+    add_labels: list[LabelName] = Field(default_factory=list, max_length=MAX_PATCH_LABELS)
+    remove_labels: list[LabelName] = Field(default_factory=list, max_length=MAX_PATCH_LABELS)
     add_flags: list[str] = Field(default_factory=list)
     remove_flags: list[str] = Field(default_factory=list)
 

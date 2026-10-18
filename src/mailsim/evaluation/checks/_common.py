@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
+from email.utils import getaddresses
 from typing import Any
 
 from mailsim.domain.clock import parse_ts
@@ -89,13 +90,39 @@ class Occurrence:
 
 @dataclass(frozen=True)
 class Answered:
-    """What the agent actually answered (see RunIndex.answered_at)."""
+    """What the agent actually answered (see RunIndex.answered_at): the recipients of its
+    answers, per answered engine message id (replies) and per Message-ID header (sent mail
+    whose In-Reply-To names it). Either counts only when it went to the message's sender."""
 
-    message_ids: set[str]
-    headers: set[str]
+    recipients_by_id: dict[str, set[str]]
+    recipients_by_header: dict[str, set[str]]
 
     def __contains__(self, msg: dict[str, Any]) -> bool:
-        return msg["id"] in self.message_ids or msg.get("message_id_header") in self.headers
+        # a send to self or to someone else answers nothing, and a repeated Message-ID
+        # (imported corpora) counts only the copy whose sender (From / Reply-To) was addressed
+        senders = _senders(msg)
+        by_id = self.recipients_by_id.get(msg["id"])
+        if by_id is not None and not by_id.isdisjoint(senders):
+            return True
+        by_header = self.recipients_by_header.get(msg.get("message_id_header") or "")
+        return by_header is not None and not by_header.isdisjoint(senders)
+
+
+def _recipients(msg: Any) -> set[str]:
+    if not isinstance(msg, dict):
+        return set()
+    return {_cf(a.get("email")) for k in ("to", "cc", "bcc") for a in msg.get(k) or []
+            if isinstance(a, dict)} - {""}  # fmt: skip
+
+
+def _senders(msg: dict[str, Any]) -> set[str]:
+    out = {_cf((msg.get("from") or {}).get("email"))}
+    headers = msg.get("headers") or {}
+    for name, values in headers.items():
+        if str(name).casefold() == "reply-to":
+            vals = values if isinstance(values, list) else [values]
+            out |= {_cf(addr) for _, addr in getaddresses([str(v) for v in vals]) if addr}
+    return out - {""}
 
 
 class RunIndex:
@@ -148,17 +175,26 @@ class RunIndex:
         return {k for k, actor in last_adder.items() if actor == AGENT}
 
     def answered_at(self, cutoff: int) -> Answered:
-        """Provenance of ANSWERED up to `cutoff`: messages the agent really replied to or
-        forwarded (a recorded ok `reply` / `forward`, incl. a draft sent as one) and the
-        Message-IDs its sent mail answers (In-Reply-To). A flag or label set by hand is not."""
-        ids = {str(o.input.get("message_id")) for o in self.occurrences_in(cutoff)
-               if o.actor == AGENT and o.outcome == "ok"
-               and o.operation in ("reply", "forward") and o.input.get("message_id")}  # fmt: skip
-        headers = {str(e["payload"]["message"]["in_reply_to"]) for e in self.events_in(cutoff)
-                   if e["type"] == "message.sent" and e["actor"] == AGENT
-                   and isinstance(e["payload"].get("message"), dict)
-                   and e["payload"]["message"].get("in_reply_to")}  # fmt: skip
-        return Answered(ids, headers)
+        """Provenance of ANSWERED up to `cutoff`: the recipients of the agent's real replies
+        per replied message id (a recorded ok `reply`, incl. a draft sent as one; a forward is
+        not an answer, it is $Forwarded), and of its sent mail per Message-ID its In-Reply-To
+        names. A flag or label set by hand is not."""
+        by_id: dict[str, set[str]] = {}
+        for o in self.occurrences_in(cutoff):
+            if (o.actor == AGENT and o.outcome == "ok" and o.operation == "reply"
+                    and o.input.get("message_id") and o.wrote_events):  # fmt: skip
+                sent = [self.by_seq.get(q) for q in range(o.seq_start, o.seq_end + 1)]
+                rcpts = by_id.setdefault(str(o.input["message_id"]), set())
+                for e in sent:
+                    if e is not None and e["type"] == "message.sent":
+                        rcpts |= _recipients(e["payload"].get("message"))
+        by_header: dict[str, set[str]] = {}
+        for e in self.events_in(cutoff):
+            msg = e["payload"].get("message")
+            if (e["type"] == "message.sent" and e["actor"] == AGENT and isinstance(msg, dict)
+                    and msg.get("in_reply_to")):  # fmt: skip
+                by_header.setdefault(str(msg["in_reply_to"]), set()).update(_recipients(msg))
+        return Answered(by_id, by_header)
 
     # ------------------------------------------------------------------ windows
     def events_in(self, cutoff: int) -> list[dict[str, Any]]:
@@ -397,7 +433,7 @@ def select_messages(
         if msg.get("is_draft"):
             flags.add("DRAFT")  # provenance: only a real draft is DRAFT, whatever was stored
         if answered is not None and msg.get("mailbox_id") == agent_mailbox_id:
-            # in the agent's mailbox ANSWERED = it really replied / forwarded (the agent can
+            # in the agent's mailbox ANSWERED = it really replied (the agent can
             # set the flag itself); elsewhere the flag is the simulation's own
             flags.discard("ANSWERED")
             if msg in answered:

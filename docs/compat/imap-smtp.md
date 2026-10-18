@@ -102,7 +102,9 @@ self-signed certificate), authentication *Normal password*. SMTP server `127.0.0
 `1587`, same security, *Normal password*. Username = mailbox address, password = agent key.
 Thunderbird's defaults work: every SMTP submission is already filed in `Sent`, so its *Place
 a copy in: Sent* APPEND answers OK without storing a second copy, and a draft it saves to
-`Drafts` (APPEND with your address as `From`) becomes a real draft (see APPEND below).
+`Drafts` (APPEND with your address as `From`) becomes a real draft (see APPEND below). Drafts
+with attachments can't be saved this way (`NO [CANNOT]`), and client headers such as
+`X-Mozilla-Draft-Info` are not kept (the draft is rebuilt from its parts).
 
 ## IMAP profile
 
@@ -194,7 +196,8 @@ stored (`NO [NOPERM]` / `NO [CANNOT]`) and recorded as a refused `insert`.
 `Sent` and `Drafts` hold only what this account sent or drafted:
 
 - **APPEND to `Sent`** (a client filing its copy after an SMTP send) answers OK and stores
-  nothing: the submission already filed the real sent copy. When the appended message's
+  nothing: the submission already filed the real sent copy. It passes the normal `insert`
+  guard (run active, permission, budget) and is recorded as an `insert` with `stored: false`. When the appended message's
   `Message-ID` is one of the sent messages there, `[APPENDUID]` reports its UID; otherwise a
   plain `OK` (SMTP assigns its own `Message-ID`, so a client's copy usually doesn't match).
 - **APPEND to `Drafts`** with this mailbox's address as `From` (a client saving a draft)

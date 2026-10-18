@@ -148,6 +148,10 @@ class AgentMailbox:
         self._e.record_refused(*self._a(), operation, error, message_id=message_id, add=add,
                                remove=remove, folder=folder, size=size, actor=AGENT)  # fmt: skip
 
+    def insert_noop(self, folder: str, size: int) -> None:
+        """A guarded, recorded `insert` that stores nothing (IMAP APPEND to Sent)."""
+        self._e.insert_noop(*self._a(), folder, size, actor=AGENT)
+
     def check_labels(self, message_id: str | None, *, add: Sequence[str] = (),
                      remove: Sequence[str] = ()) -> None:  # fmt: skip
         """Before a multi-write change: refuse (and record) a label write naming system labels.
