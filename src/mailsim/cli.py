@@ -1,22 +1,28 @@
 """`sim` command line: validate, publish, run, reset, replay and inspect scenarios.
 
-Talks to the engine directly (no HTTP in Phase 1). All output is JSON on stdout so it can
-be used from CI; errors are JSON on stderr with exit code 2 (replay mismatch: 3).
+Talks to the engine directly (no HTTP client: `publish --api-key-env` runs the API routes
+in-process). All output is JSON on stdout so it can be used from CI; errors are JSON on stderr
+with exit code 2 (replay mismatch: 3). Keys are read from the environment and never printed.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
+
+from sqlalchemy import select
 
 from mailsim.domain.errors import InvalidRequest, SimError
 from mailsim.engine.context import use_interface
 from mailsim.engine.core import SimEngine
+from mailsim.scenario.answer_keys import create_answer_key_version, load_answer_key
 from mailsim.scenario.loader import load_scenario
 from mailsim.scenario.service import create_scenario_version
 from mailsim.store import repos
@@ -40,9 +46,19 @@ def _parser() -> argparse.ArgumentParser:
     v = sub.add_parser("validate", help="validate a scenario file (no database needed)")
     v.add_argument("path", type=Path)
 
-    pub = sub.add_parser("publish", help="store a scenario as an immutable version")
-    pub.add_argument("path", type=Path)
-    pub.add_argument("--project", required=True)
+    pub = sub.add_parser("publish", help="store a scenario (file or pack directory) as an "
+                         "immutable version, optionally with its hidden answer key")  # fmt: skip
+    pub.add_argument("path", type=Path,
+                     help="scenario.yaml / .json, or a pack directory that contains one")  # fmt: skip
+    pub.add_argument("--answer-key", type=Path, default=None,
+                     help="also publish this answer key (same transaction / request order)")  # fmt: skip
+    _target_arguments(pub)
+
+    ak = sub.add_parser("answer-key", help="hidden answer keys (evaluator-only content)")
+    aksub = ak.add_subparsers(dest="answer_key_cmd", required=True)
+    akp = aksub.add_parser("publish", help="publish an answer-key file for a published scenario")
+    akp.add_argument("path", type=Path)
+    _target_arguments(akp)
 
     imp = sub.add_parser("import", help="import a public email corpus (no database needed)")
     isub = imp.add_subparsers(dest="import_cmd", required=True)
@@ -96,6 +112,128 @@ def _parser() -> argparse.ArgumentParser:
     return p
 
 
+def _target_arguments(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--project", default=None,
+                   help="an existing project id (default: MAILSIM_LOCAL_PROJECT_ID, else the only "
+                   "project in the database)")  # fmt: skip
+    p.add_argument("--api-key-env", metavar="VAR", default=None,
+                   help="go through the API routes (roles, validation, idempotency) as the key "
+                   "stored in environment variable VAR, against the database the server uses "
+                   "(MAILSIM_DATABASE_URL); the key is never printed")  # fmt: skip
+
+
+class ApiFailure(Exception):
+    """An error answer of an in-process API call (the frozen error body, printed as is)."""
+
+    def __init__(self, error: dict[str, Any]) -> None:
+        super().__init__(str(error.get("message", "")))
+        self.error = error
+
+
+def _scenario_file(path: Path) -> Path:
+    """A scenario file, or the scenario document of a pack directory."""
+    if not path.is_dir():
+        return path
+    for name in ("scenario.yaml", "scenario.yml", "scenario.json"):
+        if (path / name).is_file():
+            return path / name
+    raise InvalidRequest(f"no scenario.yaml or scenario.json in {path}")
+
+
+def _default_scope(session_factory: Any, wanted: str | None) -> repos.Scope:
+    """`--project`, else MAILSIM_LOCAL_PROJECT_ID, else the only project (as the local no-auth
+    dashboard resolves it): publishing never creates a project."""
+    wanted = wanted or os.environ.get("MAILSIM_LOCAL_PROJECT_ID", "").strip() or None
+    if wanted:
+        return _scope(session_factory, wanted)
+    with session_factory() as s:
+        found = s.execute(select(Project).order_by(Project.created_at).limit(2)).scalars().all()
+    if len(found) != 1:
+        raise InvalidRequest("several projects exist: pass --project <id>" if found else
+                             "no project exists: create one (sim project-create) or pass --project")  # fmt: skip
+    return repos.Scope(found[0].tenant_id, found[0].id)
+
+
+def _key_out(row: Any, key: str) -> dict[str, Any]:  # metadata only, never assertion content
+    return {"answer_key_id": row.id, "scenario_key": key, "version": row.version,
+            "scenario_versions": row.scenario_versions}  # fmt: skip
+
+
+def _publish(args: argparse.Namespace, sf: Any, blobs: Any, sim: SimEngine) -> dict[str, Any]:
+    """`publish` / `answer-key publish`: directly into a project, or through the API routes."""
+    if args.cmd == "publish":
+        loaded = load_scenario(_scenario_file(args.path))
+        key_path = args.answer_key
+    else:
+        loaded, key_path = None, args.path
+    key_doc = load_answer_key(key_path) if key_path is not None else None
+    if loaded is not None and key_doc is not None and key_doc.answer_key.scenario != loaded.key:
+        raise InvalidRequest(f"answer key is for {key_doc.answer_key.scenario!r}, not "
+                             f"{loaded.key!r}")  # fmt: skip
+    if args.api_key_env:
+        return _publish_via_api(args, sf, blobs, sim, loaded, key_path, key_doc)
+    scope = _default_scope(sf, args.project)
+    out: dict[str, Any] = {"project_id": scope.project_id}
+    with sf.begin() as s:  # scenario and answer key: both or neither
+        if loaded is not None:
+            row = create_scenario_version(s, scope, loaded, blobs)
+            out.update(scenario_key=loaded.key, scenario_version_id=row.id, version=row.version,
+                       spec_hash=row.spec_hash)  # fmt: skip
+        if key_doc is not None:
+            key_row = create_answer_key_version(s, scope, key_doc, blobs)
+            key_out = _key_out(key_row, key_doc.answer_key.scenario)
+            if loaded is None:
+                out.update(key_out)
+            else:
+                out["answer_key"] = key_out
+    return out
+
+
+def _publish_via_api(args: argparse.Namespace, sf: Any, blobs: Any, sim: SimEngine,
+                     loaded: Any, key_path: Path | None, key_doc: Any) -> dict[str, Any]:  # fmt: skip
+    import asyncio
+
+    from mailsim.api.app import create_app
+    from mailsim.api.inprocess import asgi_request
+
+    key = os.environ.get(args.api_key_env, "").strip()
+    if not key:
+        raise InvalidRequest(f"environment variable {args.api_key_env} is not set or empty")
+    app = create_app(engine=sim, session_factory=sf, blobs=blobs)
+    headers = {"authorization": f"Bearer {key}", "content-type": "application/json"}
+
+    def call(method: str, path: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        data = json.dumps(body).encode() if body is not None else b""
+        resp = asyncio.run(asgi_request(app, method, path, headers=headers, body=data))
+        result: dict[str, Any] = json.loads(resp.body or b"{}")
+        if resp.status >= 400:
+            raise ApiFailure(result.get("error") or {"code": str(resp.status), "message": ""})
+        return result
+
+    me = call("GET", "/v1/me")
+    if args.project and args.project != me["project_id"]:
+        raise InvalidRequest(f"the key in {args.api_key_env} belongs to project "
+                             f"{me['project_id']}, not {args.project}")  # fmt: skip
+    out: dict[str, Any] = {"project_id": me["project_id"]}
+    if loaded is not None:
+        fixtures = {rel: base64.b64encode(raw).decode() for rel, raw in loaded.fixtures.items()}
+        source = loaded.source.decode("utf-8")
+        row = call("POST", "/v1/scenarios", {"source": source, "fixtures": fixtures})
+        out.update(scenario_key=row["scenario_key"], scenario_version_id=row["id"],
+                   version=row["version"], spec_hash=row["spec_hash"])  # fmt: skip
+    if key_path is not None:
+        scenario = key_doc.answer_key.scenario
+        ak = call("POST", f"/v1/scenarios/{quote(scenario, safe='')}/answer-keys",
+                  {"source": key_path.read_text(encoding="utf-8")})  # fmt: skip
+        key_out = {"answer_key_id": ak["id"], "scenario_key": ak["scenario_key"],
+                   "version": ak["version"], "scenario_versions": ak["scenario_versions"]}  # fmt: skip
+        if loaded is None:
+            out.update(key_out)
+        else:
+            out["answer_key"] = key_out
+    return out
+
+
 def _scope(session_factory: Any, project_id: str) -> repos.Scope:
     with session_factory() as s:
         project = s.get(Project, project_id)
@@ -111,6 +249,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _dispatch(args)
     except SimError as exc:
         _emit(exc.to_dict(), sys.stderr)
+        return 2
+    except ApiFailure as exc:
+        _emit(exc.error, sys.stderr)
         return 2
     except (ValueError, OSError) as exc:
         if args.cmd not in ("import", "generate"):
@@ -232,19 +373,11 @@ def _dispatch(args: argparse.Namespace) -> int:
 
         blobs = FilesystemBlobStore(Path(args.blob_dir))
         sim = SimEngine(sf, blobs)
+        if args.cmd in ("publish", "answer-key"):
+            _emit(_publish(args, sf, blobs, sim))
+            return 0
         scope = _scope(sf, args.project)
 
-        if args.cmd == "publish":
-            with sf.begin() as s:
-                row = create_scenario_version(s, scope, load_scenario(args.path), blobs)
-                _emit(
-                    {
-                        "scenario_version_id": row.id,
-                        "version": row.version,
-                        "spec_hash": row.spec_hash,
-                    }
-                )
-            return 0
         if args.cmd == "run-create":
             _emit({"run_id": sim.create_run(scope, args.target)})
             return 0
