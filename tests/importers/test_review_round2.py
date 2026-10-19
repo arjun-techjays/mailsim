@@ -619,9 +619,12 @@ def test_document_names_people_sheets_and_long_excerpts():
     assert any(f in sheet for f in N.FAKE_FIRST)
     long = DOC.build("memo", _ctx(body="word " * 400))
     assert "..." in A.pdf_text(long.data)
-    assert DOC.trailing_titles("Hi.\n\nCredit Worksheet\n\nMore text follows here for the team "
-                               "to read today.\n\nOwen") == (
-        "Hi.\n\nCredit Worksheet\n\nMore text follows here for the team to read today.\n\nOwen", [])
+    assert DOC.trailing_titles(
+        "Hi.\n\nCredit Worksheet\n\nMore text follows here for the team to read today.\n\nOwen"
+    ) == (
+        "Hi.\n\nCredit Worksheet\n\nMore text follows here for the team to read today.\n\nOwen",
+        [],
+    )
     assert DOC.announced_name("Attached is the Gas and Power Master Agreement and Schedule.") == (
         "Gas and Power Master Agreement and Schedule"
     )
