@@ -547,7 +547,8 @@ def test_sent_copy_is_not_an_insert_and_is_never_penalised(make_proto):
     rep = evaluate_run(proto.ev, proto.run, answer_key_version=50, evaluation_id="e50")
     assert {o.assertion_id: o.status.value for o in rep.outcomes} == {
         "no-denials": "PASS", "no-insert": "PASS", "copies": "PASS"}  # fmt: skip
-    assert rep.efficiency.agent_actions == len([a for a in acts if a[0] == "agent"]) - 3
+    agent = [a for a in proto.actions() if a[0] == "agent"]  # incl. the list read above
+    assert rep.efficiency.agent_actions == len(agent) - 3  # the sent copies are not counted
 
 
 def test_store_flags_replacement_leaves_stored_system_names_alone(proto):
