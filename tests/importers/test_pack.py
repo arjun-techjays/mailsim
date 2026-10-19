@@ -192,7 +192,7 @@ def test_pack_attachments_are_real_documents_where_bodies_claim_them(slug):
     import re
 
     from mailsim.importers.attachments import extract_text
-    from mailsim.importers.documents import ATTACH_CLAIM
+    from mailsim.importers.documents import claims_attachment
     from tests.importers.test_realism import _check_pdf_structure
 
     manifest, msgs = _fixtures(slug)
@@ -201,9 +201,9 @@ def test_pack_attachments_are_real_documents_where_bodies_claim_them(slug):
         body = m.get_body(("plain",)).get_content()
         atts = list(m.iter_attachments())
         assert entry["attachments"] == len(atts)
-        claims = ATTACH_CLAIM.search(body) and not re.search(r"(?i)attached (?:is|are) "
-                                                             r"(?:a |the )?(?:link|url)", body)  # fmt: skip
-        assert atts or not claims, (entry["fixture"], body[:200])  # every claim is honoured
+        claims = claims_attachment(body)  # claims, stubs, title lines, "in .pdf format", ...
+        assert bool(atts) == claims, (entry["fixture"], body[:200])  # claims and files agree
+        assert not re.search(r"<<[^<>]+>>|\(See attached file", body)  # no stubs left
         for att in atts:
             data = att.get_payload(decode=True)
             total += 1
@@ -219,6 +219,8 @@ def test_pack_dates_follow_the_clock(slug):
     import re
     from datetime import datetime
 
+    from mailsim.importers import dates as D
+
     loaded = load_scenario(PACK / slug / "scenario.yaml")
     raw_start = loaded.doc.scenario.environment.clock.start_at
     start = (raw_start if isinstance(raw_start, datetime)
@@ -231,6 +233,13 @@ def test_pack_dates_follow_the_clock(slug):
         assert not re.search(r"(?<!Windows )\b(?:199\d|200[0-3])\b(?! ?MW)", body), body[:300]
         for full in re.findall(r"\b\d{1,2}/\d{1,2}/(\d{2}|\d{4})\b", body):
             assert full in ("25", "26", "2025", "2026"), full
+        own = body.replace("\r\n", "\n").split("---------- Forwarded message")[0]
+        # every mentioned date (year-less ones read near the send date) sits on the side of the
+        # send date its tense says, and no month or month/day is left unshifted
+        assert D.date_conflicts(own, sent.date()) == [], (m["Subject"], own[:300])
+        assert D.unplaced(own) == [], (m["Subject"], D.unplaced(own))
+        for when, last, _s, _e in D.mentions(own, sent.date()):
+            assert when.year >= start.year - 1 and last <= start.date().replace(year=start.year + 1)
         quoted = re.findall(r"^Date: (\w{3}, \d\d \w{3} \d{4} \d\d:\d\d)$", body, re.M)
         for q in quoted:  # a forwarded original is older than the forward
             assert datetime.strptime(q, "%a, %d %b %Y %H:%M").replace(tzinfo=sent.tzinfo) < sent

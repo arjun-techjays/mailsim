@@ -5,16 +5,18 @@ Output: a JSONL corpus. Line 1 is a header (format, seed, counts, per-placeholde
 every other line is one record::
 
     {"id": "r000001", "topic": "finance", "scores": {...}, "keywords": {...},
-     "unknown_proper": 0, "segments": [  # oldest first
+     "unknown_proper": 0, "ids": ["482913"],  # hashed digit runs (6+ digits) in the record
+     "segments": [  # oldest first
         {"author": "p:12", "to": ["p:3"], "cc": [], "subject": "...", "kind": "reply",
          "greeting": "p:3", "signoff": "p:12", "body": "template text"}, ...]}
 
 Bodies, subjects and parties are templates (see `pseudonymize`): no detected real name,
 address or number survives. Sampling is a deterministic function of (seed, shard name, row):
 the `limit` rows with the smallest keyed hash, so the same seed and inputs give a
-byte-identical corpus. Raw text never leaves this process except through templates; the
-optional registry file (real names, for scanning generated output) must stay outside the
-repository (default location under ``var/``).
+byte-identical corpus (identifiers are hashed with a secret key, `ImportConfig.id_key`: the same
+key file is needed to reproduce a corpus). Raw text never leaves this process except through
+templates; the optional registry file (real names, for scanning generated output) and the key
+file must stay outside the repository (default location under ``var/``).
 """
 
 from __future__ import annotations
@@ -102,6 +104,7 @@ class ImportConfig:
     min_chars: int = 40
     max_chars: int = 20_000
     harvest_all: bool = True  # build the name registry from every row, not only the sample
+    id_key: bytes = b""  # secret key for hashed identifiers (the CLI reads var/enron/id.key)
 
 
 @dataclass
@@ -178,6 +181,7 @@ def build_record(raw: str, pseudo: Pseudonymizer, cfg: ImportConfig, stats: Impo
         return None
     segments = split_chain(raw.replace("\r\n", "\n"))
     local: set[int] = set()
+    pseudo.emitted = set()
     out: list[dict[str, Any]] = []
     # header fields first: the people they name resolve first-name mentions in every body
     for seg in segments:
@@ -210,6 +214,7 @@ def build_record(raw: str, pseudo: Pseudonymizer, cfg: ImportConfig, stats: Impo
         "unknown_proper": len(unknown_proper_nouns(text, pseudo.reg)),
         "unknown_orgs": len(unknown_organisations(text, pseudo.reg)),
         "leftover_headers": any(LEFTOVER.search(b) for b in bodies),
+        "ids": sorted(pseudo.emitted),
         "segments": out,
     }
 
@@ -227,7 +232,7 @@ def import_enron(
 def build_corpus(chosen: list[tuple[str, str, int, str]], registry: Registry, cfg: ImportConfig,
                  stats: ImportStats) -> tuple[list[dict[str, Any]], dict[str, Any], Registry]:  # fmt: skip
     """Records, header and registry from the sampled rows (the second half of the import)."""
-    pseudo = Pseudonymizer(registry, cfg.seed)
+    pseudo = Pseudonymizer(registry, cfg.seed, cfg.id_key)
     records: list[dict[str, Any]] = []
     for _key, _shard, _row, text in chosen:
         rec = build_record(text, pseudo, cfg, stats)
@@ -276,6 +281,23 @@ def read_corpus(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     if header.get("format") != FORMAT:
         raise ValueError(f"{path}: not a {FORMAT} file")
     return header, [json.loads(line) for line in lines[1:] if line.strip()]
+
+
+def load_or_create_key(path: Path) -> bytes:
+    """The secret key for hashed identifiers: read from `path`, created (32 random bytes, hex,
+    owner-only permissions) on first use. Keep it outside the repository, next to the corpus."""
+    if path.is_file():
+        key = path.read_text(encoding="ascii").strip()
+        if len(key) < 32:
+            raise ValueError(f"{path}: id key too short (expected 64 hex characters)")
+        return key.encode()
+    import secrets
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    key = secrets.token_hex(32)
+    path.write_text(key + "\n", encoding="ascii")
+    path.chmod(0o600)
+    return key.encode()
 
 
 def write_registry(path: Path, registry: Registry) -> None:

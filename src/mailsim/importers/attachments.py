@@ -14,6 +14,7 @@ Pure standard library: the committed fixtures need nothing extra to load.
 
 from __future__ import annotations
 
+import html
 import io
 import re
 import textwrap
@@ -83,7 +84,13 @@ def _layout(pages: Sequence[Sequence[Line]], footer: str) -> list[bytes]:
 
 
 def pdf_bytes(
-    pages: Sequence[Sequence[Line]], *, title: str, author: str, created: str, footer: str = ""
+    pages: Sequence[Sequence[Line]],
+    *,
+    title: str,
+    author: str,
+    created: str,
+    footer: str = "",
+    producer: str = "Document Services",
 ) -> bytes:
     """A valid multi-page PDF. `created` is a PDF date string body (``20261014093000``)."""
     streams = _layout(pages, footer or title)
@@ -98,7 +105,7 @@ def pdf_bytes(
             f"<< /Type /Font /Subtype /Type1 /BaseFont /{base} /Encoding /WinAnsiEncoding >>".encode()
         )
     info = (f"<< /Title {_pdf_string(title)} /Author {_pdf_string(author)} "
-            f"/Producer (Corvane Document Services) /CreationDate (D:{created}Z) >>")  # fmt: skip
+            f"/Producer {_pdf_string(producer)} /CreationDate (D:{created}Z) >>")  # fmt: skip
     objects.append(info.encode())
     for i, stream in enumerate(streams):
         content_no = first_page + 2 * i + 1
@@ -201,12 +208,30 @@ def xlsx_bytes(rows: Sequence[Sequence[str | float | int]], *, sheet: str = "She
 
 
 # --------------------------------------------------------------------------- extract
+# Hardened, linear-time extraction for scanning untrusted attachments: size caps on the input,
+# on every inflated stream and on every zip member, a compression-ratio check against zip
+# bombs, and no backtracking regular expressions over whole files.
 
-_STREAM = re.compile(
-    rb"<<(?P<dict>(?:(?!>>\s*stream).)*?)>>\s*stream\r?\n(?P<data>.*?)\r?\nendstream", re.S
-)
-_LITERAL = re.compile(rb"\((?:\\.|[^\\)])*\)", re.S)
+MAX_ATTACHMENT = 16 * 1024 * 1024  # bytes of one attachment / scanned file
+MAX_INFLATE = 8 * 1024 * 1024  # bytes of one inflated PDF stream or zip member
+MAX_TOTAL = 32 * 1024 * 1024  # inflated bytes per attachment
+MAX_RATIO = 200  # zip member: uncompressed / compressed size
+MAX_MEMBERS = 2000
+
+
+class UnsafeAttachment(ValueError):
+    """The attachment exceeds a size / ratio limit and was not parsed (a scanner finding)."""
+
+
+_LITERAL = re.compile(rb"\((?:\\.|[^\\()])*\)", re.S)
+_HEX = re.compile(rb"(?<![<\w])<([0-9A-Fa-f\s]{2,})>(?!>)")
 _UNESCAPE = {b"n": b"\n", b"r": b"\r", b"t": b"\t", b"b": b"\b", b"f": b"\f"}
+
+
+def _decode_pdf_string(raw: bytes) -> str:
+    if raw.startswith(b"\xfe\xff"):
+        return raw[2:].decode("utf-16-be", "replace")
+    return raw.decode("latin-1")
 
 
 def _unescape(raw: bytes) -> str:
@@ -230,47 +255,149 @@ def _unescape(raw: bytes) -> str:
             continue
         out += ch
         i += 1
-    return out.decode("latin-1")
+    return _decode_pdf_string(bytes(out))
+
+
+def _strings(region: bytes) -> list[str]:
+    """Literal ``(...)`` and hex ``<...>`` strings of a PDF region."""
+    out = [_unescape(s[1:-1]) for s in _LITERAL.findall(region)]
+    for h in _HEX.findall(region):
+        digits = re.sub(rb"\s", b"", h)
+        if len(digits) % 2:
+            digits += b"0"
+        out.append(_decode_pdf_string(bytes.fromhex(digits.decode("ascii"))))
+    return out
+
+
+def _inflate(data: bytes, budget: list[int]) -> bytes:
+    d = zlib.decompressobj()
+    try:
+        out = d.decompress(data, MAX_INFLATE)
+    except zlib.error:
+        return b""
+    if d.unconsumed_tail:
+        raise UnsafeAttachment("a compressed PDF stream inflates beyond the size limit")
+    budget[0] -= len(out)
+    if budget[0] < 0:
+        raise UnsafeAttachment("compressed PDF streams inflate beyond the size limit")
+    return out
+
+
+# attributes that only carry package structure (cell references, ids, types, the XML declaration)
+_STRUCTURAL = frozenset(
+    ["version", "encoding", "standalone", "r", "t", "s", "sheetId", "Id", "r:id", "PartName",
+     "Extension", "ContentType", "Type", "spans", "xml:space"]
+)  # fmt: skip
+
+
+def _xml_text(xml: str) -> list[str]:
+    """Text nodes and attribute values of an XML part (namespace URIs and MIME types skipped)."""
+    out = [html.unescape(t.strip()) for t in re.findall(r">([^<>]+)<", xml) if t.strip()]
+    for name, value in re.findall(r"([\w:.-]+)=\"([^\"]*)\"", xml):
+        if name.startswith("xmlns") or name in _STRUCTURAL or not value.strip():
+            continue
+        if re.match(r"(?:https?://(?:schemas\.|purl\.org|www\.w3\.org|ns\.adobe\.com)|urn:)|"
+                    r"(?:application|image|text|audio|video)/", value):  # fmt: skip
+            continue
+        out.append(html.unescape(value))
+    return out
 
 
 def pdf_text(data: bytes) -> str:
-    """Text of the literal strings in every content stream (one string per line)."""
+    """Every string of a PDF: text in content streams (plain or FlateDecode), XMP / XML
+    metadata streams, and every string outside streams (the Info dictionary, annotations,
+    outlines). One scan over the file, no backtracking."""
+    if len(data) > MAX_ATTACHMENT:
+        raise UnsafeAttachment("PDF larger than the size limit")
     lines: list[str] = []
-    for m in _STREAM.finditer(data):
-        stream = m.group("data")
-        if b"FlateDecode" in m.group("dict"):
-            try:
-                stream = zlib.decompress(stream)
-            except zlib.error:
-                continue
-        lines.extend(_unescape(s[1:-1]) for s in _LITERAL.findall(stream))
-    info = re.search(rb"/Title\s*(\((?:\\.|[^\\)])*\))", data)
-    if info:
-        lines.insert(0, _unescape(info.group(1)[1:-1]))
-    return "\n".join(lines)
+    outside: list[bytes] = []
+    budget = [MAX_TOTAL]
+    pos = 0
+    while True:
+        s = data.find(b"stream", pos)
+        while s >= 3 and data[s - 3 : s] == b"end":
+            s = data.find(b"stream", s + 6)
+        if s < 0:
+            outside.append(data[pos:])
+            break
+        start = s + 6
+        if data[start : start + 2] == b"\r\n":
+            start += 2
+        elif data[start : start + 1] in (b"\n", b"\r"):
+            start += 1
+        end = data.find(b"endstream", start)
+        if end < 0:
+            outside.append(data[pos:])
+            break
+        head_from = data.rfind(b"obj", max(pos, s - 4096), s)
+        header = data[head_from if head_from >= 0 else max(pos, s - 4096) : s]
+        outside.append(data[pos:s])
+        body = data[start:end].rstrip(b"\r\n")
+        if b"FlateDecode" in header:
+            body = _inflate(body, budget)
+        if b"/Metadata" in header or body.lstrip()[:9] in (
+            b"<?xpacket",
+            b"<x:xmpmet",
+            b"<?xml ver",
+        ):
+            lines.extend(_xml_text(body.decode("utf-8", "replace")))
+        else:
+            lines.extend(_strings(body))
+        pos = end + 9
+    for region in outside:
+        lines.extend(_strings(region))
+    return "\n".join(line for line in lines if line.strip())
 
 
-def xlsx_text(data: bytes) -> str:
+def zip_text(data: bytes) -> str:
+    """Text of every XML part of an OOXML package (sheets, shared strings, docx body,
+    comments, drawings, docProps) after size and compression-ratio checks."""
+    if len(data) > MAX_ATTACHMENT:
+        raise UnsafeAttachment("archive larger than the size limit")
     out: list[str] = []
+    total = 0
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        for name in sorted(zf.namelist()):
-            if name.endswith(".xml") and ("sheet" in name or "sharedStrings" in name):
-                xml = zf.read(name).decode("utf-8", "replace")
-                out.extend(re.findall(r"<t[^>]*>([^<]*)</t>", xml))
-                out.extend(re.findall(r"<v>([^<]*)</v>", xml))
+        infos = zf.infolist()
+        if len(infos) > MAX_MEMBERS:
+            raise UnsafeAttachment("archive has too many members")
+        for info in sorted(infos, key=lambda i: i.filename):
+            if info.is_dir():
+                continue
+            if info.file_size > MAX_INFLATE or (
+                info.compress_size and info.file_size / info.compress_size > MAX_RATIO
+            ):
+                raise UnsafeAttachment(f"archive member {info.filename!r} exceeds the limits")
+            total += info.file_size
+            if total > MAX_TOTAL:
+                raise UnsafeAttachment("archive inflates beyond the size limit")
+            with zf.open(info) as fh:
+                raw = fh.read(MAX_INFLATE + 1)
+            if len(raw) > MAX_INFLATE:
+                raise UnsafeAttachment(f"archive member {info.filename!r} exceeds the limits")
+            name = info.filename.lower()
+            if name.endswith((".xml", ".rels", ".vml")):
+                out.extend(_xml_text(raw.decode("utf-8", "replace")))
+            elif name.endswith((".txt", ".csv")):
+                out.append(raw.decode("utf-8", "replace"))
     return "\n".join(out)
 
 
+def xlsx_text(data: bytes) -> str:
+    """Text of an XLSX / DOCX (kept for callers; see `zip_text`)."""
+    return zip_text(data)
+
+
 def extract_text(data: bytes, filename: str = "", content_type: str = "") -> str:
-    """Best-effort text of an attachment for scanning (PDF, XLSX, otherwise decoded bytes)."""
+    """Text of an attachment for scanning: PDF, any zip package (XLSX, DOCX, PPTX), otherwise
+    the decoded bytes. Raises `UnsafeAttachment` for input beyond the size / ratio limits."""
+    if len(data) > MAX_ATTACHMENT:
+        raise UnsafeAttachment("attachment larger than the size limit")
     lower = filename.lower()
     if data.startswith(b"%PDF") or lower.endswith(".pdf") or content_type == "application/pdf":
         return pdf_text(data)
-    if data.startswith(b"PK") and (
-        lower.endswith((".xlsx", ".docx")) or "officedocument" in content_type
-    ):
+    if data.startswith(b"PK\x03\x04") or lower.endswith((".xlsx", ".docx", ".pptx", ".zip")):
         try:
-            return xlsx_text(data)
+            return zip_text(data)
         except zipfile.BadZipFile:
             return ""
     return data.decode("utf-8", "replace")

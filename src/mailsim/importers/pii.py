@@ -7,11 +7,20 @@ routing fragments; phone numbers other than the fictional 555-01xx range (also g
 label: ``Tel.713-...``); US social security number patterns; personnel-style IDs
 (``P00512345``) and mixed letter-digit deal ids (``NI7771``); postal ZIPs; street addresses
 other than the fictional ``100 Commerce Street``; Enron entity acronyms (EPMI, ENA, ``TW``,
-...); named real third parties (`names.THIRD_PARTY_MAP`); markers of famous records
+``EA``, ``TGT``, ...); named real third parties (`names.THIRD_PARTY_MAP`) and real companies,
+banks, utilities, newspapers and associations (`names.REAL_ORGS_*` and any "<Name> Utilities /
+Council / Inc ..." whose name is not fictional); markers of famous records
 (`names.FAMOUS_MARKERS`); email addresses and web hosts outside ``.example.test``.
 
-``.eml`` files are parsed: headers, decoded text parts and the text of every attachment (PDF,
-XLSX, text) are scanned, so neither transfer encodings nor attachments hide anything.
+Digit ids: every run of 6+ digits is flagged unless it is money (``$150000``), a decimal, a
+compact date (``20261014``) or one of the hashed ids the import produced (``allowed``; a
+scenario pack lists them in ``pack.json`` as ``hashed_ids``). This rule is independent of the
+scrubber's own digit patterns, so an id the scrubber missed is caught here.
+
+``.eml`` files are parsed: headers, decoded text parts and the text of every attachment (PDF
+strings incl. the Info dictionary and XMP metadata, every XML part of XLSX / DOCX packages,
+text) are scanned, so neither transfer encodings nor attachments hide anything. An attachment
+beyond the parser's size / ratio limits or one that yields no text is itself a finding.
 
 Real full names are matched with a token-pair set lookup (first + last, an optional middle
 initial in between), so scanning against a registry of tens of thousands of names is linear in
@@ -21,6 +30,7 @@ the text size.
 from __future__ import annotations
 
 import email
+import json
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -28,7 +38,7 @@ from email import policy
 from pathlib import Path
 
 from mailsim.importers import names as N
-from mailsim.importers.attachments import extract_text
+from mailsim.importers.attachments import MAX_ATTACHMENT, UnsafeAttachment, extract_text
 from mailsim.importers.pseudonymize import (
     ALNUM_ID,
     DEAL_ALNUM,
@@ -40,7 +50,6 @@ from mailsim.importers.pseudonymize import (
     PO_BOX,
     SSN,
     STREET,
-    TW,
     UK_POSTCODE,
     ZIP_HQ,
     denylisted,
@@ -89,7 +98,7 @@ _COMMON_WORDS_LOWER = frozenset(
         "client's",
     ]
 )
-_LONE_CAP = re.compile(r"\s*-*\s*([A-Z][a-z]{2,14})\.?\s*")
+_LONE_CAP = re.compile(r"\s*-*\s*([A-Z][a-z]{2,14})[.,:]?\s*")
 _LOWER_GREETING = re.compile(r"\s*(?i:hi|hey|hello|dear|morning|thanks)[ ,]+([a-z]{3,15})\b")
 _LONE_WORDS = frozenset(
     [
@@ -135,8 +144,59 @@ _THIRD_PARTY = re.compile(
         for k in sorted(N.THIRD_PARTY_NAMES | N.THIRD_PARTY_FLAG_ONLY, key=len, reverse=True)
     )
 )
-_THIRD_PARTY_ANYCASE = re.compile(r"enerfax|napster|nisource|prebon", re.IGNORECASE)
+_THIRD_PARTY_ANYCASE = re.compile(r"\b(?:" + "|".join(N.SYSTEM_NAMES_ANYCASE) + r")", re.IGNORECASE)
 _FAMOUS = re.compile("|".join(N.FAMOUS_MARKERS), re.IGNORECASE)
+_STRICT_ACRONYM = re.compile(N.STRICT_ACRONYM)
+# first names that are also allowed benchmark words: a person unless the benchmark follows
+# the former head office's area code followed by digits (any grouping, even an unfinished one)
+# a real first name kept next to a pseudonymized surname ("Bill Stellan"), or one in capitals
+_REAL_FIRSTS = frozenset((set(N.COMMON_FIRST) | set(N.AMBIGUOUS_FIRST)) - set(N.FAKE_FIRST)
+                         - N.PERSONA_FIRST - set(N.PUBLIC_ORGS))  # fmt: skip
+_PSEUDO_SURNAMES = frozenset({*N.FAKE_LAST, *N.FAKE_FIRST})
+_FIRST_PAIR = re.compile(r"(?=\b([A-Z][a-z]+) ([A-Z][a-z]+)\b)")
+_CAPS_FIRST = frozenset(n.upper() for n in set(N.COMMON_FIRST) - set(N.AMBIGUOUS_FIRST)
+                        - set(N.FAKE_FIRST) - N.PERSONA_FIRST if len(n) >= 3)  # fmt: skip
+_HQ_AREA = re.compile(r"(?<![\d$.,])\(?713\)?[ .\-/]{0,2}\d{3}\b")
+_BENCHMARK_NAME = re.compile(
+    r"\bHenry\b(?! Hub)|\bBrent\b(?! (?:crude|oil|blend|futures|prices?|swaps?|index|spread))"
+)
+_REAL_ORG = re.compile(
+    "|".join([rf"(?i:(?<![\w&]){p}(?![\w&]))" for p in N.REAL_ORGS_ANYCASE]
+             + [rf"(?<![\w&]){re.escape(p)}(?![\w&])" for p in N.REAL_ORGS_CASED])
+)  # fmt: skip
+# "<Name> Utilities", "The <Name> Californian", "<Name> Inc.": an organisation whose name is not
+# one of the fictional ones. Corporate tails need a fictional / public name to pass; group-like
+# tails ("Credit Group") only fail with a proper noun that is not fictional ("Michigan Group").
+_CORPORATE_TAIL = (
+    r"Utilities|Utility|Gas Works|Council|Association|Bank|Bancorp|Land Office|Inc\b\.?|Incorporated|"
+    r"Corp\b\.?|Corporation|LLC|LLP|L\.L\.C\.|LP|L\.P\.|Ltd\b\.?|Limited|Co\.|Company|"
+    r"Airlines|Petroleum|Federation|Institute|Society|Foundation|Cooperative|Co-op|Coalition|"
+    r"Alliance"
+)
+_GROUP_TAIL = r"Partners|Group|Holdings|Capital|Securities|Trust|Energy|Power|Gas|Electric"
+_ORG_PHRASE = re.compile(
+    rf"((?:[A-Z][\w&'.\-]*[ \t]+(?:(?:&|and|of)[ \t]+)?){{1,4}})"
+    rf"(?:(?P<corp>{_CORPORATE_TAIL})|(?P<group>{_GROUP_TAIL}))(?![\w-])"
+)
+_FICTIONAL = frozenset(
+    {*N.FICTIONAL_ORG_WORDS, *N.FAKE_ORG_NAMES, *N.FAKE_FIRST, *N.FAKE_LAST, *N.FAKE_PLACES,
+     *N.PUBLIC_ORGS, *(w for v in (*N.ENTITY_MAP.values(), *N.THIRD_PARTY_MAP.values())
+                       for w in v.split())}
+) - frozenset(N.COMMON_WORDS)  # fmt: skip
+_ARTICLES = frozenset(["The", "Our", "Your", "This", "That", "Its", "A", "An", "Each", "Every",
+                       "Any", "Such", "Same", "Their", "My", "His", "Her"])  # fmt: skip
+_GENERIC_HEAD = frozenset({*N.COMMON_WORDS, *_ARTICLES, "Coast", "East", "West", "North", "South",
+                           "Central", "Old", "Natural", "Physical", "Financial", "Retail"})  # fmt: skip
+# newspapers and magazines: "The Bakersfield Californian", "Riverton Chronicle" (a real place)
+_NEWSPAPER = re.compile(
+    r"(?:\b(The)[ \t]+)?((?:[A-Z][a-z]+[ \t]+){1,3})(?:Californian|Times|Journal|Chronicle|Herald|"
+    r"Tribune|Gazette|Examiner|Post|Register|Bee|Star-Telegram|Sentinel|Inquirer)\b"
+)
+_DIGIT_RUN = re.compile(r"(?<![0-9])[0-9]{6,}(?![0-9])")
+_ID_HEADERS = frozenset(
+    ["message-id", "in-reply-to", "references", "content-type", "content-transfer-encoding",
+     "mime-version", "content-disposition", "content-id"]
+)  # fmt: skip
 _LANDMARK = re.compile("|".join(N.LANDMARKS), re.IGNORECASE)
 
 
@@ -154,6 +214,47 @@ class Finding:
 def _allowed_domain(domain: str) -> bool:
     d = domain.lower().rstrip(".")
     return d == "example.test" or d.endswith(".example.test")
+
+
+def _compact_date(run: str) -> bool:
+    """YYYYMMDD, YYYYMMDDHHMM or YYYYMMDDHHMMSS with a plausible year, month and day."""
+    if len(run) not in (8, 12, 14) or not run.startswith(("19", "20")):
+        return False
+    return 1 <= int(run[4:6]) <= 12 and 1 <= int(run[6:8]) <= 31
+
+
+def digit_ids(text: str, allowed: frozenset[str] = frozenset()) -> list[str]:
+    """6+ digit runs that are not money, a decimal, a compact date or an allowed hashed id."""
+    out = []
+    for m in _DIGIT_RUN.finditer(text):
+        run, before, after = m.group(0), text[max(0, m.start() - 4) : m.start()], text[m.end() :]
+        if run in allowed or _compact_date(run):
+            continue
+        if re.search(r"(?:\$|USD ?|[0-9][.,])$", before) or re.match(r"[.,][0-9]", after):
+            continue
+        out.append(run)
+    return out
+
+
+def org_mentions(line: str) -> list[str]:
+    """Real organisations in a line: the explicit lists plus non-fictional "<Name> <tail>"."""
+    out = [m.group(0) for m in _REAL_ORG.finditer(line)]
+    for m in _ORG_PHRASE.finditer(line):
+        heads = [w.strip(".,'") for w in m.group(1).split()]
+        heads = [w for w in heads if w and w not in ("&", "and", "of")]
+        if any(w in _FICTIONAL for w in heads):
+            continue
+        named = [w for w in heads if w not in _ARTICLES]
+        proper = [w for w in heads if w not in _GENERIC_HEAD]
+        if (m.group("corp") and named) or proper:
+            out.append(m.group(0).strip())
+    for m in _NEWSPAPER.finditer(line):
+        heads = m.group(2).split()
+        if any(w in _FICTIONAL for w in heads):
+            continue
+        if m.group(1) or any(w in N.PLACES for w in heads):
+            out.append(m.group(0).strip())
+    return list(dict.fromkeys(out))
 
 
 class Scanner:
@@ -190,19 +291,42 @@ class Scanner:
                     out.append(f"{raw} {toks[j][0]}")
         return out
 
-    def scan_text(self, text: str, path: str = "<text>") -> list[Finding]:
+    def scan_text(self, text: str, path: str = "<text>", *, allowed: frozenset[str] = frozenset(),
+                  digits: bool = True) -> list[Finding]:  # fmt: skip
+        """Findings in `text`; `allowed` are hashed digit ids that may appear (`digits=False`
+        skips the digit-id rule, for message ids and MIME boundaries)."""
         out: list[Finding] = []
         lines = text.splitlines()
         for no, line in enumerate(lines, start=1):
             # same whitespace normalisation as clean_body (tabs, NBSP)
-            out.extend(self._line(line.replace("\t", " ").replace("\xa0", " "), path, no))
-        for no in range(1, len(lines)):  # a name pair broken over two lines
+            norm = line.replace("\t", " ").replace("\xa0", " ")
+            out.extend(self._line(norm, path, no))
+            if digits:
+                out.extend(Finding(path, no, "digit-id", run) for run in digit_ids(norm, allowed))
+        for no in range(1, len(lines)):  # a name or a firm broken over two lines
             tail, head = lines[no - 1].split(), lines[no].split()
             if tail and head:
                 pair = f"{tail[-1]} {head[0]}"
                 out.extend(
                     f for f in self._line(pair, path, no) if f.kind in ("real-name", "real-surname")
                 )
+                joined = f"{lines[no - 1].strip()} {lines[no].strip()}"
+                out.extend(Finding(path, no, "real-org", name) for name in org_mentions(joined)
+                           if name not in lines[no - 1] and name not in lines[no])  # fmt: skip
+                wrapped = f"{' '.join(tail[-3:])} {' '.join(head[:3])}"  # a number split by a wrap
+                split = len(" ".join(tail[-3:]))
+                for m in PHONE_RUN.finditer(wrapped):
+                    decimals = re.findall(r"\d\.(\d+)", m.group(0))  # "6.14 245600.0": numbers
+                    if (is_phone(m.group(0)) and m.start() < split < m.end()
+                            and len(re.sub(r"\D", "", m.group(0))) >= 10
+                            and all(len(d) in (3, 4) for d in decimals)):  # fmt: skip
+                        out.append(Finding(path, no, "phone", m.group(0)))
+                for kind, rx in (("landmark", _LANDMARK), ("famous-record", _FAMOUS)):
+                    out.extend(
+                        Finding(path, no, kind, m.group(0))
+                        for m in rx.finditer(joined)
+                        if m.group(0) not in lines[no - 1] and m.group(0) not in lines[no]
+                    )
         return out
 
     def _line(self, line: str, path: str, no: int) -> list[Finding]:
@@ -247,6 +371,9 @@ class Scanner:
                 hit("phone", m.group(0))
         for m in INTL_PHONE.finditer(line):
             hit("phone", m.group(0))
+        for m in _HQ_AREA.finditer(line):
+            if not any(f.kind == "phone" and m.group(0) in f.match for f in out):
+                hit("phone", m.group(0))
         for m in PHONE_SHORT.finditer(line):
             if not _FAKE_PHONE.search(m.group(0)):
                 hit("phone", m.group(0))
@@ -267,8 +394,18 @@ class Scanner:
                 hit("street", m.group(0))
         for m in UK_POSTCODE.finditer(line):
             hit("zip", m.group(0))
-        for m in TW.finditer(line):
+        for m in _BENCHMARK_NAME.finditer(line):
+            hit("real-first-name", m.group(0))
+        for m in _FIRST_PAIR.finditer(line):
+            if m.group(1) in _REAL_FIRSTS and m.group(2) in _PSEUDO_SURNAMES:
+                hit("real-first-name", f"{m.group(1)} {m.group(2)}")
+        for tok in re.findall(r"\b[A-Z]{3,}\b", line):
+            if tok in _CAPS_FIRST:
+                hit("real-first-name", tok)
+        for m in _STRICT_ACRONYM.finditer(line):
             hit("enron-acronym", m.group(0))
+        for name in org_mentions(line):
+            hit("real-org", name)
         third = {(m.start(), m.group(0)) for m in _THIRD_PARTY.finditer(line)}
         third |= {(m.start(), m.group(0)) for m in _THIRD_PARTY_ANYCASE.finditer(line)
                   if not any(s <= m.start() < s + len(t) for s, t in third)}  # fmt: skip
@@ -283,7 +420,7 @@ class Scanner:
         for name in N.ENTITY_NAMES:
             if re.search(rf"(?<![A-Za-z]){re.escape(name)}(?![A-Za-z])", line, re.IGNORECASE):
                 hit("enron-entity", name)
-        for tok in re.findall(r"\b[A-Z]{3,4}\b", line):
+        for tok in re.findall(r"\b[A-Z]{3,4}\b|\b[A-Z]{1,2}&[A-Z]\b", line):
             if tok in N.ENRON_ACRONYMS:
                 hit("enron-acronym", tok)
         for m in IPV4.finditer(line):
@@ -297,12 +434,16 @@ class Scanner:
                 hit("domain", m.group(1))
         return out
 
-    def scan_message(self, raw: bytes, path: str = "<message>") -> list[Finding]:
+    def scan_message(self, raw: bytes, path: str = "<message>", *,
+                     allowed: frozenset[str] = frozenset()) -> list[Finding]:  # fmt: skip
         """Headers, decoded text parts and attachment text of one RFC 5322 message."""
         msg = email.message_from_bytes(raw, policy=policy.default)
         out: list[Finding] = []
-        headers = "\n".join(f"{k}: {v}" for k, v in msg.items())
-        out.extend(self.scan_text(headers, f"{path}#headers"))
+        for part in msg.walk():
+            for k, v in part.items():
+                ids = k.lower() in _ID_HEADERS
+                out.extend(self.scan_text(f"{k}: {v}", f"{path}#headers", allowed=allowed,
+                                          digits=not ids))  # fmt: skip
         for no, part in enumerate(msg.walk()):
             if part.is_multipart():
                 continue
@@ -312,22 +453,58 @@ class Scanner:
             ctype = part.get_content_type()
             label = f"{path}#{name or ctype}" if name else f"{path}#part{no}"
             if name:
-                out.extend(self.scan_text(name, f"{label}:filename"))
+                out.extend(self.scan_text(name, f"{label}:filename", allowed=allowed))
             if ctype.startswith("text/") and not name:
                 text = payload.decode(part.get_content_charset() or "utf-8", "replace")
             else:
-                text = extract_text(payload, name, ctype)
-            out.extend(self.scan_text(text, label))
+                try:
+                    text = extract_text(payload, name, ctype)
+                except UnsafeAttachment as exc:
+                    out.append(Finding(label, 0, "unsafe-attachment", str(exc)))
+                    continue
+                if payload.strip() and not text.strip():
+                    out.append(Finding(label, 0, "unreadable-attachment", name or ctype))
+            out.extend(self.scan_text(text, label, allowed=allowed))
         return out
+
+    @staticmethod
+    def _manifest(f: Path, cache: dict[Path, frozenset[str]]) -> frozenset[str]:
+        """Hashed ids listed by the nearest enclosing scenario pack (``pack.json``)."""
+        for d in f.parents:
+            if d in cache:
+                return cache[d]
+            pack = d / "pack.json"
+            if pack.is_file():
+                try:
+                    ids = json.loads(pack.read_text(encoding="utf-8")).get("hashed_ids", [])
+                except ValueError:
+                    ids = []
+                cache[d] = frozenset(str(i) for i in ids)
+                return cache[d]
+        return frozenset()
 
     def scan_paths(self, paths: Iterable[Path]) -> list[Finding]:
         out: list[Finding] = []
+        cache: dict[Path, frozenset[str]] = {}
         for root in paths:
             files = sorted(p for p in root.rglob("*") if p.is_file()) if root.is_dir() else [root]
             for f in files:
+                if f.stat().st_size > MAX_ATTACHMENT:
+                    out.append(
+                        Finding(str(f), 0, "unsafe-attachment", "file larger than the limit")
+                    )
+                    continue
                 data = f.read_bytes()
+                allowed = self._manifest(f.resolve(), cache)
                 if f.suffix.lower() == ".eml":
-                    out.extend(self.scan_message(data, str(f)))
-                else:
-                    out.extend(self.scan_text(extract_text(data, f.name), str(f)))
+                    out.extend(self.scan_message(data, str(f), allowed=allowed))
+                    continue
+                try:
+                    text = extract_text(data, f.name)
+                except UnsafeAttachment as exc:
+                    out.append(Finding(str(f), 0, "unsafe-attachment", str(exc)))
+                    continue
+                # the digit-id rule is for mail and attachments (configuration files hold
+                # durations and counters)
+                out.extend(self.scan_text(text, str(f), allowed=allowed, digits=False))
         return out

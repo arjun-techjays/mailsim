@@ -56,6 +56,9 @@ def _parser() -> argparse.ArgumentParser:
     en.add_argument("--keep-quotes", action="store_true", help="keep '>' quoted lines")
     en.add_argument("--sample-harvest", action="store_true",
                     help="harvest names from the sample only (faster, weaker)")  # fmt: skip
+    en.add_argument("--id-key", type=Path, default=None,
+                    help="secret key file for hashed identifiers (default: id.key next to --out; "
+                         "created on first use; keep out of git)")  # fmt: skip
     sc = isub.add_parser("scan", help="scan files/directories for residual real PII")
     sc.add_argument("paths", type=Path, nargs="+")
     sc.add_argument("--names", type=Path, default=None, help="registry JSON from import enron")
@@ -150,8 +153,9 @@ def _import(args: argparse.Namespace) -> int:
                "by_kind": _count(f.kind for f in findings),
                "examples": [str(f) for f in findings[:50]]})  # fmt: skip
         return 0 if not findings else 1
+    key = enron.load_or_create_key(args.id_key or args.out.with_name("id.key"))
     cfg = enron.ImportConfig(limit=args.limit, seed=args.seed, strip_quotes=not args.keep_quotes,
-                             harvest_all=not args.sample_harvest)  # fmt: skip
+                             harvest_all=not args.sample_harvest, id_key=key)  # fmt: skip
     try:
         records, header, registry = enron.import_enron(list(args.parquet), cfg)
     except enron.MissingDependency as exc:

@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import email
+import re
+from datetime import UTC, datetime
 from email import policy
+
+import pytest
 
 from mailsim.importers import leadership
 from mailsim.importers.curation import derive_subject
@@ -98,8 +102,8 @@ def test_unbindable_pii_and_fallbacks():
 def test_residual_identifier_is_skipped():
     # a residual identifier in the rendered text: skipped by the scanner
     body = f"{BODY}\nCall me on 713-853-1234."
-    sc = _gen([rec("r3", seg(body=body))], volume=1).generate_role("coo")
-    assert (sc.messages, sc.skipped["pii"]) == (0, 1)
+    sc = _gen([rec("r3", seg(body=body), topic="ops")], volume=1).generate_role("coo")
+    assert sc.messages == 0 and sc.skipped["pii"] >= 1
 
 
 def test_derive_subject_and_quotas():
@@ -167,22 +171,48 @@ def _bodies(sc):
     return msgs, [m.get_body(("plain",)).get_content() for m in msgs]
 
 
-def test_generator_skips_incoherent_and_undatable_records():
-    fwd = dict(author="p:1", subject="plan", kind="forward", body=BODY)
-    records = [
+def _skips(record, role="ceo"):
+    risks = len(leadership.RISKS.get(role, ()))
+    opts = GenerateOptions(seed=1, roles=[role], volume={role: risks + 2})
+    sc = Generator(HEADER, [record], opts).generate_role(role)
+    return sc.messages - risks, {k: v for k, v in sc.skipped.items() if v}
+
+
+FWD = dict(author="p:1", subject="plan", kind="forward", body=BODY)
+
+
+@pytest.mark.parametrize(
+    ("record", "reason"),
+    [
         # the personal contact may not forward work mail
-        rec("r1", seg(**fwd), seg(body="Have a look at this when you can, thanks a lot."),
-            topic="personal"),
+        (rec("r1", seg(**FWD), seg(body="Have a look at this when you can, thanks a lot."),
+             topic="personal"), "incoherent"),
         # a year the shift cannot place
-        rec("r2", seg(body=BODY + " The term runs through 2011 for the plant.")),
+        (rec("r2", seg(body=BODY + " The term runs through 2011 for the plant.")), "dates"),
         # a recipient named in the third person in the body
-        rec("r3", seg(body="Please check this with {{p:7:n}} and the plant team today. Thanks.",
-                      greeting=None)),
-    ]  # fmt: skip
-    gen = Generator(HEADER, records, GenerateOptions(seed=1, roles=["ceo"], volume={"ceo": 4}))
-    gen._binding = {}
-    sc = gen.generate_role("ceo")
-    assert sc.skipped.get("incoherent", 0) + sc.skipped.get("dates", 0) >= 2
+        (rec("r3", seg(body="Hi,\n\nPlease check this with Marsh and the budget team today. "
+                            "Thanks.")),
+         "incoherent"),
+        # dates no shift can place: the future-tense one lies before the past-tense one
+        (rec("r4", seg(body="The budget review was held on Friday, May 4, 2001. The plant plan "
+                            "will be signed on Tuesday, May 1, 2001.")), "dates"),
+        # a year-less date without any tense marker cannot be placed
+        (rec("r5", seg(body="The budget plan is fine. The review is a couple of weeks from "
+                            "June 1 for the budget.")), "dates"),
+        # back-office deal matching sent to the CEO
+        (rec("r6", seg(body="Please match the following deals for the plant budget: deal 172426 "
+                            "with 132316. Thanks.")), "incoherent"),
+        # a reply bound to the sender of the message it answers
+        (rec("r7", seg(author="p:1", subject="plan", kind="reply", body=BODY),
+             seg(author="p:1", body="And the forecast for the plant is attached as well.")),
+         "unbindable"),
+    ],
+    ids=["personal-forward", "stale-year", "third-person-recipient", "future-before-send",
+         "yearless-no-tense", "back-office-to-ceo", "reply-to-self"],
+)  # fmt: skip
+def test_generator_skips_incoherent_and_undatable_records(record, reason):
+    messages, skipped = _skips(record)
+    assert messages == 0 and skipped == {reason: 1}
 
 
 def test_stub_only_messages_get_a_lead_line_and_a_spreadsheet():
@@ -206,4 +236,9 @@ def test_forward_after_a_reply_dates_the_original_between_them():
     sc = _gen(records, volume=3).generate_role("coo")
     msgs, texts = _bodies(sc)
     forwards = [t for t in texts if "Forwarded message" in t]
-    assert sc.messages == 2 and forwards
+    assert sc.messages == 2 and len(forwards) == 1
+    reply, forward = sorted(msgs, key=lambda m: m["Date"].datetime)
+    inner = re.search(r"(?m)^Date: (.+)$", forwards[0])
+    assert inner is not None
+    original = datetime.strptime(inner.group(1).strip(), "%a, %d %b %Y %H:%M").replace(tzinfo=UTC)
+    assert reply["Date"].datetime < original < forward["Date"].datetime

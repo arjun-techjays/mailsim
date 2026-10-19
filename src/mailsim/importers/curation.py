@@ -11,66 +11,470 @@ from __future__ import annotations
 import re
 
 from mailsim.importers import names as N
+from mailsim.importers.documents import STUB_LINE
 
-_PH = r"\{\{[pqsxo]:\d+:[nfle]\}\}"
+_PH = r"\{\{[pqsxol]:\d+:[nfle]\}\}"
 PERSON_PH = re.compile(r"\{\{([pqs]:\d+):[nfl]\}\}")
 
 # ------------------------------------------------------------------ content markers
+# Word lists per category (regular-expression fragments, matched case-insensitively at word
+# boundaries unless noted); `category(rx, text)` names the category that matched.
 
-# mass mail and automated notices: only the newsletter persona sends such text
-AUTOMATED = re.compile(
-    r"automated (?:e-?mail|message|notification)|do not reply|please do not respond|"
-    r"the report named|is now available for viewing|\bdear [\w ]{0,40}customers?\b|click here|"
-    r"unsubscribe|to be removed|mailing list|you are receiving this|subscribers?\b|"
-    r"this e-?mail was sent|\bsurvey\b|market participants|all employees|dear colleagues|"
-    r"ladies and gentlemen|to all\b|\ball corvane\b|distribution list|out of the office|"
-    r"auto-?reply|this message was sent|to whom it may concern|expense report|request id|"
-    r"click on (?:this|the following|the) link|administrator|the following .{0,40}(?:is ready|"
-    r"has been (?:completed|approved|submitted))|to the attention of|please rsvp|"
-    r"information contained herein|webcast|register (?:now|today)|alert posted|calendar entry|"
-    r"critical notice|notice to (?:all )?shippers|we (?:are pleased to |regret to )?announce|"
-    r"with (?:deep )?regret|(?:is|are) pleased to announce|please join me in|"
-    r"we apologize for the inconvenience|it staff|help desk|posting site|informational posting|"
-    r"open enrollment|media inquiries|quote of the day|columnist|attention!|automatically notified|"
-    r"registration information|automatic notification|"
-    r"urgent notification|click on the url|discussion list|writes to the|helpdesk|your net pay|"
-    r"you are invited to attend|limited seating|bag lunch|synchroniz\w+ (?:mailbox|folder)|"
-    r"has just sent you|pickup window|e-?card|you don't need to reply|this is to remind you|"
-    r"welcome to corvane|new hire",
-    re.IGNORECASE,
-)
-SPAM = re.compile(
-    r"save \d+%|life insurance|free (?:trial|offer|gift)|act now|limited time|\$\d+ off|"
-    r"no extra cost|winner|lottery|mortgage rates|cash bonus|special offer|order now|"
-    r"!!!|\bFREE\b|CLICK HERE|\bvisit our website\b|Fortune (?:link|article|magazine)|"
-    r"(?i:coupon|\d+% off|holiday collection|\[image\]|free download|switch now|mailing list id|"
-    r"web site design|data recovery|promotional partner|msn messenger|advertisement here|"
-    r"special rates|\$\$\$|past performance does not|subscription offer)",
-)
+
+def _categories(words: dict[str, tuple[str, ...]], flags: int = re.IGNORECASE) -> re.Pattern[str]:
+    def bound(w: str) -> str:  # a word boundary before fragments that start with a word
+        return rf"\b{w}" if re.match(r"[\w(]", w) else w
+
+    return re.compile(
+        "|".join(rf"(?P<{cat}>{'|'.join(bound(w) for w in ws)})" for cat, ws in words.items()),
+        flags,
+    )
+
+
+def category(rx: re.Pattern[str], text: str) -> str | None:
+    """The category (group name) of the first match of a `_categories` pattern."""
+    m = rx.search(text)
+    return m.lastgroup if m else None
+
+
+# Private or sensitive content: never curated into a pack.
+SENSITIVE_WORDS: dict[str, tuple[str, ...]] = {
+    "credentials": (
+        r"password",
+        r"passwd",
+        r"social security",
+        r"ssn\b",
+        r"credit card",
+        r"401\(?k\)?",
+        r"rrsp\b",
+        r"retirement savings",
+        r"access shut off",
+        r"not on list",
+    ),
+    "health": (
+        r"diagnos\w*",
+        r"cancer",
+        r"pregnan\w*",
+        r"hospital\w*",
+        r"surgery",
+        r"medical",
+        r"illness",
+        r"doctor\w*",
+        r"vaccin\w*",
+        r"flu shots?",
+        r"died\b",
+        r"death\b",
+        r"funeral",
+        r"baby\b",
+        r"birth of",
+        r"medicaid",
+    ),
+    "private_life": (
+        r"divorce",
+        r"wife\b",
+        r"husband",
+        r"my (?:son|daughter|kids)\b",
+        r"girlfriend",
+        r"boyfriend",
+        r"dating\b",
+        r"love you",
+        r"miss you",
+        r"my parents",
+        r"diamonds?\b",
+        r"god\b",
+        r"religio\w*",
+        r"sex\w*",
+        r"porn\w*",
+        r"nude\b",
+        r"drunk",
+        r"drinking",
+        r"hangover",
+        r"hung over",
+        r"booze",
+        r"sober\b",
+        r"doing shots",
+        r"duchess",
+        r"best pick",
+        r"got out of my",
+        r"church",
+        r"prayers?\b",
+        r"pray\b",
+        r"shit\b",
+        r"damn\b",
+        r"crap\b",
+        r"fuck\w*",
+        r"hell\b",
+        r"screwing",
+        r"therapist",
+        r"speech/language",
+        r"reading readiness",
+        r"teacher\b",
+    ),
+    "employment": (
+        r"lay-?offs?\b",
+        r"laid off",
+        r"terminated",
+        r"terminate\b",
+        r"firing\b",
+        r"fired\b",
+        r"severance",
+        r"resign\w*",
+        r"promotions?\b",
+        r"stock options?",
+        r"grant price",
+        r"retention (?:payments?|bonus\w*)",
+        r"work performance",
+        r"disciplin\w*",
+        r"poor at best",
+        r"bonus\w*",
+        r"headcount",
+        r"human resources rep",
+        r"offer/contract from",
+        r"accepted an offer",
+        r"reorganization",
+        r"harass\w*",
+        r"enhance (?:luncheon|program)",
+        r"pay ?checks?",
+        r"payroll",
+        r"direct deposits?",
+        r"paid semi-monthly",
+        r"pay stub",
+        r"imputed income",
+        r"taxes withheld",
+        r"tax liabilit\w*",
+        r"out sick",
+        r"was sick",
+        r"expense account",
+        r"salary",
+        r"salaries",
+        r"relocation",
+        r"housing up to",
+        r"pocket-book",
+        r"benefits info",
+        r"visa\b",
+        r"deferred compensation",
+        r"compensation team",
+    ),
+    "legal_trouble": (
+        r"arrest\w*",
+        r"lawsuit against",
+        r"judge [A-Z{]",
+        r"bankruptcy court",
+        r"insider trading",
+        r"good buy",
+        r"buy the stock",
+        r"stock is up",
+        r"already up \d",
+        r"civil penalty",
+    ),
+    "company_crisis": (
+        r"bankrupt\w*",
+        r"chapter 11",
+        r"cpt\.? 11",
+        r"ch\.? 11\b",
+        r"creditors",
+        r"post[- ]?petition",
+        r"pre-?petition",
+        r"takeovers?\b",
+        r"our stock",
+        r"recent events",
+        r"recent developments",
+        r"cve\b",
+        r"the estate\b",
+        r"netco\b",
+        r"if we default",
+        r"leak (?:about|runs)",
+        r"possible sale",
+        r"redeployment",
+        r"discrimination",
+        r"the picks\b",
+        r"published a book",
+    ),
+    "politics_news": (
+        r"tax cuts?\b",
+        r"governor",
+        r"gov\.",
+        r"cnn\b",
+        r"senate\b",
+        r"senators?\b",
+        r"assembly(?:man|woman)?\b",
+        r"congressm[ae]n",
+        r"legislature",
+        r"the articles\b",
+        r"coalition for",
+        r"[as]bx? ?\d+\b",
+    ),
+    "personal_finance": (r"my investment", r"financial advis[eo]r"),
+}
+SENSITIVE = _categories(SENSITIVE_WORDS)
+# Mass mail and automated notices: only the newsletter persona sends such text.
+AUTOMATED_WORDS: dict[str, tuple[str, ...]] = {
+    "notification": (
+        r"automated (?:e-?mail|message|notification)",
+        r"do not reply",
+        r"please do not respond",
+        r"the report named",
+        r"is now available for viewing",
+        r"this e-?mail was sent",
+        r"this message was sent",
+        r"auto-?reply",
+        r"out of the office",
+        r"automatically notified",
+        r"automatic notification",
+        r"urgent notification",
+        r"alert posted",
+        r"calendar entry",
+        r"request id",
+        r"expense report",
+        r"your net pay",
+        r"has just sent you",
+        r"pickup window",
+        r"e-?card",
+        r"you don't need to reply",
+        r"this is to remind you",
+        r"synchroniz\w+ (?:mailbox|folder)",
+    ),
+    "mass_mail": (
+        r"dear [\w ]{0,40}customers?\b",
+        r"click here",
+        r"unsubscribe",
+        r"to be removed",
+        r"mailing list",
+        r"you are receiving this",
+        r"subscribers?\b",
+        r"survey\b",
+        r"market participants",
+        r"all employees",
+        r"dear colleagues",
+        r"ladies and gentlemen",
+        r"to all\b",
+        r"all corvane\b",
+        r"distribution list",
+        r"to whom it may concern",
+        r"click on (?:this|the following|the) link",
+        r"click on the url",
+        r"discussion list",
+        r"information contained herein",
+    ),
+    "announcement": (
+        r"we (?:are pleased to |regret to )?announce",
+        r"with (?:deep )?regret",
+        r"effective immediately,? reporting",
+        r"reporting responsibility",
+        r"will report directly to",
+        r"the following changes will be made",
+        r"as you may have noticed",
+        r"please note the correction",
+        r"your assistance is (?:requested|appreciated)",
+        r"single entry point",
+        r"(?:fond )?farewell",
+        r"please join us",
+        r"thank you for taking the time",
+        r"i want everyone",
+        r"this distribution\b",
+        r"sent to you in error",
+        r"to add additional people",
+        r"performed maintenance",
+        r"scheduled maintenance",
+        r"voicemail",
+        r"orientation\b",
+        r"we encourage all of you",
+        r"registration will be",
+        r"has moved (?:from|to) the",
+        r"management asks",
+        r"sent automatically",
+        r"mailbox is approaching",
+        r"thank you for your cooperation",
+        r"described in this memo",
+        r"as many of you know",
+        r"office of the chairman",
+        r"brown ?bag",
+        r"this is a notification",
+        r"no signature is required",
+        r"sincerely apologize",
+        r"will be announced shortly",
+        r"townhall live",
+        r"pre-submit your questions",
+        r"also in this issue",
+        r"it's all in the latest",
+        r"(?:is|are) pleased to announce",
+        r"please join me in",
+        r"welcome to corvane",
+        r"new hire",
+        r"media inquiries",
+        r"quote of the day",
+        r"columnist",
+        r"writes to the",
+    ),
+    "event": (
+        r"webcast",
+        r"register (?:now|today)",
+        r"please rsvp",
+        r"registration information",
+        r"you are invited to attend",
+        r"limited seating",
+        r"bag lunch",
+        r"open enrollment",
+    ),
+    "helpdesk": (
+        r"administrator",
+        r"it staff",
+        r"help desk",
+        r"helpdesk",
+        r"posting site",
+        r"informational posting",
+        r"critical notice",
+        r"notice to (?:all )?shippers",
+        r"we apologize for (?:the|any) inconvenience",
+        r"attention!",
+        r"the following .{0,40}(?:is ready|has been (?:completed|approved|submitted))",
+        r"to the attention of",
+    ),
+}
+AUTOMATED = _categories(AUTOMATED_WORDS)
+SPAM_WORDS: dict[str, tuple[str, ...]] = {
+    "promotion": (
+        r"save \d+%",
+        r"free (?:trial|offer|gift)",
+        r"act now",
+        r"limited time",
+        r"\$\d+ off",
+        r"special offer",
+        r"order now",
+        r"coupon",
+        r"\d+% off",
+        r"holiday collection",
+        r"special rates",
+        r"subscription offer",
+        r"switch now",
+        r"cash bonus",
+    ),
+    "finance_spam": (
+        r"life insurance",
+        r"mortgage rates",
+        r"no extra cost",
+        r"winner",
+        r"lottery",
+        r"past performance does not",
+        r"\$\$\$",
+    ),
+    "web_junk": (
+        r"visit our website",
+        r"fortune (?:link|article|magazine)",
+        r"\[image\]",
+        r"free download",
+        r"mailing list id",
+        r"web site design",
+        r"data recovery",
+        r"promotional partner",
+        r"msn messenger",
+        r"advertisement here",
+        r"update your account",
+        r"sign-in and update",
+        r"thank you for subscribing",
+    ),
+}
+SPAM_SHOUTING = re.compile(r"!!!|\bFREE\b|CLICK HERE")  # case-sensitive: "feel free" is fine
+SPAM = _categories(SPAM_WORDS)
+
+
+def spam_reason(text: str) -> str | None:
+    return category(SPAM, text) or ("shouting" if SPAM_SHOUTING.search(text) else None)
+
+
 # a job applicant writing (no persona of the roster is one)
 RECRUIT = re.compile(
     r"\bmba\b|\bcandidates?\b|class of (?:19|20)\d\d|\bresume\b|\binternship|telephone interview|"
     r"interview with you|interviewers|accept your offer|offer of employment|your interview|"
-    r"\binterviews\b|\binterviewing\b|"
+    r"\binterview(?:s|ed|ing)?\b|\binterview packet|"
     r"\brotation in your group|super saturday|\brecruiting\b|\bjob offer\b|\bmy interview",
     re.IGNORECASE,
 )
 # content that does not belong in an executive's work mailbox from a colleague
-OFF_ROLE = re.compile(
-    r"\byour boss\b|\bmy boss\b|i'?m a (?:girl|woman|guy|man)\b|\bget promoted\b|\bPRC\b|"
-    r"\byour (?:new )?home\b|\bthe house\b|\bmy (?:\w+ )?house\b|earnest money|subdivision|"
-    r"homeowner|\bon our show\b|\btv\b|personal investment|running out of cash|the school\b|"
-    r"university of\b|nickname|football|\bcoach\b|"
-    r"\b(?:dad|mom|mommy|daddy|grandma|grandpa|honey|sweetie|"
-    r"sweetheart|xoxo)\b|\blove (?:you|ya)\b|^\s*love,|\b(?:garden|garage|bathroom|repaint\w*|"
-    r"remodel\w*|my house|our house|wedding|baby|birthday|church|textbooks?|homework|cousin|"
-    r"daughter|nephew|niece|"
-    r"syllabus|semester|professor|classroom|students?|tuition|exams?)\b",
-    re.IGNORECASE | re.MULTILINE,
+OFF_ROLE_WORDS: dict[str, tuple[str, ...]] = {
+    "career": (r"your boss\b", r"my boss\b", r"get promoted\b", r"i'?m a (?:girl|woman|guy|man)\b"),
+    "home": (
+        r"your (?:new )?home\b",
+        r"the house\b",
+        r"my (?:\w+ )?house\b",
+        r"earnest money",
+        r"subdivision",
+        r"homeowner",
+        r"garden\b",
+        r"garage\b",
+        r"bathroom\b",
+        r"repaint\w*",
+        r"remodel\w*",
+        r"our house\b",
+    ),
+    "family": (
+        r"dad\b",
+        r"mom\b",
+        r"mommy\b",
+        r"daddy\b",
+        r"grandma\b",
+        r"grandpa\b",
+        r"honey\b",
+        r"sweetie\b",
+        r"sweetheart\b",
+        r"xoxo\b",
+        r"love (?:you|ya)\b",
+        r"wedding\b",
+        r"baby\b",
+        r"birthday\b",
+        r"church\b",
+        r"cousin\b",
+        r"daughter\b",
+        r"nephew\b",
+        r"niece\b",
+    ),
+    "school": (
+        r"the school\b",
+        r"university of\b",
+        r"textbooks?\b",
+        r"homework\b",
+        r"syllabus\b",
+        r"semester\b",
+        r"professor\b",
+        r"classroom\b",
+        r"students?\b",
+        r"tuition\b",
+        r"exams?\b",
+    ),
+    "media_sports": (
+        r"on our show\b",
+        r"tv\b",
+        r"football\b",
+        r"coach\b",
+        r"nickname\b",
+        r"mp3\b",
+        r"music\b",
+        r"golf\b",
+        r"holes\b",
+        r"tee times?",
+    ),
+    "social": (
+        r"(?:friday|saturday|sunday) night",
+        r"this weekend\b",
+        r"babysit\w*",
+        r"at my house",
+        r"get together\b",
+        r"beer\b",
+        r"burgers?\b",
+    ),
+    "personal_money": (r"personal investment", r"running out of cash"),
+}
+OFF_ROLE = _categories(OFF_ROLE_WORDS)
+_PRC = re.compile(r"\bPRC\b")  # the performance review committee (case-sensitive)
+_LOVE_SIGNOFF = re.compile(r"(?im)^\s*love,")
+_NAME_GREETING = re.compile(
+    rf"^(?:(?i:hi|hello|dear|hey)\s+)?(?:{_PH}|[A-Z][a-z]+)(?:\s*(?:,|and|&)\s*(?:{_PH}|[A-Z][a-z]+))*"
+    r"\s*[,:]?\s*$"
 )
+_REAL_FIRST = (N.COMMON_FIRST | N.AMBIGUOUS_FIRST | N.PLACES) - set(N.FAKE_FIRST) - N.PERSONA_FIRST
 # public holidays: their dates cannot follow the shifted calendar
 HOLIDAY = re.compile(
-    r"christmas|thanksgiving|new year|easter|halloween|memorial day|labor day|independence day|"
+    r"christmas|x-?mas|thanksgiving|new year|easter|halloween|memorial day|labor day|independence day|"
     r"fourth of july|4th of july|valentine|hanukkah|president'?s day|\bking day\b|"
     r"\bmlk\b|\bholidays?\b|merry|good friday|passover|mother'?s day|father'?s day",
     re.IGNORECASE,
@@ -81,11 +485,6 @@ NAME_LIST = re.compile(rf"(?m)(?:^[ \t]*-?[ \t]*{_PH}(?:[ \t]+{_PH})?[ \t]*[,;]?
 # a first-name placeholder alone on a line inside a body (a stray list item, not a sign-off)
 STRAY_NAME = re.compile(r"(?m)^\S.*\n[ \t]*\{\{[pq]:\d+:f\}\}[ \t]*\n(?=.*\S)")
 LIST_NAME = re.compile(r"(?m)[-:]\s+([A-Z][a-z]+)(?:\s+[A-Z][a-z]+)?\s*$")
-# an attachment stub line (" - report.doc", "<<file.xls>>")
-_STUB_LINE = re.compile(
-    r"(?im)^[ \t]*(?:-[ \t]+)?(?:<<[^<>]{1,120}>>|[\w.()\-][\w.()\- ]{0,80}\.(?:docx?|xlsx?|pdf|"
-    r"pptx?|txt|zip|csv|wpd|rtf|url))[ \t]*$"
-)
 HTML = re.compile(r"<\s*/?\s*(?:html|body|table|tr|td|div|font|img|br|p|span|head)\b", re.I)
 SEPARATOR = re.compile(r"(?m)^\s*[_\-=*~]{12,}\s*$")
 DISCLAIMER = re.compile(
@@ -103,13 +502,16 @@ NEWSLETTER = re.compile(
 )
 FIRST_PERSON = re.compile(r"\bI\b|\bI'm\b|\bI've\b|\bmy\b|\bme\b")
 GOVERNANCE = re.compile(
-    r"board|committee|director|governance|shareholder|meeting|strateg|\bceo\b|chairman|audit|"
+    r"\bboard (?:meeting|members?|of directors|approval|package|materials|deck|session|vote)|"
+    r"\bthe board\b|committee|director|governance|shareholder|meeting|strateg|\bceo\b|chairman|audit|"
     r"council|compensation|\bplan\b|company|management|acquisition|merger|budget|investor|"
     r"agenda|results|earnings|policy|risk|capital|financ",
     re.IGNORECASE,
 )
 DAMAGE = re.compile(
-    r"(?m)^\s*;\s*$|^Importance:|(?<![A-Z])&[A-Z][a-z]|^(?:\d\d:){2}\d\d |\bwrote:\s*$|\((?i:see attached file):|(?:Ms|Mrs|Mr)\.?\s+\{\{[ps]:\d+:l\}\},|\?(?=https?:)|\b[A-Za-z]+\?[a-z]{2,}|\\$|\?\s*(?:19|20)\d\d\b|\?{2,}"
+    r"(?m)\b[a-z]{3,}I\b|\[\(555\)|\bI%ve\b|^\s*-?\s*(?!FYI|OK|TBD|ASAP|NO|YES|PS)[A-Z]{1,3}\s*$(?=\n\s*\n\s*[A-Za-z][^\n]{12,})|"
+    r"^(\{\{[pq]:\d+:f\}\}|[A-Z][a-z]+):\s*\n(?:\s*\n)*\s*\1:\s*$|^\s*home\b.{0,10}\(?555|"
+    r"^\s*;\s*$|^Importance:|(?<![A-Z])&[A-Z][a-z]|^(?:\d\d:){2}\d\d |\bwrote:\s*$|\((?i:see attached file):|(?:Ms|Mrs|Mr)\.?\s+\{\{[ps]:\d+:l\}\},|\?(?=https?:)|\b[A-Za-z]+\?[a-z]{2,}|\\$|\?\s*(?:19|20)\d\d\b|\?{2,}"
 )
 URL = re.compile(r"https?://\S+|www\.\S+", re.IGNORECASE)
 NEWSWIRE_EXTRA = re.compile(r"news brief|press release|\(AP\)|\bUPI\b|newswires?", re.IGNORECASE)
@@ -154,8 +556,8 @@ def junk_reason(segments: list[dict[str, object]]) -> str | None:
             r"\.(?:url|pdf|docx?|xlsx?|pptx?)\b|https?://|www\.|@", subject, re.IGNORECASE
         ):
             return "url-subject"
-        content = _STUB_LINE.sub("", strip_signature(body)[0])
-        if body and words(content) < (4 if i == 0 else 2):
+        content = STUB_LINE.sub("", strip_signature(body)[0])
+        if body and words(content) < (5 if i == 0 else 3):
             return "near-empty"
         if body and DAMAGE.search(body):
             return "damaged"
@@ -170,24 +572,160 @@ def junk_reason(segments: list[dict[str, object]]) -> str | None:
         return "lowercase"  # casual all-lowercase text hides names from the detectors
     if SEPARATOR.search(joined):
         return "quoted-block"
+    for seg in segments:  # a literal first name left in a greeting ("Thea and Rose,", "Dutch,")
+        first = next(
+            (ln.strip() for ln in str(seg.get("body") or "").split("\n") if ln.strip()), ""
+        )
+        m = _NAME_GREETING.match(first)
+        if m and any(
+            w in _REAL_FIRST for w in re.findall(r"\b[A-Z][a-z]+\b", re.sub(_PH, "", first))
+        ):
+            return "residual-name"
+    letters = re.findall(r"[A-Za-z]", re.sub(_PH, "", joined))
+    if len(letters) >= 40 and sum(c.isupper() for c in letters) > 0.6 * len(letters):
+        return "shouting"
+    first_line = next((ln.strip() for ln in str(segments[-1].get("body") or "").split("\n")
+                       if ln.strip()), "")  # fmt: skip
+    if re.match(r"(?:is|are|was|were|and|but|or|of|to|which|that|than)\b", first_line):
+        return "starts-mid-sentence"
+    for seg in segments:
+        content = strip_signature(str(seg.get("body") or ""))[0]
+        if len(segments) == 1 and re.search(r"(?i)\bbelow\b", content) and words(content) < 12:
+            return "dangling-reference"  # "Please see revised schedule below" with nothing below
+        if re.search(r"(?i)here'?s my (?:e-?mail address|cell|number)\W*$", content):
+            return "dangling-reference"
     if NAME_LIST.search(joined) or STRAY_NAME.search(joined):
         return "name-list"
     for m in LIST_NAME.finditer(joined):  # "30 Minutes - Grant": a first name left as it was
         if m.group(1) in N.COMMON_FIRST or m.group(1) in N.AMBIGUOUS_FIRST:
             return "residual-name"
-    for name, rx in (("spam", SPAM), ("disclaimer", DISCLAIMER), ("newswire", NEWSWIRE_EXTRA),
-                     ("html", HTML), ("holiday", HOLIDAY)):  # fmt: skip
+    if spam_reason(text):
+        return "spam"
+    for name, rx in (("disclaimer", DISCLAIMER), ("newswire", NEWSWIRE_EXTRA), ("html", HTML),
+                     ("holiday", HOLIDAY)):  # fmt: skip
         if rx.search(text):
             return name
     return None
 
 
-LAWYER = re.compile(r"\bmy client\b|\bdeposition|\bplaintiff|\bprotective order", re.I)
+LAWYER = re.compile(r"\bmy client\b|\bdeposition|\bplaintiff|\bprotective order|\bCLE\b", re.I)
+# an outsider (bank, auditor, IT vendor, partner) speaking as a company insider
+INSIDER_VOICE = re.compile(
+    r"\b(?:our|we|us)\b[^.!?\n]{0,60}?\b(?:desks?|traders?|deal entry|deal tickets?|deals?|"
+    r"positions?|book|ops|operations|scheduling|schedulers?|nominat\w*|storage balance|"
+    r"confirm\w*|p&l|servers?|department|employees|staff|floor|office|mlp|partnership|counsel|"
+    r"lawyers|attorneys|auditors?|board|ceo|cfo|systems?|site|plant|permits?|development|budget|"
+    r"hiring|headcount|accounting|treasury|mid-?marketing|agency relationship|ops group|duties|"
+    r"responsibilities|new product|final filing|filings?|expenses)\b"
+    r"|\bcorvane (?:user community|employees|staff|users|people)\b|\bcorvane'?s? (?:treasury|"
+    r"accounting|credit|legal|it) department\b|\bthe corvane [\w .]{0,30}department\b|"
+    r"\b(?:in|from|with) (?:credit|accounting|legal|operations|scheduling|risk|trading)\b|"
+    r"\b(?:do|did|can|should) we (?:margin|trade|book|confirm|schedule|nominate|invoice|hedge)\b|"
+    r"\b(?:doing|running|covering) (?:cash|the desk|scheduling|nominations|the book)\b|"
+    r"\bcorvanetrade\b|\bctr\b|\btidewater\b|\bgridbook\b|\btrax\b|\binternally,|"
+    r"work order|\bwbs\b|cost center|for coding|counterparty to trade|\bwe \([^)]{1,40}\) have\b|"
+    r"\binternally\b|acquire the software|the traders\b|counterparties transacting|"
+    r"trade count|travel budget|outside services budget|reimburse us\b|our (?:initiatives|causes)\b|"
+    r"represent (?:cns|cna|ces|corvane)\b|the only paper we have|negotiate a gisb|\bto corp\b",
+    re.IGNORECASE,
+)
+# what each outside persona writes about (`role_reason(..., sender_id=...)`)
+PERSONA_DOMAIN: dict[str, re.Pattern[str]] = {
+    "auditor": re.compile(
+        r"audit|accounting|controls?\b|financial statements?|fieldwork|"
+        r"walk-?through|sox\b|reconcil|journal entr|disclos|reserves?\b|"
+        r"valuation|10-?[kq]\b|quarter-?end|year-?end|filing|gaap|testing|"
+        r"workpapers?|engagement|close\b|budget|forecast|invoice|"
+        r"review of (?:the )?(?:controls|financial|accounts)|revenue|earnings",
+        re.I,
+    ),
+    "it_vendor": re.compile(
+        r"system|software|licen[cs]e|server|upgrade|support|application|"
+        r"network|install|migrat|hardware|laptop|desktop|outlook|e-?mail "
+        r"account|helpdesk|renewal|maintenance|version|release|database|"
+        r"backup|outage|patch",
+        re.I,
+    ),
+    "banker": re.compile(
+        r"bank|credit|loan|facility|letter of credit|\blc\b|wire|treasury|"
+        r"rates?\b|deposit|account|collateral|isda|guarant|financing|covenant|"
+        r"swap|hedge|cash|threshold|exposure|option|premium|price|worksheet|"
+        r"payment|invoice|budget|forecast|fund",
+        re.I,
+    ),
+    "outside_counsel": re.compile(
+        r"agreement|contract|counsel|legal|court|filing|ferc|regulat|"
+        r"clause|draft|isda|resolution|signature|litigation|claim|"
+        r"opinion|lawyer|attorney|transaction",
+        re.I,
+    ),
+    "bd_partner": re.compile(
+        r"deal|transaction|opportunit|partner|meeting|proposal|acquisition|"
+        r"financing|investor|introduc|counterpart|market|price|trade|"
+        r"agreement|contract|terms|version",
+        re.I,
+    ),
+}
+# a colleague who does not know the recipient ("I hope I'm speaking to the right person")
+STRANGER = re.compile(
+    r"right person|correct person|appropriate person|not sure who (?:to|i should)|"
+    r"whom (?:to|i should) contact|i found your name|your name (?:was|has been) (?:given|passed)|"
+    r"was referred to you|i was told (?:that )?you|introduce myself|we have not met|"
+    r"haven't (?:yet )?met|\bi work in\b|other lawyers|(?:wasn't|was not|am not|'m not) sure who|"
+    r"look forward to (?:working|speaking) with you|nice to meet you|pleasure (?:to meet|meeting) you|"
+    r"your company\b|your firm\b|your organi[sz]ation\b|corvane (?:has|have) refused|"
+    r"problems they have with us",
+    re.IGNORECASE,
+)
+# back-office trading operations (deal entry, matching, confirmations, scheduling, flows)
+BACK_OFFICE = re.compile(
+    r"\bdeal\s*#|\bdeals?\s+\d|#\s?\d{5,}|match the following|deal entry|deal tickets?|"
+    r"(?:killed|entered|input|changed) (?:the |this |a |these |two )?deals?|bridg(?:e|ing)\b|"
+    r"delivery point|nominat\w*|\bnoms?\b|scheduler|(?:be|been|to be|not to be) confirmed|"
+    r"\bconfirm(?:ed|ation)?s? (?:for|of) (?:the |this )?deals?|contract number|\bHE \d|"
+    r"hour ending|\bk#|cut (?:wrong|from)|checkout|flows? to\b|\bcuts\b|deal (?:is|was) in|"
+    r"\bHE ?\d|prescheduled|off-peak hours|unit id|confirm the trade|(?m:^\s*\d{5,}\s*-)|"
+    r"broker (?:mistake|fee)|for (?:their )?execution and return|print (?:off )?(?:two|as many)|"
+    r"have \w+ (?:sign|initial)|usual distribution|for documentation|storage (?:proxy )?schedules|"
+    r"nominations|\bpipeline schedul|deals? (?:is |was |are )?(?:entered|input|confirmed|killed)|"
+    r"deal confirmed|the confirmation\b|counterparty contact|(?m:^\s*\d{5,}\s*$)|"
+    r"settle (?:with|the)\b|sign and approve|scada|your folder|billing system|entered against|"
+    r"chang\w+ (?:any )?deals?\b|minibook|\bmtm\b|\bentr(?:y|ies) for\b",
+    re.IGNORECASE,
+)
+# agreement negotiation (not the job of the executive assistant or a board member)
+NEGOTIATION = re.compile(
+    r"revised (?:\w+ )?agreement|changes we discussed|redline|red-?lined|mark-?up|"
+    r"draft (?:agreement|contract)|term sheet|can you live with|(?:tsa|isda|psa|ppa) revisions?|"
+    r"counter-?propos\w*|negotiat\w*|slides we're preparing|precedent agreement|"
+    r"paragraph is now|our (?:comments|position) on the (?:agreement|contract)|"
+    r"sale and purchase (?:contract|agreement)|shopping (?:it )?around|purchase agreement",
+    re.IGNORECASE,
+)
+# the chief executive thanking a subordinate for an opportunity ("It was an honor to represent")
+DEFERENCE = re.compile(
+    r"honou?r to (?:represent|be|serve)|appreciate the (?:platform|opportunity) you|"
+    r"thank you (?:again )?for having me|for the opportunity to (?:present|speak|join)",
+    re.IGNORECASE,
+)
+# clerical work nobody asks the chief executive to do
+CLERICAL = re.compile(r"(?i)please print|print in colou?r|make (?:\d+ )?copies|fax (?:it|this|them)|"
+                      r"book (?:a|the) (?:room|flight|car)")  # fmt: skip
+# trading and treasury work that the head of people does not review
+TRADING_FINANCE = re.compile(r"(?i)letter of credit|\blc\b|\bisda\b|\bswaps?\b|\bhedge|"
+                             r"collateral|counterpart(?:y|ies)|\bmtm\b|curtailment")  # fmt: skip
+INSIDE_GROUPS = ("exec", "director", "assistant")
+EXECUTIVES = ("ceo", "cfo", "cbo", "coo", "general_counsel")
+OUTSIDE_GROUPS = ("vendor", "external", "newsletter", "unknown")
 
 
-def role_reason(group: str, text: str, group_hint: str = "") -> str | None:
+def role_reason(group: str, text: str, group_hint: str = "", *, sender_id: str = "",
+                to_groups: tuple[str, ...] = (), parties: tuple[str, ...] = (),
+                to_ids: tuple[str, ...] = ()) -> str | None:  # fmt: skip
     """Why `text` cannot plausibly come from a persona of `group` (None if it can).
-    `group_hint` is "personal" for the personal contact and "lawyer" for counsel."""
+    `group_hint` is "personal" for the personal contact and "lawyer" for counsel; `sender_id`
+    the persona id, `to_groups` / `to_ids` the groups and ids of the To recipients and `parties`
+    the persona ids of sender and recipients (To and Cc)."""
     if RECRUIT.search(text):
         return "applicant"
     if LAWYER.search(text) and group_hint != "lawyer":
@@ -200,7 +738,8 @@ def role_reason(group: str, text: str, group_hint: str = "") -> str | None:
         return None
     if AUTOMATED.search(text):
         return "mass-mail"
-    if group != "external" and OFF_ROLE.search(text):
+    if group != "external" and (OFF_ROLE.search(text) or _PRC.search(text)
+                                or _LOVE_SIGNOFF.search(text)):  # fmt: skip
         return "off-role"
     if group_hint == "personal" and FRIEND_BUSINESS.search(text):
         return "business-from-a-friend"
@@ -208,12 +747,54 @@ def role_reason(group: str, text: str, group_hint: str = "") -> str | None:
         return "introduction"
     if group == "board" and not GOVERNANCE.search(text):
         return "off-topic-for-board"
+    return _voice_reason(group, text, group_hint, sender_id, to_groups, parties, to_ids)
+
+
+def _voice_reason(group: str, text: str, group_hint: str, sender_id: str,
+                  to_groups: tuple[str, ...], parties: tuple[str, ...],
+                  to_ids: tuple[str, ...]) -> str | None:  # fmt: skip
+    """Voice and recipient coherence: who says this, to whom."""
+    for rid in to_ids:  # an outside recipient is written to about its own field
+        domain = PERSONA_DOMAIN.get(rid)
+        if domain is not None and not domain.search(text):
+            return "off-domain-recipient"
+    if group in ("vendor", "external") and group_hint != "personal":
+        if INSIDER_VOICE.search(text) or BACK_OFFICE.search(text):
+            return "insider-voice"  # incl. the company's own deal entry and confirmations
+        domain = PERSONA_DOMAIN.get(sender_id)
+        if domain is not None and not domain.search(text):
+            return "out-of-domain"
+        if to_groups and all(g in OUTSIDE_GROUPS for g in to_groups):
+            return "outsiders-only"
+    if group in (*INSIDE_GROUPS, "board") and STRANGER.search(text):
+        return "stranger-voice"
+    if "ceo" in parties and BACK_OFFICE.search(text):
+        return "back-office-for-ceo"
+    if (group in INSIDE_GROUPS and to_groups and all(g in OUTSIDE_GROUPS for g in to_groups)
+            and BACK_OFFICE.search(text)):  # fmt: skip
+        return "back-office-to-outsider"
+    if group in ("assistant", "board") and BACK_OFFICE.search(text):
+        return "operations-from-assistant-or-board"
+    if sender_id == "ceo" and DEFERENCE.search(text):
+        return "deference-from-ceo"
+    if any(t in EXECUTIVES for t in to_ids) and CLERICAL.search(text):
+        return "clerical-request-to-executive"
+    if ("director_hr" in to_ids or sender_id == "director_hr") and TRADING_FINANCE.search(text):
+        return "finance-for-hr"
+    own_title = {"board_chair": r"\bthe chairman\b", "ceo": r"\bthe ceo\b",
+                 "cfo": r"\bthe cfo\b", "general_counsel": r"\bthe general counsel\b"}  # fmt: skip
+    if sender_id in own_title and re.search(own_title[sender_id], text, re.IGNORECASE):
+        return "own-role-in-third-person"
+    if (
+        group in ("assistant", "board") or any(g in ("assistant", "board") for g in to_groups)
+    ) and (NEGOTIATION.search(text)):
+        return "negotiation-by-assistant-or-board"
     return None
 
 
 FRIEND_BUSINESS = re.compile(
     r"\b(?:deal|contract|invoice|worksheet|agreement|trading|pipeline|counterparty|ferc|team|"
-    r"schedul\w*|attached|vacation|update|call|meeting|markets?|corvane|"
+    r"schedul\w*|attached|vacation|update|call|meeting|markets?|corvane|work here|floor|"
     r"forecast|budget|nominations?|interconnect|meter|tariff|credit|desk|confirm\w*)\b",
     re.IGNORECASE,
 )
@@ -313,8 +894,17 @@ def strip_signature(template: str) -> tuple[str, str | None]:
     return body, None
 
 
-def rewrite_greeting(template: str, to_first: str | None) -> str:
-    """The opening line addresses the bound recipient ("Dear Mr. X," -> "Dear Helena,")."""
+_GROUP_GREETING = re.compile(
+    r"^(?P<word>(?i:hi|hello|hey|dear|good morning|good afternoon|morning)[ ,]+)?"
+    r"(?P<group>(?i:all|team|everyone|everybody|folks|guys|gang|y'all|ladies and gentlemen))"
+    r"(?P<punct>\s*[,:!.-]+|\s+-+)?(?P<rest>\s+\S.*)?$"
+)
+
+
+def rewrite_greeting(template: str, to_first: str | None, *, single: bool = True) -> str:
+    """The opening line addresses the bound recipient ("Dear Mr. X," -> "Dear Helena,"). With
+    one recipient (`single`), a greeting to several people or to a group ("Hi all,", "Guys,")
+    names that recipient; otherwise it becomes "Hi all,"."""
     lines = template.split("\n")
     idx = next((i for i, ln in enumerate(lines) if ln.strip()), None)
     if idx is None:
@@ -326,10 +916,31 @@ def rewrite_greeting(template: str, to_first: str | None) -> str:
         punct = (m.group("punct") or "").strip()
         punct = "," if not punct or punct.startswith("-") else punct
         word = (m.group("word") or "").strip(" ,")
-        if len(names) > 1 or to_first is None:
+        if to_first is None or (len(names) > 1 and not single):
             lines[idx] = f"{word or 'Hi'} all{punct if punct != '-' else ','}"
         else:
             lines[idx] = f"{word + ' ' if word else ''}{to_first}{punct}"
+        return "\n".join(lines)
+    listed = re.match(
+        rf"^(?:{_PH}|[A-Z][a-z]+)(?:\s*(?:,|and|&)\s*(?:{_PH}|[A-Z][a-z]+))+"
+        r"\s*(?P<punct>[,:])\s*$",
+        line,
+    )
+    if (
+        listed
+        and to_first
+        and (single or "{{" in line)
+        and not re.search(r"(?i)ladies|gentlemen|\ball\b|team|everyone", line)
+    ):
+        lines[idx] = f"{to_first}{listed.group('punct')}"
+        return "\n".join(lines)
+    group = _GROUP_GREETING.match(line)
+    if group and single and to_first and group.group("group").lower() != "ladies and gentlemen":
+        word = (group.group("word") or "").strip(" ,")
+        punct = (group.group("punct") or ",").strip() or ","
+        punct = "," if punct.startswith("-") else punct
+        rest = group.group("rest") or ""
+        lines[idx] = f"{word + ' ' if word else ''}{to_first}{punct}{rest}"
         return "\n".join(lines)
     if to_first and re.fullmatch(r"[A-Z]{2,3}[,:]", line):  # "JW,"
         lines[idx] = to_first + line[-1]
@@ -341,11 +952,12 @@ def rewrite_greeting(template: str, to_first: str | None) -> str:
     return "\n".join(lines)
 
 
-def reframe(template: str, *, to_first: str | None, sender_first: str | None) -> str:
+def reframe(template: str, *, to_first: str | None, sender_first: str | None,
+            single: bool = True) -> str:  # fmt: skip
     """Greeting to the bound recipient, the original sign-off and signature block removed and
     the sender's own sign-off appended (no sign-off for `sender_first=None`)."""
     body, closing = strip_signature(template)
-    body = rewrite_greeting(body, to_first)
+    body = rewrite_greeting(body, to_first, single=single)
     if sender_first is None:
         return body
     if closing:
@@ -400,7 +1012,7 @@ def derive_subject(body: str, topic: str = "general") -> str:
             continue  # an address is never a subject
         if (
             "<<" in line
-            or _STUB_LINE.search(raw)
+            or STUB_LINE.search(raw)
             or words(line) < 2
             or _CLOSING.match(restore(line))
         ):
@@ -423,3 +1035,43 @@ def derive_subject(body: str, topic: str = "general") -> str:
             continue
         return restore(clause[:1].upper() + clause[1:])
     return FALLBACK_SUBJECTS.get(topic, "Quick question")
+
+
+# ------------------------------------------------------------- rendered-text checks
+
+_PSEUDO = "(?:" + "|".join(sorted({*N.FAKE_FIRST, *N.FAKE_LAST}, key=len, reverse=True)) + ")"
+# a person pseudonym where a place, desk or asset belongs (the import took a place for a name)
+MISPLACED = re.compile(
+    rf"\b(?:Short|Long) Term {_PSEUDO}\b|\b{_PSEUDO} (?:Power Pool|Pool|Plant|Station|Hub|Trader|"
+    rf"Desk|Pipeline|Field|Unit \d)\b|\b(?:at|from|to) the {_PSEUDO}\b(?! [A-Z])|"
+    rf"\bfrom {_PSEUDO} to (?:NP|SP|ZP|COB|Mid)|\b(?:visit(?:ed)?|trip|went|accompanied us) to "
+    rf"{_PSEUDO}\b|\b(?:Pt\.|Port|Fort|Lake|Mount|Mt\.) {_PSEUDO}\b|\b{_PSEUDO} campus\b|"
+    rf"\b{_PSEUDO} my (?:ignorance|french|delay)\b|(?:Street|Avenue|Road|Drive|Blvd|Suite \d+)\.?,"
+    rf"\s+{_PSEUDO}(?: {_PSEUDO})?,\s+[A-Z]{{2}}\b"
+)
+_VOCATIVE = re.compile(
+    rf"^\s*(?:(?i:great job|congratulations|well done|thanks|thank you),?\s+)?({_PSEUDO})"
+    r"(?:\s*[,:.!\-]|\s+(?:don't|do|did|can|could|would|please|pls|i|we)\b)"
+)
+
+
+def misplaced_names(text: str) -> list[str]:
+    """Person pseudonyms in place, desk or asset positions ("Long Term Caleb", "Silas Plant")."""
+    return [m.group(0) for m in MISPLACED.finditer(text)]
+
+
+def addressed_elsewhere(body: str, to_first: str) -> bool:
+    """The body opens by addressing someone other than its recipient ("Elena don't think ...")."""
+    m = _VOCATIVE.match(body)
+    return m is not None and m.group(1) != to_first
+
+
+def is_greeting_line(line: str) -> bool:
+    """A rewritten opening line ("Hi Helena,", "Owen:", "Dear Rohan,") rather than content."""
+    return bool(
+        re.fullmatch(
+            r"\s*(?:(?i:hi|hello|hey|dear|good morning|good afternoon)\s+)?"
+            r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s*[,:!.-]?\s*",
+            line,
+        )
+    )

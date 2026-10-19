@@ -17,6 +17,12 @@ from __future__ import annotations
 COMPANY = "Corvane"
 COMPANY_LONG = "Corvane Energy"
 COMPANY_DOMAIN = "corvane.example.test"
+# The fictional head-office address used for every scrubbed street address and in documents.
+FAKE_STREET = "100 Commerce Street"
+FAKE_CITY = "Riverton"
+FAKE_STATE = "TX"
+FAKE_ZIP = "79999"
+FAKE_ADDRESS = f"{FAKE_STREET}, {FAKE_CITY}, {FAKE_STATE} {FAKE_ZIP}"
 
 KNOWN_PEOPLE: tuple[str, ...] = (
     "Kenneth Lay", "Ken Lay", "Jeff Skilling", "Jeffrey Skilling", "Andrew Fastow",
@@ -81,6 +87,7 @@ ENTITY_MAP: dict[str, str] = {
     "Enron Transportation Services": "Corvane Transport",
     "Enron Gas Pipeline Group": "Corvane Pipelines",
     "Enron International": "Corvane International",
+    "Enron Americas": "Corvane Americas",
     "Enron Corporation": "Corvane Energy Inc.",
     "Enron Corp.": "Corvane Energy Inc.",
     "Enron Corp": "Corvane Energy Inc.",
@@ -100,6 +107,8 @@ ENTITY_MAP: dict[str, str] = {
     "Transwestern Pipeline": "Westline Pipeline",
     "Transwestern": "Westline",
     "Florida Gas Transmission": "Gulfline Gas",
+    "Texas Gas Transmission": "Bayline Gas Transmission",
+    "Texas Gas": "Bayline Gas",
     "Azurix": "Aquavance",
     "Dabhol": "Coastal Power",
     "Arthur Andersen": "Brightwater Audit",
@@ -260,15 +269,36 @@ ENRON_ACRONYMS: frozenset[str] = frozenset(
         "NBPL",
         "GPG",
         "EGPG",
+        "EOS",
+        "EGS",
+        "RAC",
+        "ET&S",
+        "HPL",
     ]
 )
-# Transwestern's two-letter acronym: case-sensitive, standalone (not part of "TWh", "TW/JS")
+# Short entity acronyms mapped case-sensitively and only when standalone (not part of "TWh",
+# "TW/JS", "EAST"): Transwestern, Enron Americas, Texas Gas Transmission. The scanner flags any
+# that survive.
+STRICT_ACRONYMS: dict[str, str] = {"TW": "WL", "EA": "CVA", "TGT": "BGT"}
 TW = r"(?<![\w/&\-])TW(?![\w/&\-])"
+STRICT_ACRONYM = r"(?<![\w/&\-])(?:TW|EA|TGT)(?![\w/&\-])"
 
-# Large public utilities, exchanges, regulators and banks that may stay in curated text
-# (documented residual risk); anything else in "<Name> Inc/Media/Group..." is rejected.
+# Market operators, exchanges, regulators, indices and price benchmarks: the only real
+# organisations that may stay in curated text. Every other real company (utilities, banks,
+# energy and technology firms, newspapers, associations) is mapped to a fictional name
+# (`ENTITY_MAP`, `THIRD_PARTY_MAP`) or the record is dropped (the scanner flags `REAL_ORGS`).
 PUBLIC_ORGS: frozenset[str] = frozenset(
+    ["CAISO", "NYISO", "PJM", "ICE", "EEI", "FERC", "WTI", "ERCOT", "NYMEX", "ISO", "NERC", "SPP",
+     "MISO", "IPE", "CFTC", "SEC", "NYSE", "NASDAQ", "NPCC", "WSCC", "Henry", "Hub", "Brent",
+     "NP15", "SP15",
+     "NP-15", "SP-15", "ZP26", "ZP-26", "COB", "Mid-C"]
+)  # fmt: skip
+
+# Capitalised words of well-known organisations that are never a person's name (the import uses
+# them to tell firms from people; this does NOT allow them in curated output, see `REAL_ORGS`).
+NEVER_PERSON_ORGS: frozenset[str] = PUBLIC_ORGS | frozenset(
     [
+        "<Name> Inc/Media/Group...",
         "PG&E",
         "PG",
         "ERCOT",
@@ -311,7 +341,6 @@ PUBLIC_ORGS: frozenset[str] = frozenset(
         "BP",
         "Duke",
         "Reliant",
-        "Dynegy",
         "Williams",
         "El",
         "Paso",
@@ -363,6 +392,50 @@ PUBLIC_ORGS: frozenset[str] = frozenset(
         "Amazon",
     ]
 )
+
+# Real companies, banks, utilities, newspapers and associations: the scanner flags them
+# ("real-org"), so a record that names one is never curated. Case-insensitive alternatives are
+# distinctive names; the case-sensitive ones are also ordinary words ("Chase", "Shell").
+REAL_ORGS_ANYCASE: tuple[str, ...] = (
+    "sempra", "pseg", "calpine", "mirant", "halliburton", "schlumberger",
+    "westinghouse", "siemens", "citigroup", "citibank", "jp ?morgan", "barclays", "verizon",
+    "exxon", "chevron", "texaco", "conoco", "phillips petroleum", "netscape", "yahoo",
+    "mastercard", "goldman,? sachs", "merrill lynch", "morgan stanley", "wells fargo",
+    "credit suisse", "abn ?amro", "deutsche bank", "bank of america", "el paso", "pg&e",
+    "pacific gas", "southern california edison", "sun microsystems", "microsoft", "cisco",
+    "at&t", "reliant energy", "duke energy", "cibc", "moody'?s", "standard (?:&|and) poor'?s",
+    "global finance", "bakersfield", "philadelphia gas works", "michigan gas utilities",
+    "general land office", "western coal", "new ?power", "nymex hub", "aquila", "tractebel",
+    "puget sound", "avista", "pacificorp", "idacorp", "tenaska", "constellation energy",
+    "cinergy", "entergy", "txu", "allegheny energy", "williams energy", "koch", "bp amoco",
+    "kinder morgan", "transco", "tennessee gas", "natural gas pipeline company", "columbia gas",
+    "panhandle eastern", "northwest pipeline", "kern river", "questar", "nicor", "peoples gas",
+    "keyspan", "con ?edison", "conedison", "nstar", "first energy", "firstenergy", "aep",
+    "bank one", "natsource", "amerex", "icap", "tullett", "spectron", "enovate",
+    "tucson electric", "oklahoma gas", "atlanta gas", "hunt oil", "bear stearns",
+    "lng express", "bishops corner", "seattle city light", "city light", "pse&g", "tennessee z",
+    "superior water", "sithe", "southern union",
+)  # fmt: skip
+REAL_ORGS_CASED: tuple[str, ...] = (
+    "Chase", "Citizens", "Williams", "Shell", "IBM", "Oracle", "Intel", "Adobe", "AOL", "Amazon",
+    "Hyperion", "Fitch", "S&P", "UBS", "BP", "GE", "Edison", "Visa", "American Express",
+    "General Electric", "Continental Airlines", "Southern Company", "Mobil", "Exxon", "Duke",
+    "Reliant", "Sprint", "BT", "Dow Jones", "Bloomberg", "Reuters", "Platts", "OGE", "TEP",
+    "SRP", "PNM", "APS", "SCE", "SDG&E", "LADWP", "BPA", "CNG", "COH", "AGL", "NGPL", "TETCO",
+    "ANR", "Hunt", "Border", "OATI", "ARM", "ENTEX", "Entex", "YPF", "D&T", "AA", "CDWR", "EDES", "People's", "Peoples", "WPTF", "CERS",
+)  # fmt: skip
+# Internal systems of the real company: flagged in any case (the import maps the usual spellings)
+SYSTEM_NAMES_ANYCASE: tuple[str, ...] = (
+    "enpower", "sitara", "tagg", "enfolio", "ehronline", "commoditylogic", "espeak", "enerfax",
+    "napster", "nisource", "prebon",
+)  # fmt: skip
+
+# Fictional organisations of the roster, the risk items and the pseudonym pools: never flagged.
+FICTIONAL_ORG_WORDS: frozenset[str] = frozenset(
+    ["Corvane", "Brightwater", "Nimbus", "Harbor", "Northstar", "Marlow", "Pike", "Kincaid",
+     "Morales", "Coastline", "Meridian", "Halden", "Stellaris", "Larkspur", "Riverton",
+     "Lakeport"]
+)  # fmt: skip
 
 # Words used inside Lotus Notes routing paths (Name/HOU/ECT@ECT) - never names.
 LOTUS_UNITS = frozenset(
@@ -1232,6 +1305,17 @@ FAMOUS_MARKERS: tuple[str, ...] = (
     r"public policy foundation|heritage foundation|farewell evening|\blady [A-Z]",
     r"(?:transition|sale) of .{0,40}to stellaris|stellaris employee",
     r"(?:merger|deal) (?:between|with) (?:corvane and )?stellaris|stellaris (?:merger|deal)",
+    r"liquidity crisis",
+    r"cash infusion",
+    r"the corvane situation",
+    r"bad accounting",
+    r"securitization of",
+    r"read the articles",
+    r"partnership (?:one|two)",
+    r"public domain report",
+    r"divestiture",
+    r"price manipulation",
+    r"select committee",
 )
 # Local landmarks of the corpus' home city (they place a message in the real company's town)
 LANDMARKS: tuple[str, ...] = (
@@ -1260,6 +1344,16 @@ FAKE_ORG_NAMES: tuple[str, ...] = (
     "Northvane", "Oakhollow", "Quarrybrook", "Ravenhurst", "Saltmarsh", "Thistledown",
     "Umberfield", "Valewright", "Westerholt", "Yewbank", "Zephyrine", "Ashgrove", "Brightmoor",
     "Coldharbour", "Driftwood", "Emberline", "Foxcombe",
+)  # fmt: skip
+
+# Place / asset pseudonyms (`{{l:N:n}}`): plant sites, hubs, venues and pools whose real names
+# the import took for people ("at the X", "X Power Pool", "from X to NP-15"). Disjoint from the
+# person and organisation pools.
+FAKE_PLACES: tuple[str, ...] = (
+    "Ambleford", "Bracksmoor", "Cresthollow", "Dunvarrow", "Eskwater", "Farrowdale",
+    "Greyhallow", "Holmbrooke", "Ivelgate", "Kestrelby", "Lanmoor", "Marrowgate", "Nethercombe",
+    "Orrowfield", "Pellbrook", "Quenmoor", "Rookhaven", "Stonereach", "Tarrowby", "Ullswick",
+    "Varrowdale", "Wexmoor", "Yarrowgate", "Brackwater",
 )  # fmt: skip
 
 # Capitalised words that are never a person's name in this corpus (institutions, places of

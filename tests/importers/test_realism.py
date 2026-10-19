@@ -246,8 +246,21 @@ def test_greeting_and_signature_are_rewritten_for_the_personas():
         "Owen,\n\nThe report is late again.\n\nNatalie"
     )
     group = "{{q:1:f}}, {{q:2:f}} and {{q:3:f}}:\n\nPlease see the schedule.\n\nthanks\nbrant"
-    assert C.reframe(group, to_first="Owen", sender_first="Priya") == (
+    assert C.reframe(group, to_first="Owen", sender_first="Priya", single=False) == (
         "Hi all:\n\nPlease see the schedule.\n\nThanks,\nPriya"
+    )
+    # one recipient: a greeting to several people or to a group names that recipient
+    assert C.reframe(group, to_first="Owen", sender_first="Priya") == (
+        "Owen:\n\nPlease see the schedule.\n\nThanks,\nPriya"
+    )
+    assert C.rewrite_greeting("Hi all,\n\nThe numbers are in.", "Owen") == (
+        "Hi Owen,\n\nThe numbers are in."
+    )
+    assert C.rewrite_greeting("Guys, have we started the work?", "Julia") == (
+        "Julia, have we started the work?"
+    )
+    assert C.rewrite_greeting("Hi all,\n\nThe numbers are in.", "Owen", single=False) == (
+        "Hi all,\n\nThe numbers are in."
     )
     inline = "Hi {{q:1:f}}. Just checking in on the numbers for today.\nGood end to the week. DF"
     assert C.reframe(inline, to_first="Rohan", sender_first=None) == (
@@ -267,9 +280,8 @@ def test_role_coherence_rules():
     assert C.role_reason("newsletter", "I have a very important video announcement.") == (
         "not-a-newsletter"
     )
-    assert C.role_reason("board", "You can sort the music files by format.") == (
-        "off-topic-for-board"
-    )
+    assert C.role_reason("board", "You can sort the files by format.") == "off-topic-for-board"
+    assert C.role_reason("board", "You can sort the music files by format.") == "off-role"
     assert C.role_reason("board", "The committee meets on the budget.") is None
     assert C.role_reason("director", "My name is {{p:1:n}} with the call center.") == (
         "introduction"
@@ -365,7 +377,7 @@ def test_xlsx_writer_and_text_extraction():
         assert "xl/worksheets/sheet1.xml" in zf.namelist()
         assert all(i.date_time == (2026, 1, 1, 0, 0, 0) for i in zf.infolist())
     text = xlsx_text(data)
-    assert "Gas &amp; power" in text and "12.5" in text
+    assert "Gas & power" in text and "12.5" in text
     assert extract_text(data, "a.xlsx") == text
     assert extract_text(b"PK broken", "a.xlsx") == ""
     assert extract_text(b"plain words", "a.txt") == "plain words"

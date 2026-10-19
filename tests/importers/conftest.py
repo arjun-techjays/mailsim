@@ -21,7 +21,7 @@ PEOPLE = [
 
 TOPIC_LINES = {
     "finance": [
-        "the budget for the quarter needs review before we close the books.",
+        "the budget for the quarter needs review before the books close.",
         "the invoice payment is due friday and the audit team wants the forecast.",
         "cash and revenue numbers for the quarterly earnings look fine.",
     ],
@@ -72,8 +72,9 @@ TOPIC_LINES = {
     ],
 }
 FILLER = (
-    "Please review and let me know. Thanks for the help, the numbers look fine and the team "
-    "agreed. Please call me if you have questions. The following items are attached."
+    "Please review the account figures and let me know. Thanks for the help, the numbers look "
+    "fine for the close and the team agreed. Please call me if you have questions. The following "
+    "items are attached."
 )
 
 

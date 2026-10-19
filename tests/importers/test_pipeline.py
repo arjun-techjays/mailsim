@@ -79,6 +79,8 @@ def test_cli_import_scan_generate(shards, tmp_path, capsys):
     code, out = _run(capsys, "import", "enron", "--parquet", *map(str, shards), "--limit", "1000",
                      "--seed", "7", "--out", str(corpus), "--registry-out", str(reg))  # fmt: skip
     assert code == 0 and out["ok"] and out["records"] > 200 and len(out["sha256"]) == 64
+    key = tmp_path / "var" / "id.key"  # the secret for hashed ids, next to the corpus
+    assert key.is_file() and key.stat().st_mode & 0o777 == 0o600
     code, out = _run(capsys, "import", "enron", "--parquet", *map(str, shards), "--limit", "50",
                      "--out", str(tmp_path / "q.jsonl"), "--keep-quotes", "--sample-harvest")  # fmt: skip
     assert code == 0 and out["sampled"] == 50
