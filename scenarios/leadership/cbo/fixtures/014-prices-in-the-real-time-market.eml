@@ -1,0 +1,23 @@
+Message-ID: <16ca44bfd9a0368702ab@energy-markets-daily.example.test>
+Date: Fri, 09 Oct 2026 10:40:00 +0000
+From: Energy Markets Daily <news@energy-markets-daily.example.test>
+To: Natalie Okafor <natalie.okafor@corvane.example.test>
+Subject: Prices in the real time market
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+MIME-Version: 1.0
+
+Prices in the real time market for October 10, 2026 are correct. However,
+the NYISO is reserving prices for following hour(s) at the external proxy
+buses:
+HQ: 07:00
+NE: 07:00
+OH: 07:00
+PJM: 07:00
+
+Prices in the October 11, 2026 Day-Ahead Market are correct.
+
+This e-mail information is a copy of the official posting, which can be
+found at the following address of our
+website:
+https://www.juniper-advisory.example.test/

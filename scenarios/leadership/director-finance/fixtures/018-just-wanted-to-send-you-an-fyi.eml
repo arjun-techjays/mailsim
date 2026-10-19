@@ -1,0 +1,18 @@
+Message-ID: <5f01683df20834bd6fb1@harbor-bank.example.test>
+Date: Mon, 12 Oct 2026 08:05:00 +0000
+From: Fiona Reyes <fiona.reyes@harbor-bank.example.test>
+To: Owen Castillo <owen.castillo@corvane.example.test>
+Subject: Just wanted to send you an FYI
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+MIME-Version: 1.0
+
+Just wanted to send you an FYI - due to problems that are caused for RAC, ple=
+ase roll your P&L's each day from your daily file and not the regions file. T=
+he RAC group looks at our P&L's in the region files each morning to determine=
+ rho and drift and this causes a problem if you have saved your P&L after rol=
+ling(it appears as though you have data already captured for current day beca=
+use it copies and pastes formulas from the prior day to current day). Thanks =
+for your help and shout with any questions.
+
+Fiona
