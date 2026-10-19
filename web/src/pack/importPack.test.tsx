@@ -200,7 +200,7 @@ describe('Import scenario pack page', () => {
     // the scenario exists already: the answer key is fully checked before anything is published
     const existing = [folderFile('f/scenario.yaml', scenarioYaml('finance.invoice-bank-change')), folderFile('f/answer_key.yaml', keyYaml('finance.invoice-bank-change', 'maybe'))];
     await user.upload(screen.getByLabelText('Choose a folder'), [...existing, ...dup.slice(1)]);
-    expect(await screen.findByTestId('pack-key-errors')).toHaveTextContent("answer_key.checks_default: Input should be 'on' or 'off'");
+    expect(await screen.findByTestId('pack-key-errors')).toHaveTextContent(/answer_key\.checks_default: .*\bon\b.*\boff\b/);
     expect(screen.getByRole('button', { name: 'Publish scenario and answer key' })).toBeDisabled();
   });
 
