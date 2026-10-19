@@ -132,7 +132,7 @@ _THIRD_PARTY = re.compile(
         rf"(?<![A-Za-z]){re.escape(k)}(?![A-Za-z])"
         if k.islower() or k.isupper() and len(k) > 3
         else rf"(?<![A-Za-z]){re.escape(k)}(?![a-z])"
-        for k in sorted(N.THIRD_PARTY_NAMES, key=len, reverse=True)
+        for k in sorted(N.THIRD_PARTY_NAMES | N.THIRD_PARTY_FLAG_ONLY, key=len, reverse=True)
     )
 )
 _THIRD_PARTY_ANYCASE = re.compile(r"enerfax|napster|nisource|prebon", re.IGNORECASE)

@@ -120,26 +120,26 @@ scenario:
     - fixture: fixtures/003-combined-post-id-is-723901.eml
     - fixture: fixtures/004-i-checked-with-whitcombe-s-office.eml
     - fixture: fixtures/005-trader-wrote-deal-down-wrong-in-log.eml
-    - fixture: fixtures/006-apb.eml
-    - fixture: fixtures/007-i-just-entered-the-following-2-deals.eml
-    - fixture: fixtures/008-please-get-a-hold-of-linnea-sometime.eml
-    - fixture: fixtures/009-attached-is-the-letter-agreement-for-bri.eml
-    - fixture: fixtures/010-re-apb.eml
-    - fixture: fixtures/011-legal-question.eml
+    - fixture: fixtures/006-i-just-entered-the-following-2-deals.eml
+    - fixture: fixtures/007-please-get-a-hold-of-linnea-sometime.eml
+    - fixture: fixtures/008-attached-is-the-letter-agreement-for-bri.eml
+    - fixture: fixtures/009-deal-903029.eml
+    - fixture: fixtures/010-legal-question.eml
+    - fixture: fixtures/011-re-deal-903029.eml
     - fixture: fixtures/012-i-sold-10000-day-deal-003771-starting.eml
     - fixture: fixtures/013-fw-technical-issues.eml
     - fixture: fixtures/014-prices-in-the-real-time-market.eml
     - fixture: fixtures/015-notice-2001043-is-available-for-your-rev.eml
-    - fixture: fixtures/016-coral-transacted-on-ctr.eml
-    - fixture: fixtures/017-there-are-no-changes-for-the-weekend.eml
-    - fixture: fixtures/018-i-would-like-to-have-a-planning.eml
-    - fixture: fixtures/019-you-going-out-tonight-and-tomorrow-night.eml
-    - fixture: fixtures/020-the-nyiso-back-up-dispatch-system-is-sch.eml
-    - fixture: fixtures/021-fw-expiring-transportation-contracts.eml
-    - fixture: fixtures/022-your-scheduled-review-time-with-yara.eml
-    - fixture: fixtures/023-today-has-disappeared-so-i-don-t-think.eml
-    - fixture: fixtures/024-for-cash-settlement-amount.eml
-    - fixture: fixtures/025-also-forgot-to-tell-y-all-one-more.eml
+    - fixture: fixtures/016-there-are-no-changes-for-the-weekend.eml
+    - fixture: fixtures/017-i-would-like-to-have-a-planning.eml
+    - fixture: fixtures/018-you-going-out-tonight-and-tomorrow-night.eml
+    - fixture: fixtures/019-the-nyiso-back-up-dispatch-system-is-sch.eml
+    - fixture: fixtures/020-fw-expiring-transportation-contracts.eml
+    - fixture: fixtures/021-your-scheduled-review-time-with-yara.eml
+    - fixture: fixtures/022-today-has-disappeared-so-i-don-t-think.eml
+    - fixture: fixtures/023-for-cash-settlement-amount.eml
+    - fixture: fixtures/024-also-forgot-to-tell-y-all-one-more.eml
+    - fixture: fixtures/025-crude-24x7-wti-marketing-effort.eml
     - fixture: fixtures/026-bear-guarantee-letter.eml
     - fixture: fixtures/027-fw-mila-storage-exchange-deal-tickets-fo.eml
     - fixture: fixtures/028-re-bear-guarantee-letter.eml

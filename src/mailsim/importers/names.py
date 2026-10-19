@@ -223,6 +223,9 @@ THIRD_PARTY_MAP: dict[str, str] = {
 THIRD_PARTY_NAMES: frozenset[str] = frozenset(
     k for k in THIRD_PARTY_MAP if len(k) > 3 or k.isupper()
 )
+# Real counterparties the import leaves as they are (the words are too common to map blindly):
+# the scanner flags them (capitalised, standalone), so generation skips the record.
+THIRD_PARTY_FLAG_ONLY: frozenset[str] = frozenset(["Coral", "APB"])
 
 # Distinctive entity names mapped case-insensitively and flagged by the scanner in any case.
 ENTITY_NAMES: frozenset[str] = frozenset(

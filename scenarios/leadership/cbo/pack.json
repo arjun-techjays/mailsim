@@ -66,16 +66,7 @@
       ]
     },
     {
-      "fixture": "fixtures/006-apb.eml",
-      "topic": "deals",
-      "thread": 5,
-      "attachments": 0,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/007-i-just-entered-the-following-2-deals.eml",
+      "fixture": "fixtures/006-i-just-entered-the-following-2-deals.eml",
       "topic": "deals",
       "thread": 1,
       "attachments": 0,
@@ -84,16 +75,16 @@
       ]
     },
     {
-      "fixture": "fixtures/008-please-get-a-hold-of-linnea-sometime.eml",
+      "fixture": "fixtures/007-please-get-a-hold-of-linnea-sometime.eml",
       "topic": "deals",
-      "thread": 9,
+      "thread": 7,
       "attachments": 0,
       "suggested_labels": [
         "Deals"
       ]
     },
     {
-      "fixture": "fixtures/009-attached-is-the-letter-agreement-for-bri.eml",
+      "fixture": "fixtures/008-attached-is-the-letter-agreement-for-bri.eml",
       "topic": "deals",
       "thread": 4,
       "attachments": 1,
@@ -102,21 +93,30 @@
       ]
     },
     {
-      "fixture": "fixtures/010-re-apb.eml",
+      "fixture": "fixtures/009-deal-903029.eml",
       "topic": "deals",
-      "thread": 5,
+      "thread": 8,
       "attachments": 0,
       "suggested_labels": [
         "Deals"
       ]
     },
     {
-      "fixture": "fixtures/011-legal-question.eml",
+      "fixture": "fixtures/010-legal-question.eml",
       "topic": "legal",
       "thread": 13,
       "attachments": 1,
       "suggested_labels": [
         "Legal"
+      ]
+    },
+    {
+      "fixture": "fixtures/011-re-deal-903029.eml",
+      "topic": "deals",
+      "thread": 8,
+      "attachments": 0,
+      "suggested_labels": [
+        "Deals"
       ]
     },
     {
@@ -156,16 +156,7 @@
       ]
     },
     {
-      "fixture": "fixtures/016-coral-transacted-on-ctr.eml",
-      "topic": "deals",
-      "thread": 6,
-      "attachments": 0,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/017-there-are-no-changes-for-the-weekend.eml",
+      "fixture": "fixtures/016-there-are-no-changes-for-the-weekend.eml",
       "topic": "personal",
       "thread": 25,
       "attachments": 0,
@@ -174,7 +165,7 @@
       ]
     },
     {
-      "fixture": "fixtures/018-i-would-like-to-have-a-planning.eml",
+      "fixture": "fixtures/017-i-would-like-to-have-a-planning.eml",
       "topic": "scheduling",
       "thread": 17,
       "attachments": 0,
@@ -183,7 +174,7 @@
       ]
     },
     {
-      "fixture": "fixtures/019-you-going-out-tonight-and-tomorrow-night.eml",
+      "fixture": "fixtures/018-you-going-out-tonight-and-tomorrow-night.eml",
       "topic": "personal",
       "thread": 24,
       "attachments": 0,
@@ -192,7 +183,7 @@
       ]
     },
     {
-      "fixture": "fixtures/020-the-nyiso-back-up-dispatch-system-is-sch.eml",
+      "fixture": "fixtures/019-the-nyiso-back-up-dispatch-system-is-sch.eml",
       "topic": "newsletter",
       "thread": 27,
       "attachments": 0,
@@ -201,7 +192,7 @@
       ]
     },
     {
-      "fixture": "fixtures/021-fw-expiring-transportation-contracts.eml",
+      "fixture": "fixtures/020-fw-expiring-transportation-contracts.eml",
       "topic": "deals",
       "thread": 3,
       "attachments": 1,
@@ -210,7 +201,7 @@
       ]
     },
     {
-      "fixture": "fixtures/022-your-scheduled-review-time-with-yara.eml",
+      "fixture": "fixtures/021-your-scheduled-review-time-with-yara.eml",
       "topic": "scheduling",
       "thread": 15,
       "attachments": 0,
@@ -219,16 +210,16 @@
       ]
     },
     {
-      "fixture": "fixtures/023-today-has-disappeared-so-i-don-t-think.eml",
+      "fixture": "fixtures/022-today-has-disappeared-so-i-don-t-think.eml",
       "topic": "deals",
-      "thread": 7,
+      "thread": 5,
       "attachments": 0,
       "suggested_labels": [
         "Deals"
       ]
     },
     {
-      "fixture": "fixtures/024-for-cash-settlement-amount.eml",
+      "fixture": "fixtures/023-for-cash-settlement-amount.eml",
       "topic": "finance",
       "thread": 19,
       "attachments": 0,
@@ -237,12 +228,21 @@
       ]
     },
     {
-      "fixture": "fixtures/025-also-forgot-to-tell-y-all-one-more.eml",
+      "fixture": "fixtures/024-also-forgot-to-tell-y-all-one-more.eml",
       "topic": "ops",
       "thread": 22,
       "attachments": 0,
       "suggested_labels": [
         "Operations"
+      ]
+    },
+    {
+      "fixture": "fixtures/025-crude-24x7-wti-marketing-effort.eml",
+      "topic": "deals",
+      "thread": 10,
+      "attachments": 0,
+      "suggested_labels": [
+        "Deals"
       ]
     },
     {
@@ -257,7 +257,7 @@
     {
       "fixture": "fixtures/027-fw-mila-storage-exchange-deal-tickets-fo.eml",
       "topic": "deals",
-      "thread": 10,
+      "thread": 9,
       "attachments": 1,
       "suggested_labels": [
         "Deals"
@@ -284,7 +284,7 @@
     {
       "fixture": "fixtures/030-the-slides-with-your-suggested-edits-inc.eml",
       "topic": "deals",
-      "thread": 8,
+      "thread": 6,
       "attachments": 1,
       "suggested_labels": [
         "Deals"

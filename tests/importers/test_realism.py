@@ -81,7 +81,7 @@ def test_streets_glued_phones_alnum_ids_and_acronyms_are_scrubbed():
 def test_scanner_flags_the_missed_forms():
     text = (
         "Tel.713-555-8812\nDeal QX4417\n55 East 52nd Street\n100 Commerce Street\n"
-        "bills on TW.\nenerfaxdaily, Prebon and the Astros\nafter 15 years as CEO\n"
+        "bills on TW.\nenerfaxdaily, Prebon and the Astros\nCoral transacted via APB, not coral reefs\nafter 15 years as CEO\n"
         "P.O. Box 1234 or P.O. Box 100\nNew York, NY? 10055\nlunch at the Galleria"
     )
     kinds = sorted({(f.kind, f.match) for f in Scanner().scan_text(text)})
@@ -89,6 +89,8 @@ def test_scanner_flags_the_missed_forms():
     assert ("street", "55 East 52nd Street") in kinds and ("street", "P.O. Box 1234") in kinds
     assert ("enron-acronym", "TW") in kinds and ("third-party", "Astros") in kinds
     assert ("third-party", "enerfaxdaily") in kinds and ("third-party", "Prebon") in kinds
+    assert ("third-party", "Coral") in kinds and ("third-party", "APB") in kinds
+    assert ("third-party", "coral") not in kinds
     assert ("famous-record", "years as CEO") in kinds and ("landmark", "Galleria") in kinds
     assert any(k == "zip" for k, _ in kinds)
     assert not any(m in ("100 Commerce Street", "P.O. Box 100") for _, m in kinds)
