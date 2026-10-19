@@ -1,0 +1,26 @@
+Message-ID: <74122d8146be2275d425@corvane.example.test>
+Date: Mon, 12 Oct 2026 07:56:00 +0000
+From: Graham Whitlock <graham.whitlock@corvane.example.test>
+To: Rohan Desai <rohan.desai@corvane.example.test>
+Subject: FW: Curtailment software document
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+MIME-Version: 1.0
+
+I am not sure if there are new releases to this document. The next email
+gives an example of the data stored on the plant pc. I'm not sure what will
+be stored on the park pc and pushed into the SQL server.
+
+Graham
+
+---------- Forwarded message ----------
+From: Elias Dewhurst <elias.dewhurst@corvane.example.test>
+Date: Mon, 12 Oct 2026 05:56
+Subject: Curtailment software document
+To: graham.whitlock@corvane.example.test
+
+Graham:
+  1. Curtailment program document
+  2. Example database files
+
+Elias

@@ -1,0 +1,16 @@
+Message-ID: <dd1450445647a3ac50df@corvane.example.test>
+Date: Thu, 08 Oct 2026 12:31:00 +0000
+From: Marcus Lindqvist <marcus.lindqvist@corvane.example.test>
+To: Owen Castillo <owen.castillo@corvane.example.test>
+Subject: Just a couple of quick items
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+MIME-Version: 1.0
+
+Owen:
+Just a couple of quick items that need to be addressed. First, what happens
+if the delta of the option is greater than the size of the hedge offered on
+CTR? Second, what strike are straddles traded at. Are they set at the
+nearest 5 cent interval or are they mid-market of the CTR quote?
+
+Marcus

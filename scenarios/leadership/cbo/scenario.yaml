@@ -116,35 +116,35 @@ scenario:
   - owner: cbo
     initial_messages:
     - fixture: fixtures/001-the-attached-file-contains-the-audit-iss.eml
-    - fixture: fixtures/002-the-transaction-agreement-and-master-fir.eml
-    - fixture: fixtures/003-combined-post-id-is-723901.eml
-    - fixture: fixtures/004-i-checked-with-whitcombe-s-office.eml
-    - fixture: fixtures/005-trader-wrote-deal-down-wrong-in-log.eml
-    - fixture: fixtures/006-i-just-entered-the-following-2-deals.eml
-    - fixture: fixtures/007-please-get-a-hold-of-linnea-sometime.eml
-    - fixture: fixtures/008-attached-is-the-letter-agreement-for-bri.eml
-    - fixture: fixtures/009-deal-903029.eml
-    - fixture: fixtures/010-legal-question.eml
-    - fixture: fixtures/011-re-deal-903029.eml
-    - fixture: fixtures/012-i-sold-10000-day-deal-003771-starting.eml
-    - fixture: fixtures/013-fw-technical-issues.eml
-    - fixture: fixtures/014-prices-in-the-real-time-market.eml
-    - fixture: fixtures/015-notice-2001043-is-available-for-your-rev.eml
-    - fixture: fixtures/016-there-are-no-changes-for-the-weekend.eml
-    - fixture: fixtures/017-i-would-like-to-have-a-planning.eml
-    - fixture: fixtures/018-you-going-out-tonight-and-tomorrow-night.eml
-    - fixture: fixtures/019-the-nyiso-back-up-dispatch-system-is-sch.eml
-    - fixture: fixtures/020-fw-expiring-transportation-contracts.eml
-    - fixture: fixtures/021-your-scheduled-review-time-with-yara.eml
-    - fixture: fixtures/022-today-has-disappeared-so-i-don-t-think.eml
-    - fixture: fixtures/023-for-cash-settlement-amount.eml
-    - fixture: fixtures/024-also-forgot-to-tell-y-all-one-more.eml
-    - fixture: fixtures/025-crude-24x7-wti-marketing-effort.eml
-    - fixture: fixtures/026-bear-guarantee-letter.eml
-    - fixture: fixtures/027-fw-mila-storage-exchange-deal-tickets-fo.eml
-    - fixture: fixtures/028-re-bear-guarantee-letter.eml
-    - fixture: fixtures/029-i-will-give-the-form.eml
-    - fixture: fixtures/030-the-slides-with-your-suggested-edits-inc.eml
+    - fixture: fixtures/002-fw-nerc-2026-summer-assessment.eml
+    - fixture: fixtures/003-the-transaction-agreement-and-master-fir.eml
+    - fixture: fixtures/004-trader-wrote-deal-down-wrong-in-log.eml
+    - fixture: fixtures/005-the-annuity-was-booked-10-2-26.eml
+    - fixture: fixtures/006-the-draft-message-points.eml
+    - fixture: fixtures/007-legal-question.eml
+    - fixture: fixtures/008-cna-incumbency-certificate.eml
+    - fixture: fixtures/009-for-deal-847596-celeste-vance-brannock-s.eml
+    - fixture: fixtures/010-re-cna-incumbency-certificate.eml
+    - fixture: fixtures/011-research-intelligence.eml
+    - fixture: fixtures/012-re-research-intelligence.eml
+    - fixture: fixtures/013-good-morning.eml
+    - fixture: fixtures/014-i-would-like-to-have-a-planning.eml
+    - fixture: fixtures/015-re-research-intelligence.eml
+    - fixture: fixtures/016-damon-asked-me-to-let-you-know.eml
+    - fixture: fixtures/017-congratulations-on-your-expanded-role.eml
+    - fixture: fixtures/018-the-list-of-top-cps-with-credit.eml
+    - fixture: fixtures/019-today-has-disappeared-so-i-don-t-think.eml
+    - fixture: fixtures/020-my-proposed-revisions-to-the-transaction.eml
+    - fixture: fixtures/021-we-need-to-complete-the-review.eml
+    - fixture: fixtures/022-texas-has-the-items.eml
+    - fixture: fixtures/023-crude-24x7-wti-marketing-effort.eml
+    - fixture: fixtures/024-bear-guarantee-letter.eml
+    - fixture: fixtures/025-i-have-reviewed-the-three-forwards.eml
+    - fixture: fixtures/026-re-bear-guarantee-letter.eml
+    - fixture: fixtures/027-i-will-give-the-form.eml
+    - fixture: fixtures/028-the-slides-with-your-suggested-edits-inc.eml
+    - fixture: fixtures/029-crude-24x7-wti-marketing-effort.eml
+    - fixture: fixtures/030-there-are-two-deals-that-do-not.eml
     - fixture: fixtures/031-confidential-board-pre-read-project-lark.eml
     - fixture: fixtures/032-larkspur-deck-before-thursday.eml
   - owner: coo
