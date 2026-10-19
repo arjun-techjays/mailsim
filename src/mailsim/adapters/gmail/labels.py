@@ -21,7 +21,7 @@ import threading
 from typing import Any
 
 from mailsim.domain.errors import InvalidRequest, NotFound
-from mailsim.domain.models import SYSTEM_FOLDERS, CanonicalMessage, is_system_label
+from mailsim.domain.models import MAX_LABEL_CHARS, SYSTEM_FOLDERS, CanonicalMessage, is_system_label
 from mailsim.domain.models import SYSTEM_LABELS as DOMAIN_SYSTEM_LABELS
 
 USER_PREFIX = "Label_"
@@ -109,8 +109,8 @@ def check_user_label_name(name: object) -> str:
         raise InvalidRequest("Invalid label name: a non-empty name is required")
     if name.strip().casefold() in RESERVED_NAMES:
         raise InvalidRequest(f"Invalid label name: {name!r} is reserved for a system label")
-    if len(name) > 225:
-        raise InvalidRequest("Invalid label name: at most 225 characters")
+    if len(name) > MAX_LABEL_CHARS:
+        raise InvalidRequest(f"Invalid label name: at most {MAX_LABEL_CHARS} characters")
     return name.strip()
 
 

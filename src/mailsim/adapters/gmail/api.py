@@ -23,7 +23,7 @@ from mailsim.adapters.gmail.resources import decode_raw, stub
 from mailsim.adapters.gmail.service import GmailService
 from mailsim.adapters.gmail.uploads import read_upload
 from mailsim.domain.errors import InvalidRequest, NotFound, UnsupportedOperation
-from mailsim.domain.models import CanonicalMessage
+from mailsim.domain.models import MAX_LABEL_CHARS, MAX_LABELS_PER_CHANGE, CanonicalMessage
 
 BASE = "/gmail/v1/users/{user_id}"
 UPLOAD = "/upload/gmail/v1/users/{user_id}"
@@ -50,8 +50,9 @@ def _strings(body: dict[str, Any], key: str) -> list[str]:
     return value
 
 
-MAX_LABEL_IDS = 50  # per request list; a user label id is "Label_" + hex of a <= 225-char name
-MAX_LABEL_ID_CHARS = 512
+# per request list; a user label id is "Label_" + the hex of a name's UTF-8 (<= 4 bytes/char)
+MAX_LABEL_IDS = MAX_LABELS_PER_CHANGE
+MAX_LABEL_ID_CHARS = len("Label_") + 8 * MAX_LABEL_CHARS
 
 
 def _label_ids(body: dict[str, Any], key: str) -> list[str]:

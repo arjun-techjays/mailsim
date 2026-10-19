@@ -178,7 +178,7 @@ export function validateAnswerKeyDoc(doc: unknown, versions: number[]): { errors
       if (where && typeof where.folder === 'string' && !KNOWN_FOLDERS.includes(where.folder.toLowerCase())) {
         errors.push(issue(`${c}.where.folder`, `unknown folder ${JSON.stringify(where.folder)}; use one of ${KNOWN_FOLDERS.join(', ')}`));
       }
-      if (isObj(check.forbid) && typeof check.forbid.operation === 'string' && check.forbid.operation && !AUTHORING_META.agent_operations.includes(check.forbid.operation.trim().toLowerCase())) {
+      if (isObj(check.forbid) && typeof check.forbid.operation === 'string' && check.forbid.operation && !AUTHORING_META.graded_operations.includes(check.forbid.operation.trim().toLowerCase())) {
         errors.push(issue(`${c}.forbid.operation`, `unknown operation ${JSON.stringify(check.forbid.operation)}`));
       }
     }

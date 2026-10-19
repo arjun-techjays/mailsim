@@ -284,7 +284,7 @@ def test_modify_folders_flags_labels(gm):
     assert modify(add=["Label_"], expect=404)[1] == "NOT_FOUND"
     r = gm.call("POST", f"/messages/{gid}/modify", 400, json={"addLabelIds": [1]})
     assert gm.error(r)[1] == "INVALID_REQUEST"
-    for body in ({"addLabelIds": ["STARRED"] * 51}, {"removeLabelIds": ["Label_" + "a" * 507]}):
+    for body in ({"addLabelIds": ["STARRED"] * 51}, {"removeLabelIds": ["Label_" + "a" * 1801]}):
         r = gm.call("POST", f"/messages/{gid}/modify", 400, json=body)
         assert gm.error(r)[1] == "INVALID_REQUEST"
     assert gm.post(f"/messages/{gid}/modify")["labelIds"] == ["INBOX", "UNREAD"]  # empty body

@@ -25,7 +25,7 @@ from mailsim.api.pagination import decode_sequence_cursor, encode_sequence_curso
 from mailsim.api.schemas import MAX_RAW_B64_CHARS, normalise_addresses
 from mailsim.auth.principal import Role
 from mailsim.domain.errors import InvalidRequest, NotFound, UnsupportedOperation
-from mailsim.domain.models import CanonicalMessage
+from mailsim.domain.models import MAX_LABEL_CHARS, MAX_LABELS_PER_CHANGE, CanonicalMessage
 from mailsim.domain.states import TERMINAL
 from mailsim.engine.facades import AgentMailbox, Controller, EvaluatorView
 from mailsim.engine.pagination import MAX_PAGE_SIZE, check_page_size
@@ -70,6 +70,11 @@ Address = Annotated[str, StringConstraints(max_length=MAX_ID_CHARS)]
 Body = Annotated[str, StringConstraints(max_length=MAX_BODY_CHARS)]
 Subject = Annotated[str, StringConstraints(max_length=MAX_SUBJECT_CHARS)]
 CursorStr = Annotated[str, StringConstraints(max_length=MAX_CURSOR_CHARS)]
+LabelName = Annotated[str, StringConstraints(max_length=MAX_LABEL_CHARS)]
+
+
+def _labels(description: str | None = None) -> Any:
+    return Field(default_factory=list, max_length=MAX_LABELS_PER_CHANGE, description=description)
 
 
 def _list(description: str | None = None) -> Any:
@@ -143,8 +148,8 @@ class AttachmentArgs(Args):
 class ManageLabelsArgs(Args):
     message_id: Id
     folder: Name | None = Field(default=None, description="move the message to this folder")
-    add_labels: list[Name] = _list()
-    remove_labels: list[Name] = _list()
+    add_labels: list[LabelName] = _labels()
+    remove_labels: list[LabelName] = _labels()
     add_flags: list[Name] = _list("IMAP-style flags, e.g. SEEN, FLAGGED, ANSWERED")
     remove_flags: list[Name] = _list()
 
@@ -281,8 +286,7 @@ def manage_labels(mb: AgentMailbox, a: ManageLabelsArgs, _: Deps) -> JSON:
         raise InvalidRequest("nothing to change: set folder, labels or flags")
     # system labels and the DRAFT flag: refused (and recorded) before the first write
     mb.check_labels(a.message_id, add=a.add_labels, remove=a.remove_labels)
-    if "DRAFT" in a.add_flags or "DRAFT" in a.remove_flags:  # forging / erasing a draft
-        mb.check_draft_flag(mb.get_message(a.message_id), add=a.add_flags, remove=a.remove_flags)
+    mb.check_draft_flag_of(a.message_id, add=a.add_flags, remove=a.remove_flags)
     if a.folder is not None:
         _folder_name(mb, a.folder)  # validate before the first write
         mb.move(a.message_id, a.folder)

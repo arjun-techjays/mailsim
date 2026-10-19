@@ -20,10 +20,11 @@ from email.utils import getaddresses
 from typing import Any
 
 from mailsim.domain.clock import parse_ts
-from mailsim.domain.models import is_system_label
+from mailsim.domain.models import is_system_label, normalize_address
 from mailsim.evaluation.contract import AssertionDiff, AssertionOutcome, EvidenceRef, Status
 from mailsim.evaluation.registry import EvaluationContext
 from mailsim.evaluation.rules import pre_status
+from mailsim.mime.parse import normalize_message_id
 from mailsim.scenario.answer_key import ActionMatch, AnswerAssertion, Count, MessageWhere
 
 AGENT = "agent"
@@ -104,24 +105,26 @@ class Answered:
         by_id = self.recipients_by_id.get(msg["id"])
         if by_id is not None and not by_id.isdisjoint(senders):
             return True
-        by_header = self.recipients_by_header.get(msg.get("message_id_header") or "")
+        by_header = self.recipients_by_header.get(
+            normalize_message_id(msg.get("message_id_header")) or ""
+        )
         return by_header is not None and not by_header.isdisjoint(senders)
 
 
 def _recipients(msg: Any) -> set[str]:
     if not isinstance(msg, dict):
         return set()
-    return {_cf(a.get("email")) for k in ("to", "cc", "bcc") for a in msg.get(k) or []
-            if isinstance(a, dict)} - {""}  # fmt: skip
+    return {normalize_address(a.get("email")) for k in ("to", "cc", "bcc")
+            for a in msg.get(k) or [] if isinstance(a, dict)} - {""}  # fmt: skip
 
 
 def _senders(msg: dict[str, Any]) -> set[str]:
-    out = {_cf((msg.get("from") or {}).get("email"))}
+    out = {normalize_address((msg.get("from") or {}).get("email"))}
     headers = msg.get("headers") or {}
     for name, values in headers.items():
         if str(name).casefold() == "reply-to":
             vals = values if isinstance(values, list) else [values]
-            out |= {_cf(addr) for _, addr in getaddresses([str(v) for v in vals]) if addr}
+            out |= {normalize_address(a) for _, a in getaddresses([str(v) for v in vals]) if a}
     return out - {""}
 
 
@@ -191,9 +194,9 @@ class RunIndex:
         by_header: dict[str, set[str]] = {}
         for e in self.events_in(cutoff):
             msg = e["payload"].get("message")
-            if (e["type"] == "message.sent" and e["actor"] == AGENT and isinstance(msg, dict)
-                    and msg.get("in_reply_to")):  # fmt: skip
-                by_header.setdefault(str(msg["in_reply_to"]), set()).update(_recipients(msg))
+            header = normalize_message_id(msg.get("in_reply_to")) if isinstance(msg, dict) else None
+            if e["type"] == "message.sent" and e["actor"] == AGENT and header:
+                by_header.setdefault(header, set()).update(_recipients(msg))
         return Answered(by_id, by_header)
 
     # ------------------------------------------------------------------ windows

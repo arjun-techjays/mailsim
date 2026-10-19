@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from mailsim.domain.errors import InvalidRequest, PermissionDenied
+from mailsim.domain.errors import InvalidRequest, PermissionDenied, RunNotActive
 from mailsim.domain.models import is_system_label, refuse_system_labels, system_labels_in
 from mailsim.engine.context import use_connection_test
 from mailsim.engine.core import CONTROLLER
@@ -281,3 +281,14 @@ def test_connection_test_probe_may_not_draw_ids(w):
         w.env.engine._command(w.env.scope, w.run, "agent", "read", {},
                               lambda c: c.gen.next("x"), mailbox_id=w.fm)  # fmt: skip
     assert [a["actor"] for a in w.ctl.actions(w.run)][-1] == "connection_test"
+
+
+def test_sent_copy_needs_a_running_run_and_the_agents_own_mailbox(w):
+    eng, sc = w.env.engine, w.env.scope
+    eng.sent_copy(sc, w.run, w.fm, "Sent", 10)
+    assert w.agent_actions()[-1] == ("sent_copy", "ok")
+    with pytest.raises(PermissionDenied):
+        eng.sent_copy(sc, w.run, w.vendor, "Sent", 10)  # someone else's mailbox
+    w.ctl.cancel_run(w.run)
+    with pytest.raises(RunNotActive):
+        eng.sent_copy(sc, w.run, w.fm, "Sent", 10)

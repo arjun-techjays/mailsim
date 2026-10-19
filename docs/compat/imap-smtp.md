@@ -196,8 +196,11 @@ stored (`NO [NOPERM]` / `NO [CANNOT]`) and recorded as a refused `insert`.
 `Sent` and `Drafts` hold only what this account sent or drafted:
 
 - **APPEND to `Sent`** (a client filing its copy after an SMTP send) answers OK and stores
-  nothing: the submission already filed the real sent copy. It passes the normal `insert`
-  guard (run active, permission, budget) and is recorded as an `insert` with `stored: false`. When the appended message's
+  nothing: the submission already filed the real sent copy. It is recorded as its own
+  operation, `sent_copy` (not an `insert`): it needs a RUNNING run and the agent's own mailbox,
+  but no permission (a scenario that prohibits `insert` doesn't penalise it), costs no budget,
+  is left out of the efficiency counts and is never evidence of anything. Answer keys may name
+  it in action checks (`operation: sent_copy`). When the appended message's
   `Message-ID` is one of the sent messages there, `[APPENDUID]` reports its UID; otherwise a
   plain `OK` (SMTP assigns its own `Message-ID`, so a client's copy usually doesn't match).
 - **APPEND to `Drafts`** with this mailbox's address as `From` (a client saving a draft)

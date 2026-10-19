@@ -148,9 +148,9 @@ class AgentMailbox:
         self._e.record_refused(*self._a(), operation, error, message_id=message_id, add=add,
                                remove=remove, folder=folder, size=size, actor=AGENT)  # fmt: skip
 
-    def insert_noop(self, folder: str, size: int) -> None:
-        """A guarded, recorded `insert` that stores nothing (IMAP APPEND to Sent)."""
-        self._e.insert_noop(*self._a(), folder, size, actor=AGENT)
+    def sent_copy(self, folder: str, size: int) -> None:
+        """Record a client's copy of a sent message filed into Sent (stores nothing)."""
+        self._e.sent_copy(*self._a(), folder, size, actor=AGENT)
 
     def check_labels(self, message_id: str | None, *, add: Sequence[str] = (),
                      remove: Sequence[str] = ()) -> None:  # fmt: skip
@@ -159,6 +159,15 @@ class AgentMailbox:
         error = system_label_error([*add, *remove])
         if error is not None:
             self.record_refused("label", error, message_id=message_id, add=add, remove=remove)
+
+    def check_draft_flag_of(self, message_id: str, *, add: Sequence[str] = (),
+                            remove: Sequence[str] = ()) -> None:  # fmt: skip
+        """`check_draft_flag` by id, with an internal (unaudited) lookup: no agent read."""
+        if "DRAFT" not in (*add, *remove):
+            return
+        error = draft_flag_error(self._e.is_draft(*self._a(), message_id), add, remove)
+        if error is not None:
+            self.record_refused("flag", error, message_id=message_id, add=add, remove=remove)
 
     def check_draft_flag(self, message: CanonicalMessage, *, add: Sequence[str] = (),
                          remove: Sequence[str] = ()) -> None:  # fmt: skip

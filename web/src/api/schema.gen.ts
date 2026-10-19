@@ -1447,7 +1447,10 @@ export interface components {
          * @description Everything a form-based editor needs to offer choices instead of free text.
          */
         AuthoringMeta: {
-            /** Agent Operations */
+            /**
+             * Agent Operations
+             * @description operations a scenario can allow/prohibit
+             */
             agent_operations: string[];
             /**
              * Answer Key Schema
@@ -1471,6 +1474,11 @@ export interface components {
              * @description system folder types usable in checks
              */
             folders: string[];
+            /**
+             * Graded Operations
+             * @description agent operations an answer-key action check can name (agent_operations plus recorded-only ones such as sent_copy)
+             */
+            graded_operations: string[];
             /** Invariants */
             invariants: string[];
             /**

@@ -37,7 +37,11 @@ class AuthoringMeta(_M):
     scenario_schema: dict[str, Any] = Field(description="JSON Schema of a scenario document")
     answer_key_schema: dict[str, Any] = Field(description="JSON Schema of an answer key")
     schema_versions: list[str]
-    agent_operations: list[str]
+    agent_operations: list[str] = Field(description="operations a scenario can allow/prohibit")
+    graded_operations: list[str] = Field(
+        description="agent operations an answer-key action check can name (agent_operations "
+        "plus recorded-only ones such as sent_copy)"
+    )
     trigger_types: list[str]
     trigger_actions: list[str] = Field(description="values for after_agent_action triggers")
     external_delivery_modes: list[str]

@@ -771,6 +771,7 @@
         "description": "Everything a form-based editor needs to offer choices instead of free text.",
         "properties": {
           "agent_operations": {
+            "description": "operations a scenario can allow/prohibit",
             "items": {
               "type": "string"
             },
@@ -826,6 +827,14 @@
             "title": "Folders",
             "type": "array"
           },
+          "graded_operations": {
+            "description": "agent operations an answer-key action check can name (agent_operations plus recorded-only ones such as sent_copy)",
+            "items": {
+              "type": "string"
+            },
+            "title": "Graded Operations",
+            "type": "array"
+          },
           "invariants": {
             "items": {
               "type": "string"
@@ -874,6 +883,7 @@
           "answer_key_schema",
           "schema_versions",
           "agent_operations",
+          "graded_operations",
           "trigger_types",
           "trigger_actions",
           "external_delivery_modes",
@@ -2798,7 +2808,7 @@
           },
           "add_labels": {
             "items": {
-              "maxLength": 200,
+              "maxLength": 225,
               "type": "string"
             },
             "maxItems": 50,
@@ -2825,7 +2835,7 @@
           },
           "remove_labels": {
             "items": {
-              "maxLength": 200,
+              "maxLength": 225,
               "type": "string"
             },
             "maxItems": 50,

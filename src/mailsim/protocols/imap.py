@@ -1006,8 +1006,8 @@ class ImapSession:
         """APPEND to Sent (a client filing its copy after an SMTP send): OK, but nothing new
         is stored. The submission already filed the real sent copy; an appended one would be
         evidence of nothing. The matching sent message's UID is reported when the Message-ID
-        names one. Guarded and recorded like any insert (an `insert` with `stored: false`)."""
-        self._mb.insert_noop(str(dest["name"]), len(raw))
+        names one. Recorded as `sent_copy` (not an insert: no permission gate, no budget)."""
+        self._mb.sent_copy(str(dest["name"]), len(raw))
         try:
             header = parse_mime(raw).message_id
         except (SimError, ValueError):

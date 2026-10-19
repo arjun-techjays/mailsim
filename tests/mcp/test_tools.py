@@ -424,7 +424,8 @@ def test_a_failing_credential_check_never_leaks_its_cause(world, caplog):
     ("get_message", {"message_id": "m" * 257}),
     ("send_message", {"to": ["a@example.test"] * 501}),
     ("search_messages", {"query": "q" * 1025}),
-    ("manage_labels", {"message_id": "m", "add_labels": ["x" * 257]}),
+    ("manage_labels", {"message_id": "m", "add_labels": ["x" * 226]}),
+    ("manage_labels", {"message_id": "m", "remove_labels": ["x"] * 51}),
     ("reply_to_message", {"message_id": "m", "text": "x" * (t.MAX_BODY_CHARS + 1)}),
 ])  # fmt: skip
 def test_argument_bounds(world, tool, args):

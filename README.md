@@ -89,7 +89,11 @@ Expired idempotency records are swept on each claim; `python -m mailsim.serve sw
   that went to its sender; a forward is not an answer). `STARRED`/`FLAGGED` and `DELETED` are
   flags the agent sets itself: they show what it did to a message, not that it did the work,
   so pair them with an `action` check (e.g. `operation: reply`) when that is what you grade.
-  Labels match ignoring case and surrounding blanks.
+  Labels match ignoring case and surrounding blanks. Two edge cases for authors: a reply to
+  the agent's own sent message goes to that message's recipients, not to the agent, so it is
+  not graded as "answered" for that message; and seeded inbound mail whose `From` is the
+  agent's own address is "answered" by a send to self, so avoid seeding such mail when you
+  grade `ANSWERED`.
 * **Evaluation errors.** `POST /v1/runs/{id}/evaluations` answers 404 when the requested
   `answer_key_version` does not exist and 409 CONFLICT when it (or every key) is not compatible
   with the run's scenario version (`details.answer_key_version`, `details.scenario_versions`,
@@ -126,7 +130,8 @@ Expired idempotency records are swept on each claim; `python -m mailsim.serve sw
   `GET /v1/health` also reports `local_no_auth`.
   Follow-ups: a refused system-label / DRAFT / Sent-Drafts write is recorded as a refused agent
   `label` / `flag` / `insert` action on every interface (also when an adapter refuses it before
-  its first write). IMAP APPEND to `Sent` answers OK without storing anything; APPEND to `Drafts`
+  its first write). IMAP APPEND to `Sent` answers OK without storing anything (recorded as
+  `sent_copy`: no permission, no budget, not counted, never evidence); APPEND to `Drafts`
   from this mailbox's address makes a real draft. `where.label: answered` and
   `has_flag: ANSWERED` count only messages the agent really replied to (forwards don't count).
   **Breaking:** moving controller-seeded Sent history out of `Sent` and back is refused (only

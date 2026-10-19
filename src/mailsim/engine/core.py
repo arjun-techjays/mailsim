@@ -38,6 +38,7 @@ from mailsim.domain.models import (
     AttachmentRef,
     CanonicalMessage,
     draft_flag_error,
+    normalize_address,
     refuse_system_labels,
 )
 from mailsim.domain.states import NO_BUILD, TERMINAL, RunStatus, check_transition
@@ -52,7 +53,12 @@ from mailsim.mime.build import build_mime
 from mailsim.mime.limits import MimeLimits
 from mailsim.mime.parse import ParsedAttachment, parse_mime
 from mailsim.scenario.answer_keys import answer_key_for
-from mailsim.scenario.schema import TRIGGER_ACTIONS, ScenarioBody, ScenarioDoc
+from mailsim.scenario.schema import (
+    TRIGGER_ACTIONS,
+    UNGATED_AGENT_OPERATIONS,
+    ScenarioBody,
+    ScenarioDoc,
+)
 from mailsim.scenario.service import get_scenario_version
 from mailsim.scenario.validator import validate_semantics
 from mailsim.store import models as m
@@ -80,7 +86,7 @@ MAX_RECIPIENTS = 100
 
 
 def counts_against_budget(operation: str) -> bool:
-    return operation not in READ_OPERATIONS
+    return operation not in READ_OPERATIONS and operation not in UNGATED_AGENT_OPERATIONS
 
 
 @dataclass
@@ -166,7 +172,7 @@ class ReplayResult:
 
 
 def _addr(email: str) -> Address:
-    email = email.strip().lower()
+    email = normalize_address(email)
     if "@" not in email or any(ch.isspace() or ord(ch) < 32 for ch in email):
         raise InvalidRequest(f"invalid email address {email!r}")
     return Address(email=email)
@@ -337,7 +343,7 @@ class SimEngine:
         (RUNNING run, `send` permission, own mailbox, budget), then an EXTERNAL_DELIVERY_BLOCKED
         `send` action that counts against the budget, with its `delivery.external_blocked`
         evidence event. Nothing is delivered. Always raises the refusal it recorded."""
-        rcpts = [r.strip().lower() for r in recipients]
+        rcpts = [normalize_address(r) for r in recipients]
 
         def fn(c: Ctx) -> None:
             raise ExternalDeliveryBlocked(f"delivery to {', '.join(rcpts)} is not permitted",
@@ -366,7 +372,7 @@ class SimEngine:
         if actor != AGENT:
             return
         agent = ctx.config["agent"]
-        if not self._permitted(ctx, operation):
+        if operation not in UNGATED_AGENT_OPERATIONS and not self._permitted(ctx, operation):
             raise PermissionDenied(f"operation {operation!r} is not permitted for the agent")
         if mailbox_id is not None:
             mb = ctx.session.get(m.Mailbox, (mailbox_id, run.id))
@@ -1535,18 +1541,28 @@ class SimEngine:
         if error is not None:
             raise error
 
-    def insert_noop(self, scope: Scope, run_id: str, mailbox_id: str, folder: str, size: int,
-                    *, actor: str = AGENT) -> None:  # fmt: skip
-        """An insert that stores nothing (IMAP APPEND of a client's copy to Sent, already
-        filed by its SMTP send): the normal `insert` guard (RUNNING run, permission, own
-        mailbox, budget), recorded as an ok `insert` with `stored: false`. No event, no
-        message: it is evidence of nothing."""
+    def is_draft(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str) -> bool:
+        """Internal, unaudited lookup for an interface's pre-check before a multi-write change
+        (not an agent read): whether `message_id` of `mailbox_id` is a draft. NOT_FOUND like
+        any command on a message outside the mailbox."""
+        with self._sf() as s:
+            get_run(s, scope, run_id)
+            row = s.get(m.Message, (message_id, run_id))
+            if row is None or row.mailbox_id != mailbox_id:
+                raise NotFound(f"message {message_id} not found")
+            return bool(row.is_draft)
+
+    def sent_copy(self, scope: Scope, run_id: str, mailbox_id: str, folder: str, size: int,
+                  *, actor: str = AGENT) -> None:  # fmt: skip
+        """An IMAP client filing its copy of an SMTP send into Sent (Thunderbird's default):
+        stores nothing, the send already filed the real copy. Recorded as `sent_copy` with
+        only the RUNNING-run and own-mailbox guard: no permission gate (a scenario that
+        prohibits `insert` must not penalise it), no budget, no event, no evidence."""
 
         def fn(c: Ctx) -> dict[str, Any]:
             return {"stored": False}
 
-        self._command(scope, run_id, actor, "insert",
-                      {"bytes": size, "folder": folder, "stored": False}, fn,
+        self._command(scope, run_id, actor, "sent_copy", {"bytes": size, "folder": folder}, fn,
                       mailbox_id=mailbox_id)  # fmt: skip
 
     def record_refused(self, scope: Scope, run_id: str, mailbox_id: str, operation: str,

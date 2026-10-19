@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from mailsim.domain.errors import ExternalDeliveryBlocked
+from mailsim.domain.models import normalize_address
 
 
 class ExternalMode(StrEnum):
@@ -35,7 +36,7 @@ class DeliveryPolicy:
         plan = DeliveryPlan()
         seen: set[str] = set()
         for raw in recipients:
-            email = raw.strip().lower()
+            email = normalize_address(raw)
             if email in seen:
                 continue
             seen.add(email)

@@ -9,7 +9,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
-from mailsim.domain.models import CanonicalMessage
+from mailsim.domain.models import MAX_LABEL_CHARS, MAX_LABELS_PER_CHANGE, CanonicalMessage
 
 
 class _M(BaseModel):
@@ -276,14 +276,13 @@ class ForwardRequest(_M):
     text: str = ""
 
 
-MAX_PATCH_LABELS = 50
-LabelName = Annotated[str, Field(max_length=200)]
+LabelName = Annotated[str, Field(max_length=MAX_LABEL_CHARS)]
 
 
 class MessagePatch(_M):
     folder: str | None = None
-    add_labels: list[LabelName] = Field(default_factory=list, max_length=MAX_PATCH_LABELS)
-    remove_labels: list[LabelName] = Field(default_factory=list, max_length=MAX_PATCH_LABELS)
+    add_labels: list[LabelName] = Field(default_factory=list, max_length=MAX_LABELS_PER_CHANGE)
+    remove_labels: list[LabelName] = Field(default_factory=list, max_length=MAX_LABELS_PER_CHANGE)
     add_flags: list[str] = Field(default_factory=list)
     remove_flags: list[str] = Field(default_factory=list)
 

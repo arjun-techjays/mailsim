@@ -1050,6 +1050,21 @@
   "draft",
   "delete"
  ],
+ "graded_operations": [
+  "read",
+  "search",
+  "reply",
+  "send",
+  "forward",
+  "insert",
+  "move",
+  "copy",
+  "label",
+  "flag",
+  "draft",
+  "delete",
+  "sent_copy"
+ ],
  "trigger_types": [
   "at",
   "after_seconds",

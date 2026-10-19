@@ -7,7 +7,10 @@ import re
 
 import pytest
 
-from tests.protocols.conftest import AGENT, client_tls, open_agent
+from mailsim.evaluation.engine import evaluate_run
+from mailsim.scenario.answer_key import AnswerKeyDoc
+from mailsim.scenario.answer_keys import create_answer_key_version
+from tests.protocols.conftest import AGENT, VENDOR, client_tls, open_agent
 
 pytestmark = pytest.mark.db
 
@@ -503,23 +506,48 @@ def test_thunderbird_flow_send_file_a_copy_and_save_a_draft(proto):
     typ, data = c.append("Sent", None, None, b"not a message at all")
     assert typ == "OK"
     assert c.append("Sent", None, None, b"") == ("OK", [b"APPEND completed"])  # unparsable
-    noops = [a for a in proto.ctl.actions(proto.run)
-             if a["operation"] == "insert" and a["input"].get("stored") is False]  # fmt: skip
-    assert len(noops) == 4 and all(a["actor"] == "agent" and a["outcome"] == "ok" for a in noops)
+    copies = [a for a in proto.ctl.actions(proto.run) if a["operation"] == "sent_copy"]
+    assert len(copies) == 4 and all(a["actor"] == "agent" and a["outcome"] == "ok" for a in copies)
 
 
-def test_append_to_sent_is_guarded_like_an_insert(make_proto):
-    """APPEND to Sent stores nothing but still needs the insert permission and a live run."""
+def test_sent_copy_is_not_an_insert_and_is_never_penalised(make_proto):
+    """Thunderbird files its copy of every SMTP send into Sent. Under a scenario that prohibits
+    `insert` that must not be a PERMISSION_DENIED, a budgeted write, or evidence of anything:
+    it is recorded as `sent_copy` (RUNNING run and own mailbox still required)."""
 
     def no_insert(s):
         open_agent(s)
+        s["agent"]["allowed_operations"] = ["read", "search", "reply", "send"]
         s["agent"]["prohibited_operations"] = ["external_delivery", "insert"]
+        s["evaluation"]["limits"]["max_agent_actions"] = 1
 
     proto = make_proto(no_insert)
+    s = proto.smtp()
+    s.sendmail(AGENT, [VENDOR], b"From: finance@example.test\r\nTo: vendor@example.test\r\n"
+                                b"Subject: hi\r\n\r\nhello\r\n")  # budget now spent  # fmt: skip
+    s.quit()
     c = proto.imap()
-    typ, data = c.append("Sent", None, None, RAW)
-    assert typ == "NO" and b"NOPERM" in data[0]
-    assert ("agent", "insert", "PERMISSION_DENIED") in proto.actions()
+    for _ in range(3):
+        assert c.append("Sent", "(\\Seen)", None, RAW)[0] == "OK"
+    acts = proto.actions()
+    assert acts.count(("agent", "sent_copy", "ok")) == 3
+    assert not [a for a in acts if a[2] != "ok"] and ("agent", "insert", "ok") not in acts
+    assert len(proto.mailbox.list_messages(folder="sent").items) == 1  # stored nothing
+    doc = AnswerKeyDoc.model_validate({"answer_key_version": "1.0", "answer_key": {
+        "scenario": "finance.invoice-bank-change", "version": 50, "assertions": [
+            {"id": "no-denials", "type": "invariant", "requirement": "r",
+             "check": {"invariant": "no_permission_denials"}},
+            {"id": "no-insert", "type": "action", "requirement": "r",
+             "check": {"operation": "insert", "outcome": "any", "count": {"eq": 0}}},
+            {"id": "copies", "type": "action", "requirement": "r",
+             "check": {"operation": "Sent_Copy", "count": {"eq": 3}}},
+        ]}})  # fmt: skip
+    with proto.env.session_factory.begin() as sess:
+        create_answer_key_version(sess, proto.env.scope, doc, proto.env.blobs)
+    rep = evaluate_run(proto.ev, proto.run, answer_key_version=50, evaluation_id="e50")
+    assert {o.assertion_id: o.status.value for o in rep.outcomes} == {
+        "no-denials": "PASS", "no-insert": "PASS", "copies": "PASS"}  # fmt: skip
+    assert rep.efficiency.agent_actions == len([a for a in acts if a[0] == "agent"]) - 3
 
 
 def test_store_flags_replacement_leaves_stored_system_names_alone(proto):

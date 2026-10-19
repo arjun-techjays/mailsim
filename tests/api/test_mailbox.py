@@ -246,7 +246,7 @@ def test_draft_flag_and_label_list_caps_are_checked_before_the_first_write(api, 
     url = f"/v1/mailboxes/{mbx}/messages/{first['id']}"
     r = api.call("PATCH", url, key=key, json={"folder": "archive", "add_flags": ["DRAFT"]})
     assert "marks drafts only" in err(r, 403, "PERMISSION_DENIED")["message"]
-    for body in ({"add_labels": [f"l{i}" for i in range(51)]}, {"remove_labels": ["x" * 201]}):
+    for body in ({"add_labels": [f"l{i}" for i in range(51)]}, {"remove_labels": ["x" * 226]}):
         err(api.call("PATCH", url, key=key, json={"folder": "archive", **body}), 400,
             "INVALID_REQUEST")  # fmt: skip
     assert api.call("GET", url, key=key, expect=200).json()["folder"] == "INBOX"  # not moved

@@ -27,12 +27,12 @@ from mailsim.scenario.answer_key import (
     StateCheck,
     TemporalCheck,
 )
-from mailsim.scenario.schema import AGENT_OPERATIONS, ScenarioBody
+from mailsim.scenario.schema import GRADED_AGENT_OPERATIONS, ScenarioBody
 
 FOLDERS: tuple[str, ...] = tuple(kind for _name, kind in SYSTEM_FOLDERS)
 # Operation names as the engine records them in the action log, per actor.
 OPERATIONS: dict[str, tuple[str, ...]] = {
-    "agent": AGENT_OPERATIONS,
+    "agent": GRADED_AGENT_OPERATIONS,
     "simulator": ("persona.reply", "persona.failed"),
     "controller": ("create_run", "start", "cancel", "error", "reset", "inject", "tick",
                    "advance", "replay"),

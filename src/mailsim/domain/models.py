@@ -62,6 +62,12 @@ class CanonicalMessage(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+def normalize_address(email: str | None) -> str:
+    """The one normal form of an email address (addr-spec) for comparisons, used by the engine
+    (delivery, recipients) and by grading alike: surrounding blanks stripped, lower case."""
+    return (email or "").strip().lower()
+
+
 SYSTEM_FOLDERS: tuple[tuple[str, str], ...] = (
     ("INBOX", "inbox"),
     ("Sent", "sent"),
@@ -79,6 +85,13 @@ VALID_FLAGS = frozenset({"SEEN", "ANSWERED", "FLAGGED", "DELETED", "DRAFT"})
 # ANSWERED and DELETED are the Gmail profile's system labels for the same facts.
 SYSTEM_LABELS = frozenset({"inbox", "sent", "drafts", "draft", "trash", "archive", "unread",
                            "starred", "answered", "deleted"})  # fmt: skip
+
+
+# One cap on label writes for every interface (REST, MCP, Gmail, Graph categories): a label
+# name of at most MAX_LABEL_CHARS characters (Gmail's own limit), at most MAX_LABELS_PER_CHANGE
+# names per list in one request.
+MAX_LABEL_CHARS = 225
+MAX_LABELS_PER_CHANGE = 50
 
 
 def is_system_label(name: str) -> bool:

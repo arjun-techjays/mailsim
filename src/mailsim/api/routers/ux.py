@@ -145,6 +145,7 @@ def _authoring_meta() -> u.AuthoringMeta:  # static per process: built once
         answer_key_schema=ak.AnswerKeyDoc.model_json_schema(by_alias=True),
         schema_versions=list(scenario_schema.SUPPORTED_SCHEMA_VERSIONS),
         agent_operations=list(scenario_schema.AGENT_OPERATIONS),
+        graded_operations=list(scenario_schema.GRADED_AGENT_OPERATIONS),
         trigger_types=list(TRIGGER_TYPES),
         trigger_actions=list(scenario_schema.TRIGGER_ACTIONS),
         external_delivery_modes=list(EXTERNAL_DELIVERY_MODES),

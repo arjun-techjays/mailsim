@@ -37,7 +37,13 @@ from mailsim.domain.errors import (
     PermissionDenied,
     UnsupportedOperation,
 )
-from mailsim.domain.models import SYSTEM_FOLDERS, CanonicalMessage, is_system_label
+from mailsim.domain.models import (
+    MAX_LABEL_CHARS,
+    MAX_LABELS_PER_CHANGE,
+    SYSTEM_FOLDERS,
+    CanonicalMessage,
+    is_system_label,
+)
 from mailsim.engine.facades import AgentMailbox, facade_for
 from mailsim.providers.ids import graph_id
 
@@ -724,6 +730,11 @@ def update_message(message_id: str, ctx: Context, payload: Payload = None) -> JS
         not isinstance(categories, list) or not all(isinstance(c, str) for c in categories)
     ):
         raise InvalidRequest("categories must be a collection of strings")
+    if categories is not None and (
+        len(categories) > MAX_LABELS_PER_CHANGE or any(len(c) > MAX_LABEL_CHARS for c in categories)
+    ):
+        raise InvalidRequest(f"categories takes at most {MAX_LABELS_PER_CHANGE} names of at most "
+                             f"{MAX_LABEL_CHARS} characters")  # fmt: skip
     current = res.user_categories(m)
     if categories is not None:  # system names: refused (and recorded) before any write
         ctx.mb.check_labels(mid, add=[c for c in categories if c not in current])

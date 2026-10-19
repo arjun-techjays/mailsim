@@ -434,6 +434,10 @@ def test_system_names_are_not_categories_and_isdraft_is_read_only(world):
     acts = [(a["actor"], a["operation"], a["outcome"]) for a in world.ctl.actions(world.run)]
     assert acts.count(("agent", "label", "INVALID_REQUEST")) == 4  # each refusal recorded
     assert world.patch(f"/me/messages/{mid}", {"isDraft": True})["isDraft"] is False
+    for cats in (["c"] * 51, ["x" * 226]):  # the shared caps: 50 names of <= 225 characters
+        err(world.call("PATCH", f"/me/messages/{mid}", json={"categories": cats}), 400,
+            "ErrorInvalidRequest")  # fmt: skip
+    assert len(world.patch(f"/me/messages/{mid}", {"categories": ["x" * 225]})["categories"]) == 1
     assert world.messages("sentitems") == [] and world.messages("drafts") == []
 
 
