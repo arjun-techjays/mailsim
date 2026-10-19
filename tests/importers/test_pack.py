@@ -169,3 +169,68 @@ def test_scripted_ceo_denies_the_wire_request(env):
     replies = [m for m in mb.list_messages(folder="inbox", page_size=500).items
                if m.from_.email == "helena.marsh@corvane.example.test"]  # fmt: skip
     assert replies and "not asked for any payment" in mb.get_message(replies[-1].id).body_text
+
+
+def _fixtures(slug):
+    root = PACK / slug
+    manifest = json.loads((root / "pack.json").read_text())
+    return manifest, [
+        email.message_from_bytes((root / e["fixture"]).read_bytes(), policy=policy.default)
+        for e in manifest["fixtures"]
+    ]
+
+
+@pytest.mark.parametrize("slug", sorted(ROLES))
+def test_pack_message_ids_are_unique_per_mailbox(slug):
+    _, msgs = _fixtures(slug)
+    ids = [m["Message-ID"] for m in msgs]
+    assert len(ids) == len(set(ids)) and all(i.endswith(".example.test>") for i in ids)
+
+
+@pytest.mark.parametrize("slug", sorted(ROLES))
+def test_pack_attachments_are_real_documents_where_bodies_claim_them(slug):
+    import re
+
+    from mailsim.importers.attachments import extract_text
+    from mailsim.importers.documents import ATTACH_CLAIM
+    from tests.importers.test_realism import _check_pdf_structure
+
+    manifest, msgs = _fixtures(slug)
+    total = 0
+    for entry, m in zip(manifest["fixtures"], msgs, strict=True):
+        body = m.get_body(("plain",)).get_content()
+        atts = list(m.iter_attachments())
+        assert entry["attachments"] == len(atts)
+        claims = ATTACH_CLAIM.search(body) and not re.search(r"(?i)attached (?:is|are) "
+                                                             r"(?:a |the )?(?:link|url)", body)  # fmt: skip
+        assert atts or not claims, (entry["fixture"], body[:200])  # every claim is honoured
+        for att in atts:
+            data = att.get_payload(decode=True)
+            total += 1
+            assert 1_000 < len(data) < 100_000
+            if att.get_content_type() == "application/pdf":
+                assert _check_pdf_structure(data) >= 2
+            assert len(extract_text(data, att.get_filename())) > 200
+    assert total == manifest["attachments"] >= 1
+
+
+@pytest.mark.parametrize("slug", sorted(ROLES))
+def test_pack_dates_follow_the_clock(slug):
+    import re
+    from datetime import datetime
+
+    loaded = load_scenario(PACK / slug / "scenario.yaml")
+    raw_start = loaded.doc.scenario.environment.clock.start_at
+    start = (raw_start if isinstance(raw_start, datetime)
+             else datetime.fromisoformat(str(raw_start).replace("Z", "+00:00")))  # fmt: skip
+    _, msgs = _fixtures(slug)
+    for m in msgs:
+        sent = m["Date"].datetime
+        assert sent < start
+        body = m.get_body(("plain",)).get_content()
+        assert not re.search(r"(?<!Windows )\b(?:199\d|200[0-3])\b(?! ?MW)", body), body[:300]
+        for full in re.findall(r"\b\d{1,2}/\d{1,2}/(\d{2}|\d{4})\b", body):
+            assert full in ("25", "26", "2025", "2026"), full
+        quoted = re.findall(r"^Date: (\w{3}, \d\d \w{3} \d{4} \d\d:\d\d)$", body, re.M)
+        for q in quoted:  # a forwarded original is older than the forward
+            assert datetime.strptime(q, "%a, %d %b %Y %H:%M").replace(tzinfo=sent.tzinfo) < sent

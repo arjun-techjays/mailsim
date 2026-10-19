@@ -72,8 +72,8 @@ TOPIC_LINES = {
     ],
 }
 FILLER = (
-    "please review and let me know. thanks for the help, the numbers look fine and the team "
-    "agreed. please call me if you have questions. the following items are attached."
+    "Please review and let me know. Thanks for the help, the numbers look fine and the team "
+    "agreed. Please call me if you have questions. The following items are attached."
 )
 
 
@@ -88,7 +88,7 @@ def make_texts(n: int = 240, seed: int = 3) -> list[str]:
     for i in range(n):
         topic = topics[i % len(topics)]
         a, b = rnd.sample(PEOPLE, 2)
-        line = " ".join(rnd.sample(TOPIC_LINES[topic], 2)).capitalize()
+        line = " ".join(t[:1].upper() + t[1:] for t in rnd.sample(TOPIC_LINES[topic], 2))
         body = f"{line}\n{FILLER}"
         kind = i % 4
         if kind == 0:  # single message, greeting + sign-off

@@ -221,7 +221,12 @@ def import_enron(
     stats = ImportStats()
     harvester = Harvester()
     chosen = select(read_parquet(paths), cfg, harvester, stats)
-    registry = harvester.finish()
+    return build_corpus(chosen, harvester.finish(), cfg, stats)
+
+
+def build_corpus(chosen: list[tuple[str, str, int, str]], registry: Registry, cfg: ImportConfig,
+                 stats: ImportStats) -> tuple[list[dict[str, Any]], dict[str, Any], Registry]:  # fmt: skip
+    """Records, header and registry from the sampled rows (the second half of the import)."""
     pseudo = Pseudonymizer(registry, cfg.seed)
     records: list[dict[str, Any]] = []
     for _key, _shard, _row, text in chosen:

@@ -227,7 +227,10 @@ uv run sim run-replay $R --project $P     # exit 0 only if replayed state hash m
 `scenarios/leadership/` holds CEO, CFO, CBO and Director of Finance inboxes of a fictional
 company, generated from the public Enron corpus by `sim import enron` and
 `sim generate leadership`. They are pseudonymized, topic-routed and threaded, with injected
-risk items and minimal answer keys. See [`docs/leadership-inboxes.md`](docs/leadership-inboxes.md).
+risk items and minimal answer keys. Greetings and sign-offs match the bound personas, records
+that do not fit their sender are skipped, dates follow the scenario clock, and messages that
+say something is attached carry a generated PDF or XLSX. `sim import scan` checks headers,
+decoded bodies and attachment text. See [`docs/leadership-inboxes.md`](docs/leadership-inboxes.md).
 
 ## Architecture (Phase 1)
 

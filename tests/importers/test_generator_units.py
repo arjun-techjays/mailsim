@@ -6,7 +6,8 @@ import email
 from email import policy
 
 from mailsim.importers import leadership
-from mailsim.importers.leadership import GenerateOptions, Generator, _derive_subject
+from mailsim.importers.curation import derive_subject
+from mailsim.importers.leadership import GenerateOptions, Generator
 from mailsim.importers.pseudonymize import Harvester, Pseudonymizer, external_meta, org_index
 
 BODY = "the budget plan and the invoice payment are attached for review this week."
@@ -86,20 +87,26 @@ def test_unbindable_pii_and_fallbacks():
     sc = gen.generate_role("coo")
     assert sc.skipped["unbindable"] >= 1
     assert sc.messages == 2  # r5 + general fallback r6
-    texts = [v.decode() for k, v in sc.files.items() if k.endswith(".eml")]
+    msgs = [email.message_from_bytes(v, policy=policy.default) for k, v in sc.files.items()
+            if k.endswith(".eml")]  # fmt: skip
+    texts = [m.get_body(("plain",)).get_content() for m in msgs]
     assert any(t.rstrip().endswith(("Graham", "Marcus", "Priya")) for t in texts)
+    # the bodies say the plan is attached: each message carries a generated document
+    assert all(any(p.get_filename() for p in m.iter_attachments()) for m in msgs)
 
 
 def test_residual_identifier_is_skipped():
     # a residual identifier in the rendered text: skipped by the scanner
-    sc = _gen([rec("r3", seg(body=f"{BODY} call 713-853-1234"))], volume=1).generate_role("coo")
+    body = f"{BODY}\nCall me on 713-853-1234."
+    sc = _gen([rec("r3", seg(body=body))], volume=1).generate_role("coo")
     assert (sc.messages, sc.skipped["pii"]) == (0, 1)
 
 
 def test_derive_subject_and_quotas():
-    assert _derive_subject("ok\n\nthanks") == "Quick note"
-    long = "one two three four five six seven eight nine ten. more"
-    assert _derive_subject(long) == "one two three four five six seven eight..."
+    assert derive_subject("ok\n\nthanks", "finance") == "Finance follow-up"
+    long = "Attached is the revised budget for the plant, which we discussed. More later."
+    assert derive_subject(long) == "The revised budget for the plant"
+    assert derive_subject("Weekly Gas Report\n\nNumbers are below.") == "Weekly Gas Report"
     assert sum(leadership._quotas({"a": 1, "b": 1, "c": 1}, 10).values()) == 10
 
 
@@ -126,15 +133,11 @@ def test_pseudonymizer_branches():
     assert any(v["internal"] for v in meta.values())
 
 
-def test_days_validation_and_year_shift():
+def test_days_validation():
     import pytest
 
     with pytest.raises(ValueError, match="days"):
         Generator(HEADER, [], GenerateOptions(days=1))
-    from mailsim.importers.leadership import shift_years
-
-    assert shift_years("2000 MW in 2001; 01/02/2002, March 4, 2000, 2000-2001", 24) == (
-        "2000 MW in 2025; 01/02/2026, March 4, 2024, 2024-2025")  # fmt: skip
 
 
 def test_pseudonyms_never_collide_within_a_scenario():
@@ -156,3 +159,51 @@ def test_directory_listings_are_rejected():
 def test_identical_bodies_are_used_once():
     sc = _gen([rec("r1", seg()), rec("r2", seg())], volume=2).generate_role("coo")
     assert sc.messages == 1 and sc.skipped.get("duplicate") == 1
+
+
+def _bodies(sc):
+    msgs = [email.message_from_bytes(v, policy=policy.default) for k, v in sc.files.items()
+            if k.endswith(".eml")]  # fmt: skip
+    return msgs, [m.get_body(("plain",)).get_content() for m in msgs]
+
+
+def test_generator_skips_incoherent_and_undatable_records():
+    fwd = dict(author="p:1", subject="plan", kind="forward", body=BODY)
+    records = [
+        # the personal contact may not forward work mail
+        rec("r1", seg(**fwd), seg(body="Have a look at this when you can, thanks a lot."),
+            topic="personal"),
+        # a year the shift cannot place
+        rec("r2", seg(body=BODY + " The term runs through 2011 for the plant.")),
+        # a recipient named in the third person in the body
+        rec("r3", seg(body="Please check this with {{p:7:n}} and the plant team today. Thanks.",
+                      greeting=None)),
+    ]  # fmt: skip
+    gen = Generator(HEADER, records, GenerateOptions(seed=1, roles=["ceo"], volume={"ceo": 4}))
+    gen._binding = {}
+    sc = gen.generate_role("ceo")
+    assert sc.skipped.get("incoherent", 0) + sc.skipped.get("dates", 0) >= 2
+
+
+def test_stub_only_messages_get_a_lead_line_and_a_spreadsheet():
+    body = "{{q:3:f}},\n\n - storage proxies.xls\n\nthe budget plan for the plant is in the file."
+    sc = _gen([rec("r1", seg(body=body))], volume=1).generate_role("coo")
+    msgs, texts = _bodies(sc)
+    assert sc.messages == 1
+    names = [a.get_filename() for a in msgs[0].iter_attachments()]
+    assert names == ["Storage-Proxies.xlsx"] and "storage proxies.xls" not in texts[0]
+
+
+def test_forward_after_a_reply_dates_the_original_between_them():
+    records = [
+        rec(
+            "r1",
+            seg(author="p:1", to=["p:2"], subject="plan notes", kind="reply", body=BODY),
+            seg(author="p:2", to=["p:1"], kind="forward", body="Agreed, see below. " + BODY),
+            seg(body="FYI, the forecast is below for review this week."),
+        ),
+    ]  # fmt: skip
+    sc = _gen(records, volume=3).generate_role("coo")
+    msgs, texts = _bodies(sc)
+    forwards = [t for t in texts if "Forwarded message" in t]
+    assert sc.messages == 2 and forwards

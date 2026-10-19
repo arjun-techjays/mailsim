@@ -4,10 +4,13 @@ Two stages, so a generator can bind the people of a message to the personas of a
 
 1. `Pseudonymizer.apply` rewrites text into a *template*: people become placeholders
    ``{{p:12:n}}`` (registered person 12, full name; ``f`` first, ``l`` last, ``e`` email),
-   first-name-only mentions ``{{q:3:f}}``, surname-only mentions ``{{s:4:l}}`` and other email
-   addresses ``{{x:5:e}}``. Enron and its entities become the fictional company (`names.
-   ENTITY_MAP`); URLs, phone numbers, long digit runs and street addresses are replaced
-   outright. Templates contain no real names that the detectors recognised.
+   first-name-only mentions ``{{q:3:f}}``, surname-only mentions ``{{s:4:l}}``, other email
+   addresses ``{{x:5:e}}`` and the distinctive part of third-party firm names ``{{o:6:n}}``
+   ("Blue Flame Propane Inc." -> ``{{o:6:n}} Propane Inc.``). Enron and its entities become the
+   fictional company (`names.ENTITY_MAP`), named third parties become fictional ones
+   (`names.THIRD_PARTY_MAP`); URLs, phone numbers, long digit runs, mixed letter-digit deal ids
+   and street addresses are replaced outright. Templates contain no real names that the
+   detectors recognised.
 2. `Renderer.render` turns a template into text, using an explicit binding (placeholder ->
    identity, e.g. a scenario persona) and otherwise a deterministic pseudonym derived from
    the seed (same seed and id -> same fictional name, everywhere).
@@ -28,7 +31,7 @@ from dataclasses import dataclass, field
 
 from mailsim.importers import names as N
 
-PLACEHOLDER = re.compile(r"\{\{([pqsx]):(\d+):([nfle])\}\}")
+PLACEHOLDER = re.compile(r"\{\{([pqsxo]):(\d+):([nfle])\}\}")
 _NAME_RX = r"[A-Z][a-zA-Z'\-]+"
 _PERSON = rf"{_NAME_RX}(?:\s[A-Z]\.?)?(?:\s{_NAME_RX}){{1,2}}"
 _UNIT = r"[A-Za-z_]{2,20}(?: (?:Communications|COMMUNICATIONS|Development|DEVELOPMENT))?"
@@ -69,13 +72,16 @@ PHONE_RUN = re.compile(
     r"(?![\w:]|[.,]\d)"
 )
 PHONE_SHORT = re.compile(
-    r"\b(?:ext\.?|x)\s?\d{4,5}\b|\b(?:ext\.?|x)\s?\d[-.]\d{4}\b"
+    r"\b(?:ext\.?|x|extension)[\s-]?\d{4,5}\b|\b(?:ext\.?|x)\s?\d[-.]\d{4}\b"
     r"|(?<![\w/.$,-])\d{1,2}-\d{4}\b(?![\w/-])",
     re.IGNORECASE,
 )
+# "+44 1105 695188", "+1 713 555 0100": an international prefix makes a phone of any grouping
+INTL_PHONE = re.compile(r"(?<![\w+])\+\s?\d{1,3}(?:[\s.\-]?\(?\d{1,4}\)?){1,4}[\s.\-]?\d{3,10}\b")
 _DATE_RUN = re.compile(
-    r"\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}(?:\s[-+]\d{4})?|\d{4}[/.-]\d{1,2}[/.-]\d{1,2}"
-    r"|(?:19|20)\d\d(?:\s?[-/]\s?(?:19|20)\d\d)+|(?:(?:19|20)\d\d\s)+(?:19|20)\d\d"
+    r"\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}(?:\s[-+]\d{4})?(?:\s?-\s?\d{1,2}/\d{1,2}/\d{2,4})?"
+    r"|\d{4}[/.-]\d{1,2}[/.-]\d{1,2}"
+    r"|(?:1[89]|20)\d\d(?:\s?[-/]\s?(?:1[89]|20)\d\d)+|(?:(?:19|20)\d\d\s)+(?:19|20)\d\d"
 )
 _FAKE_PHONE_RUN = re.compile(r"(?:\(555\) |555[-/ ])?555-01\d\d")
 
@@ -87,7 +93,7 @@ def is_phone(run: str) -> bool:
     text = run.strip()
     if len(re.sub(r"\D", "", text)) < 7:
         return False
-    if _DATE_RUN.fullmatch(text) or _FAKE_PHONE_RUN.fullmatch(text):
+    if _DATE_RUN.fullmatch(text.strip("()")) or _FAKE_PHONE_RUN.fullmatch(text):
         return False
     if re.fullmatch(r"\d{3}-\d{2}-\d{4}|\d{5}-\d{4}", text):
         return False  # SSN and ZIP+4 shapes: scrubbed and scanned by their own rules
@@ -95,6 +101,8 @@ def is_phone(run: str) -> bool:
         return False  # deal-number lists (481620/481621): hashed by ID6_LIST
     if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", text) or re.fullmatch(r"\d+\.\d{1,2}", text):
         return False
+    if text.startswith("+"):
+        return True  # "+44 1105 695188": an international number
     groups = re.findall(r"\d+", text)
     seps = re.findall(r"[^\d]+", text.lstrip("+("))
     if all(sep == " " for sep in seps) and len(groups) < 3:
@@ -134,7 +142,7 @@ _STATE_NAMES = (
 FAKE_ZIP = "79999"
 # ZIP codes in postal addresses (state + ZIP, any ZIP+4) and the former head-office ZIP anywhere
 ZIP_HQ = re.compile(
-    rf"\b77002(?:-\d{{4}})?\b|\b(?:{_STATE_CODES})\.?,?\s+(?!79999\b)\d{{5}}(?:-\d{{4}})?\b"
+    rf"\b77002(?:-\d{{4}})?\b|\b(?:{_STATE_CODES})[.?]?,?\s+(?!79999\b)\d{{5}}(?:-\d{{4}})?\b"
     rf"|\b(?:{_STATE_NAMES}),?\s+(?!79999\b)\d{{5}}(?:-\d{{4}})?\b|\b(?!79999-0000)\d{{5}}-\d{{4}}\b"
 )
 
@@ -147,16 +155,30 @@ def _fake_zip(m: re.Match[str]) -> str:
 
 
 LONG_DIGITS = re.compile(r"\b\d{8,}\b")
+# street addresses: "1400 Smith Street", "55 East 52nd Street", "1221 N. Lamar Blvd."
 STREET = re.compile(
-    r"\b\d{1,5}\s+(?:[A-Z][a-z]+\s+){1,3}(?:Street|St\.|Avenue|Ave\.?|Road|Rd\.|Boulevard|"
-    r"Blvd\.?|Drive|Dr\.|Lane|Ln\.|Parkway|Pkwy\.?|Corridor|Way|Court|Ct\.|Circle|Place|Pl\.|"
-    r"Highway|Hwy\.?|Freeway|Fwy\.?|Trail|Terrace|Plaza|Square|Loop)"
+    r"\b(?!100 Commerce Street)\d{1,5}(?:-\d{1,5})?\s+(?:(?:[NSEW]\.?|North|South|East|West)\s+)?"
+    r"(?:\d{1,3}(?:st|nd|rd|th)|[A-Z][a-z]*)(?:\s+[A-Z][a-z]+){0,2}\s+(?:Street|St\b\.?|Avenue|"
+    r"Ave\b\.?|Road|Rd\b\.?|Boulevard|Blvd\b\.?|Drive|Dr\b\.?|Lane|Ln\b\.?|Parkway|Pkwy\b\.?|"
+    r"Corridor|Way|Court|Ct\b\.?|Circle|Place|Pl\b\.?|Highway|Hwy\b\.?|Freeway|Fwy\b\.?|Trail|"
+    r"Terrace|Plaza|Square|Loop|Center|Centre|Tower)(?![A-Za-z])"
 )
+# "Tel.713-853-1234": a label glued to the number hides it from the phone rule
+GLUED_PHONE = re.compile(r"(?<=[A-Za-z])[.:](?=\(?\d{3}\)?[\s.\-/]?\d{3}[\s.\-/]?\d{4}\b)")
+# mixed letter-digit deal / ticket ids ("NI7771", "N17872.9"); years (FY2001, Q3...) excepted.
+# Replaced by "CX" + same-length hashed digits.
+DEAL_ALNUM = re.compile(
+    r"\b(?!(?:FY|CY|Q[1-4]|H[12]|CX|CV)\d)[A-Z]{1,3}(\d{4,5})((?:\.[0-9A-Z]{1,2})?)\b"
+)
+TW = re.compile(N.TW)
+# UK postcodes after a place ("London E1 7JF"); the fictional replacement is not a real district
+UK_POSTCODE = re.compile(r"(?<=[A-Za-z,] )(?!ZZ1 1ZZ)[A-Z]{1,2}\d[A-Z\d]? \d[A-Z]{2}\b")
+FAKE_POSTCODE = "ZZ1 1ZZ"
 PO_BOX = re.compile(r"\bP\.?\s?O\.?\s+Box\s+\d+", re.IGNORECASE)
 _WORD = re.compile(r"\b[a-z]{2,}\b")
 _CAP_WORD = re.compile(r"\b[A-Z][a-z]+\b")
 _LOWER_GREETING = re.compile(r"(?im)^(\s*(?:hi|hello|dear|hey|thanks|thx)[ ,]+)([a-z]{2,15})\b")
-_AFTER_FIRST = re.compile(r"(\{\{[pq]:\d+:f\}\} )([A-Z][a-z]+)\b")
+_AFTER_FIRST = re.compile(r"(\{\{[pq]:\d+:f\}\}\s+)([A-Z][a-z]+)\b")
 _LOWER_SIGNOFF = re.compile(r"(?m)^(\s*-*\s*)([a-z]{2,15})(\.?\s*)$")
 _LOWER_NAME = re.compile(r"(?<![\w'@./-])([a-z]{3,15})(?![\w'@-])")
 IPV4 = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
@@ -226,6 +248,9 @@ BLOCK = frozenset(
         "Migration",
         "Notes",
         "Lotus",
+        "Email",
+        "E-mail",
+        "E-Mail",
         "Communications",
         "Public",
         "Relations",
@@ -296,6 +321,21 @@ BLOCK = frozenset(
         "Las",
         "Santa",
     ]
+)
+
+
+def _placeish(token: str) -> bool:
+    tok = token if not token.isupper() else token.capitalize()
+    return tok in N.COMMON_WORDS or (tok in N.PLACES and tok not in N.COMMON_FIRST)
+
+
+def _never_name(token: str) -> bool:
+    """A capitalised token that is never a person's name (institution word, place)."""
+    return _placeish(token) or token in N.PUBLIC_ORGS or token in _MAPPED_WORDS
+
+
+_MAPPED_WORDS = frozenset(
+    w for v in (*N.ENTITY_MAP.values(), *N.THIRD_PARTY_MAP.values()) for w in v.split()
 )
 
 
@@ -446,8 +486,9 @@ class Harvester:
         cands = dict(self.candidates)
         for parts in seeds:
             cands.setdefault((parts[0], parts[-1]), 1)
+        known = {(parts[0], parts[-1]) for parts in seeds}
         for first, last in sorted(cands, key=lambda k: (k[1], k[0])):
-            seed = (first, last) not in self.candidates
+            seed = (first, last) in known  # known people are always registered
             if not seed and not self._valid(first, last, vocab):
                 continue
             key = (first, last)
@@ -458,6 +499,8 @@ class Harvester:
     def _valid(first: str, last: str, vocab: frozenset[str]) -> bool:
         if first in BLOCK or last in BLOCK or first.lower() == last.lower():
             return False
+        if _never_name(first) or (_never_name(last) and _placeish(first)):
+            return False  # "Federal Credit", "Global Business", "Corpus Christi"
         if first in N.COMMON_FIRST:
             return True
         return first.lower() not in vocab and last.lower() not in vocab
@@ -483,6 +526,7 @@ class Pseudonymizer:
         self.first_ids: dict[str, int] = {}
         self.last_ids: dict[str, int] = {}
         self.emails: dict[str, int] = {}
+        self.org_ids: dict[str, int] = {}
         self.email_domains: list[str] = []
         self.dynamic: set[int] = set()
 
@@ -523,6 +567,9 @@ class Pseudonymizer:
         return f"https://www.{org}.example.test/"
 
     def _fake_host(self, m: re.Match[str]) -> str:
+        tld = m.group(1).rsplit(".", 1)[-1]
+        if tld[:1].isupper() and not tld.isupper():
+            return m.group(0)  # "that.In the": a missing space, not a host
         host = m.group(1).lower()
         if host.endswith("example.test"):
             return m.group(0)  # pragma: no cover - the pattern never matches .test
@@ -570,6 +617,8 @@ class Pseudonymizer:
 
     def _full(self, m: re.Match[str], local: set[int]) -> str:
         first, last = m.group(1), m.group(3)
+        if _never_name(first) and (_never_name(last) or last in BLOCK):
+            return m.group(0)  # "Kansas City", "Pacific Gas": never a person
         pid = self.reg.lookup(first, last)
         if pid is None and self._new_name(first, last):
             pid = self.reg.add(first, last)
@@ -662,6 +711,7 @@ class Pseudonymizer:
         ok = [
             _alpha_name(t)
             and t not in BLOCK
+            and not _never_name(t)
             and t not in N.PROPER_ALLOW
             and not t.isupper()
             and t not in N.CONTEXT_STOP
@@ -684,17 +734,21 @@ class Pseudonymizer:
             r"\s*[,:!.;-]?\s*(?:-.*)?", after
         ):
             return True
+        if re.search(r"\s[-:]\s*$", before) and not after.strip(" .,"):
+            return True  # "30 Minutes - Bill": a name closing a list line
         return bool(_SIGNOFF_WORDS.search(before.rstrip() + " ") or re.search(
             rf"{_GREETING_WORDS},?\s+$", before
         ))  # fmt: skip
 
     @staticmethod
     def _addressed(text: str, start: int, end: int) -> bool:
-        """``Bill: I am resending ...`` - a first name opening a line, then ':' or ','."""
+        """``Bill: I am resending ...``, ``[Bill, can you ...]`` - a first name opening a line
+        (or a bracket), then ':' or ','."""
         ls = text.rfind("\n", 0, start) + 1
-        return (
-            not text[ls:start].strip() and re.match(r"\s*[,:]\s", text[end : end + 3]) is not None
-        )
+        lead = text[ls:start].strip()
+        if lead and not lead.endswith(("[", "(")):
+            return False
+        return re.match(r"\s*[,:]\s", text[end : end + 3]) is not None
 
     def _lower_signoff(self, m: re.Match[str]) -> str:
         name = m.group(2)
@@ -713,14 +767,19 @@ class Pseudonymizer:
             tok, suffix = whole[:-2], whole[-2:]
         elif whole.endswith("'"):
             tok, suffix = whole[:-1], "'"
-        out = self._single_token(tok, m, text, local)
+        out = self._single_token(tok, m, text, local, possessive=suffix == "'s")
         return whole if out == tok else out + suffix
 
-    def _single_token(self, tok: str, m: re.Match[str], text: str, local: set[int]) -> str:
+    def _single_token(self, tok: str, m: re.Match[str], text: str, local: set[int],
+                      possessive: bool = False) -> str:  # fmt: skip
         if denylisted(tok):
             return f"{{{{q:{self._alloc(self.first_ids, tok)}:f}}}}"
-        if tok in N.PROPER_ALLOW or tok in BLOCK:
+        if tok in N.PROPER_ALLOW or tok in BLOCK or _never_name(tok):
             return tok
+        if tok.isupper() and len(tok) > 2 and self._shouting(text, m.start()):
+            return tok  # "MARK YOUR CALENDARS": a word in an all-caps line
+        if self._in_title_phrase(text, m.start()):
+            return tok  # "Rate and Currency Risk Desk", "Direct Access": not a person
         low = tok.lower()
         word = self.reg.is_word(tok)
         lasts = self.reg.by_last.get(low, [])
@@ -732,9 +791,11 @@ class Pseudonymizer:
         if tok in N.COMMON_FIRST:
             word = tok in N.AMBIGUOUS_FIRST
         known_first = low in self.reg.by_first or tok in N.COMMON_FIRST
-        in_context = self._context(text, m.start(), m.end())
-        if known_first and not in_context:
-            in_context = self._addressed(text, m.start(), m.end())
+        in_context = self._context(text, m.start(), m.end()) or (
+            possessive and tok in N.AMBIGUOUS_FIRST  # "Bill's reaction": a person
+        )
+        if known_first and not in_context and (not word or tok in N.COMMON_FIRST):
+            in_context = self._addressed(text, m.start(), m.end())  # not "Where: CT 52"
         if known_first and (not word or in_context):
             pids = [p for p in self.reg.by_first.get(low, []) if p in local]
             if pids:
@@ -743,6 +804,25 @@ class Pseudonymizer:
         if in_context and not tok.isupper() and _alpha_name(tok):
             return f"{{{{q:{self._alloc(self.first_ids, tok)}:f}}}}"
         return tok
+
+    @staticmethod
+    def _shouting(text: str, start: int) -> bool:
+        ls = text.rfind("\n", 0, start) + 1
+        le = text.find("\n", start)
+        line = text[ls : len(text) if le == -1 else le]
+        return len(re.findall(r"\b[A-Z]{2,}\b", line)) >= 3
+
+    def _in_title_phrase(self, text: str, start: int) -> bool:
+        """The token follows an institution word mid-sentence ("Global Business X")."""
+        before = text[max(0, start - 40) : start]
+        prev = re.search(r"(?:^|[^\n.!?:;])\s([A-Z][a-z]+) $", before)
+        if not prev or before.rstrip().endswith((".", "!", "?", ":")):
+            return False
+        word = prev.group(1)
+        line_start = text.rfind("\n", 0, start) + 1
+        if text[line_start:start].strip() == word:
+            return False  # "Direct X" opening a line: a greeting-like or heading position
+        return word in N.COMMON_WORDS
 
     def _hash_digits(self, digits: str) -> str:
         """Deterministic same-length replacement for a deal / contract / reference number."""
@@ -759,12 +839,15 @@ class Pseudonymizer:
                 return f"555-01{n:02d}"
             return f"(555) 555-01{n:02d}"
 
+        text = GLUED_PHONE.sub(lambda m: m.group(0) + " ", text)
         text = SSN.sub("000-00-0000", text)
+        text = ROOM.sub("CT ", text)
         text = ALNUM_ID.sub(
             lambda m: f"CV-{stable_hash(self.seed, 'id', m.group(0)) % 10**7:07d}", text
         )
         text = ZIP_HQ.sub(_fake_zip, text)
         text = PO_BOX.sub("P.O. Box 100", text)
+        text = INTL_PHONE.sub(phone, text)
         text = PHONE_RUN.sub(lambda m: phone(m) if is_phone(m.group(0)) else m.group(0), text)
         text = PHONE_SHORT.sub(phone, text)
         text = DEAL_NO.sub(lambda m: m.group(1) + self._hash_digits(m.group(2)), text)
@@ -779,13 +862,15 @@ class Pseudonymizer:
         text = IPV4.sub(
             lambda m: f"192.0.2.{stable_hash(self.seed, 'ip', m.group(0)) % 250 + 1}", text
         )
-        text = ROOM.sub("CT ", text)
+        text = DEAL_ALNUM.sub(lambda m: f"CX{self._hash_digits(m.group(1))}{m.group(2)}", text)
+        text = UK_POSTCODE.sub(FAKE_POSTCODE, text)
         return STREET.sub("100 Commerce Street", text)
 
     @staticmethod
     def _entities(text: str) -> str:
-        for key in sorted(N.ENTITY_MAP, key=len, reverse=True):
-            value = N.ENTITY_MAP[key]
+        table = {**N.ENTITY_MAP, **N.THIRD_PARTY_MAP}
+        for key in sorted(table, key=lambda k: (-len(k), k)):
+            value = table[key]
             if key.islower():
                 text = re.sub(re.escape(key), value, text, flags=re.IGNORECASE)
             elif key in N.ENTITY_NAMES:  # distinctive names: any case ("dynegy", "DYNEGY")
@@ -793,13 +878,31 @@ class Pseudonymizer:
                               flags=re.IGNORECASE)  # fmt: skip
             else:
                 text = re.sub(rf"(?<![A-Za-z]){re.escape(key)}(?![a-z])", value, text)
-        return text
+        return TW.sub("WL", text)
+
+    def _org(self, m: re.Match[str]) -> str:
+        """``<distinctive words> [generic words] <suffix>``: the distinctive words of a firm's
+        name become an organisation placeholder ("Blue Flame Propane Inc." -> ``{{o:3:n}}
+        Propane Inc.``); Corvane, mapped and public names stay."""
+        words = m.group("words").split()
+        tail: list[str] = []
+        while words and (words[-1] in N.COMMON_WORDS or words[-1] in ("&", "and", "of")):
+            tail.insert(0, words.pop())
+        head = [w for w in words if w not in ("The", "the")]
+        if not head or all(_known_org_word(w) for w in head):
+            return m.group(0)
+        key = " ".join(head).lower()
+        oid = self._alloc(self.org_ids, key)
+        pre = "The " if words and words[0] in ("The", "the") else ""
+        rest = (" " + " ".join(tail)) if tail else ""
+        return f"{pre}{{{{o:{oid}:n}}}}{rest}{m.group('gap')}{m.group('suffix')}"
 
     def apply(self, text: str, local: set[int] | None = None) -> Template:
         """Template for one text. `local` collects the person ids mentioned in full (shared
         across the segments of one message so first names resolve to the same person)."""
         local = set() if local is None else local
         text = text.replace("{{", "{ {").replace("}}", "} }")
+        text = GLUED_PHONE.sub(lambda m: m.group(0) + " ", text)  # "Tel.713-..." before names
         text = re.sub(r"mailto:", "", text, flags=re.IGNORECASE)
         text = re.sub(r"(?<=[A-Za-z0-9]) @ ?(?=[A-Za-z0-9\-]+\.[A-Za-z])", "@", text)  # "x @y.com"
         text = _DISPLAY.sub(lambda m: self._display(m, local), text)
@@ -808,8 +911,10 @@ class Pseudonymizer:
         text = LOTUS_AT.sub(lambda m: self._lotus(m, local), text)
         text = URL.sub(self._fake_url, text)
         text = HOST.sub(self._fake_host, text)
+        text = STREET.sub("100 Commerce Street", text)  # before names: "1221 N. Lamar Blvd."
         text = self._entities(text)
         text = re.sub(r"\bcorvane\.(?:com|net|org)\b", N.COMPANY_DOMAIN, text, flags=re.IGNORECASE)
+        text = ORG_NAME.sub(self._org, text)
         text = _LAST_FIRST.sub(lambda m: self._last_first(m, local), text)
         text = _TITLED.sub(lambda m: self._titled(m, local), text)
         text = _INTRO.sub(lambda m: self._intro(m, local), text)
@@ -849,7 +954,7 @@ def unknown_proper_nouns(text: str, registry: Registry) -> list[str]:
         ordinary = registry.is_word(tok) or (
             low in registry.lexicon and low not in registry.by_first and low not in registry.by_last
         )
-        if tok in N.PROPER_ALLOW or tok in N.CONTEXT_STOP or ordinary:
+        if tok in N.PROPER_ALLOW or tok in N.CONTEXT_STOP or ordinary or _never_name(tok):
             continue
         if tok.isupper() and len(tok) <= 4:
             continue
@@ -858,6 +963,29 @@ def unknown_proper_nouns(text: str, registry: Registry) -> list[str]:
     # charset-mangled names ("G_nther", "Fran?ois") can never be checked against a vocabulary
     out += re.findall(r"\b[A-Z][a-z]*[_?][a-z]+\b", bare)
     return sorted(set(out))
+
+
+_ORG_WORD = r"[A-Z][A-Za-z&'\-]*\.?"
+ORG_NAME = re.compile(
+    rf"(?P<words>(?<![\w.@/{{}}-]){_ORG_WORD}(?:[ \t]+(?:(?:&|and|of)[ \t]+)?{_ORG_WORD}){{0,4}}?)"
+    r"(?P<gap>,?[ \t]+)(?P<suffix>Inc\b\.?|Incorporated\b|Corp\b\.?|Corporation\b|LLC\b|L\.L\.C\.|"
+    r"L\.P\.|LP\b|Ltd\b\.?|Limited\b|Company\b|Partners\b|Group\b|Holdings\b)"
+)
+
+
+def _known_org_word(word: str) -> bool:
+    """A word of a firm's name that can stay: the company, mapped names, public organisations,
+    institution words, persona-domain names."""
+    w = word.rstrip(".,")
+    return (
+        w in N.COMMON_WORDS
+        or w in N.PUBLIC_ORGS
+        or w in _MAPPED_WORDS
+        or w in BLOCK
+        or w in N.PROPER_ALLOW
+        or _placeish(w)
+        or w.lower() in ("the", "and", "of", "&")
+    )
 
 
 ORG = re.compile(
@@ -943,6 +1071,8 @@ class Renderer:
             return self._assigned[ref]
         kind, _, num_s = ref.partition(":")
         num = int(num_s)
+        if kind == "o":
+            return self._org_identity(ref, num)
         meta = (self.people if kind == "p" else self.externals if kind == "x" else {}).get(num, {})
         org = meta.get("org")
         ident = fake_identity(self.seed, kind, num, real=self.real,
@@ -951,6 +1081,17 @@ class Renderer:
                               org=org if isinstance(org, int) else None)  # fmt: skip
         self._assigned[ref] = ident
         self._taken.add(ident.name.lower())
+        return ident
+
+    def _org_identity(self, ref: str, num: int) -> Identity:
+        """An organisation pseudonym from the org pool (never a person-like name)."""
+        pool = N.FAKE_ORG_NAMES
+        used = {i.first for r, i in self._assigned.items() if r.startswith("o:")}
+        start = stable_hash(self.seed, "o", num) % len(pool)
+        name = next((pool[(start + k) % len(pool)] for k in range(len(pool))
+                     if pool[(start + k) % len(pool)] not in used), pool[start])  # fmt: skip
+        ident = Identity(name, "", f"info@{name.lower()}.example.test")
+        self._assigned[ref] = ident
         return ident
 
     def render(self, template: str, binding: dict[str, Identity] | None = None) -> str:
