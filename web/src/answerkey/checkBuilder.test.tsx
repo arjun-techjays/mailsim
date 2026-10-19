@@ -105,6 +105,15 @@ describe('CheckBuilder', () => {
     expect(value().where).toEqual({ has_flag: 'WEIRD', mailbox: 'vendor' });
   });
 
+  it('action: falls back to agent_operations when an older server omits graded_operations', () => {
+    const { graded_operations: _omitted, ...older } = AUTHORING_META;
+    const meta = older as unknown as typeof AUTHORING_META;
+    setup(schemaOf('action'), { operation: 'reply' }, { ctx: { ...bare, meta } });
+    const options = screen.getAllByRole('option').map((o) => o.textContent);
+    for (const op of AUTHORING_META.agent_operations) expect(options).toContain(op);
+    expect(options).not.toContain('sent_copy');
+  });
+
   it('action: operation picker, outcome modes, JSON input and numbers', async () => {
     const { user, value } = setup(schemaOf('action'), { operation: 'reply', count: { eq: 2 } });
     await user.selectOptions(screen.getByLabelText(/^Operation/), 'send');
