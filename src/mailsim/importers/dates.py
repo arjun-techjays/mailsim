@@ -103,6 +103,8 @@ _MONTH_YY = re.compile(r"(?<![\d/])(?:0[1-9]|1[0-2])/(?:9[5-9]|0[0-3])(?![\d/])"
 _DASH_RANGE = re.compile(r"\b\d{1,2}-\d{2}\s+(?:thru|through|to|-)\s+\d{1,2}-\d{2}\b")
 _BARE_MD = re.compile(r"(?<![\d/.\-$:])(\d{1,2})/(\d{1,2})(?![\d/%:]|\.\d)")
 _PASSIVE = re.compile(r"\b(?:will|shall|to|would|be|being)\s+(?:be\s+)?$", re.IGNORECASE)
+_WEEKDAY_LEAD = re.compile(rf"{_WD}\b")
+_UPCOMING = re.compile(r"\b(?:this|next|on|coming|until|by)\s+$", re.IGNORECASE)
 NOMINAL_YEAR = 2001  # the corpus year a year-less date is read in when nothing else says
 # a 1995-2003 number is a year unless it is a quantity ("2000 MW", "$2001", "2,001") or an id
 _NOT_YEAR_BEFORE = re.compile(
@@ -233,6 +235,12 @@ def tense_at(text: str, start: int, end: int) -> str | None:
     """ "future" / "past" from the nearest tense marker before a date (same passage, up to 200
     characters back) or right after it in the same sentence; None without a marker."""
     before = text[max(0, start - 200) : start]
+    if _WEEKDAY_LEAD.match(text, start) and _UPCOMING.search(before):
+        # "this Friday, October 2", "on Monday, May 4": upcoming unless a past verb is right there
+        near = re.split(r"[.!?\n]", before[-40:])[-1]  # the same sentence only
+        past = [m for m in PAST.finditer(near)
+                if not _PASSIVE.search(near[max(0, m.start() - 16) : m.start()])]  # fmt: skip
+        return "past" if past else "future"
     sentence_end = re.search(r"[.!?\n]", text[end:])
     after = text[end : end + (sentence_end.start() if sentence_end else 60)][:60]
     fut = [m.end() for m in FUTURE.finditer(before)]

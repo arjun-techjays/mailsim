@@ -32,12 +32,13 @@ from mailsim.importers.pii import Scanner
 from mailsim.importers.pseudonymize import Harvester, Pseudonymizer, Renderer
 from mailsim.mime.build import build_mime
 from mailsim.mime.parse import ParsedAttachment
+from tests.importers.conftest import TEST_KEY
 
 
 def _pseudo(text: str = "") -> Pseudonymizer:
     h = Harvester()
     h.feed("From: Wendell Quarrick <wendell.quarrick@enron.com>\n" + text)
-    return Pseudonymizer(h.finish(), 5)
+    return Pseudonymizer(h.finish(), 5, TEST_KEY)
 
 
 # ----------------------------------------------------------------------- cleaning (D-9)
@@ -123,7 +124,7 @@ def test_common_words_and_places_are_never_pseudonymized():
     reg = h.finish()
     assert reg.lookup("Federal", "Union") is None and reg.lookup("Global", "Council") is None
     assert reg.lookup("Corpus", "Christi") is None
-    p = Pseudonymizer(reg, 5)
+    p = Pseudonymizer(reg, 5, TEST_KEY)
     text = p.apply(
         "The Corvane Federal Credit Union board meets. The Global Business Council and the "
         "Rate and Currency Risk Desk. The meeting held in Kansas City and Corpus Christi.\n"
@@ -367,8 +368,12 @@ def test_pdf_writer_is_valid_multipage_and_extractable():
 
     flate = (b"%PDF-1.4\n1 0 obj\n<< /Length 9 /Filter /FlateDecode >>\nstream\n"
              + zlib.compress(b"(Hidden \\101) Tj") + b"\nendstream\nendobj\n"
-             b"2 0 obj\n<< /Filter /FlateDecode >>\nstream\nnot-zlib\nendstream\n")  # fmt: skip
+             )  # fmt: skip
     assert "Hidden A" in pdf_text(flate)
+    from mailsim.importers.attachments import UnreadableAttachment
+
+    with pytest.raises(UnreadableAttachment):
+        pdf_text(flate + b"2 0 obj\n<< /Filter /FlateDecode >>\nstream\nnot-zlib\nendstream\n")
 
 
 def test_xlsx_writer_and_text_extraction():
@@ -379,7 +384,10 @@ def test_xlsx_writer_and_text_extraction():
     text = xlsx_text(data)
     assert "Gas & power" in text and "12.5" in text
     assert extract_text(data, "a.xlsx") == text
-    assert extract_text(b"PK broken", "a.xlsx") == ""
+    from mailsim.importers.attachments import UnreadableAttachment
+
+    with pytest.raises(UnreadableAttachment):
+        extract_text(b"PK broken", "a.xlsx")
     assert extract_text(b"plain words", "a.txt") == "plain words"
 
 
@@ -391,7 +399,7 @@ def test_xlsx_writer_and_text_extraction():
         ("See the attached spreadsheet", "spreadsheet"),
         ("Attached is the draft master agreement", "contract"),
         ("Attached is the updated Executive Committee List", "roster"),
-        ("Attached is the agenda for Thursday", "schedule"),
+        ("Attached is the agenda for Thursday", "agenda"),
         ("Attached is the weekly P&L report", "report"),
         ("Attached are my notes", "memo"),
     ],

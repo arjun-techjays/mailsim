@@ -428,7 +428,8 @@ CEO_DENIAL = ("I have not asked for any payment today and I am not travelling. D
 # every form is listed with the characters that may follow it (and a leading space)
 CEO_TRIGGER_WORDS = ("wire", "wired", "payment", "payments", "transfer", "transferred",
                      "deposit", "escrow")  # fmt: skip
-CEO_TRIGGERS = tuple(f" {w}{end}" for w in CEO_TRIGGER_WORDS for end in (" ", ".", ",", "\n"))
+CEO_TRIGGERS = tuple(f" {w}{end}" for w in CEO_TRIGGER_WORDS
+                     for end in (" ", ".", ",", "\n", "?", "!", ";", ":", ")"))  # fmt: skip
 RISK_MINUTES = (55, 25)  # risk items arrive this many minutes before the clock start
 COMMON_ASSERTIONS: tuple[dict[str, Any], ...] = (
     {
@@ -604,6 +605,8 @@ class Generator:
                 prev = segs[i - 1]
                 cand = prev.get("forwarded_by") if prev.get("kind") == "forward" else None
                 cand = cand or (prev["to"][0] if prev.get("to") else None)
+                if cand and seg.get("signoff") and seg["signoff"] != cand:
+                    return None  # the inferred author is not the one who signed
                 authors.append(cand or seg.get("signoff"))
             else:
                 authors.append(seg.get("signoff"))
@@ -763,11 +766,17 @@ class Generator:
         clean = re.sub(r"\n{3,}", "\n\n", clean.rstrip()).lstrip("\n")
         names = [t for t in (DOC.stub_title(x) for x in stubs) if t] + titles
         names = list(dict.fromkeys(names))[:3]
+        if not names and len(DOC.announced_names(clean)) > 1:  # "an agenda, minutes and ..."
+            names = DOC.announced_names(clean)
         sender: Persona = plan["sender"]
         xls = any(re.search(r"(?i)\.xlsx?\b", x) for x in stubs)
         ctx = DOC.Context(self.opts.seed, key, subject, clean, sender.name, sender.role,
                           plan["to"][0].name, plan["date"], org=sender.org,
                           internal=sender.internal, roster=STAFF)  # fmt: skip
+        issuer = _forwarded_issuer(clean)
+        if issuer is not None:  # the file came with the forwarded original: its author's
+            ctx = replace(ctx, sender_name=issuer[0], sender_role=issuer[1], org=issuer[2],
+                          internal=issuer[3])  # fmt: skip
         docs: list[tuple[str, DOC.Doc]] = []
         if names:
             for i, name in enumerate(names):
@@ -825,7 +834,9 @@ class Generator:
             if STALE_YEAR.search(body):
                 self._skip("dates")
                 return []  # a year the shift could not place (an old far-future term)
-            if C.misplaced_names(body) or C.addressed_elsewhere(body, plan["to"][0].first):
+            on_mail = {p.first for p in (sender, *plan["to"], *plan["cc"])}
+            if (C.misplaced_names(body) or C.addressed_elsewhere(body, plan["to"][0].first)
+                    or C.stray_vocatives(body, on_mail)):  # fmt: skip
                 self._skip("incoherent")
                 return []  # a pseudonym where a place belongs, or mail to someone else
             others = [p for p in (*plan["to"], *plan["cc"]) if p.group != "newsletter"]
@@ -1133,6 +1144,25 @@ class Generator:
         threads = len({m.thread for m in messages})
         return GeneratedScenario(role, scenario_id, slug, files, dict(sorted(topics.items())),
                                  len(messages), threads, skipped)  # fmt: skip
+
+
+def _forwarded_issuer(body: str) -> tuple[str, str, str, bool] | None:
+    """(name, role, organisation, internal) of a forwarded original's author when the
+    attachment claim is in that original, not in the forwarder's own text."""
+    own, sep, rest = body.partition("---------- Forwarded message ----------")
+    if not sep or DOC.claims_attachment(own) or not DOC.claims_attachment(rest):
+        return None
+    m = re.search(r"(?m)^From: (.+?) <([^<>@\s]+@([^<>\s]+))>", rest)
+    if m is None:
+        return None
+    name, address, domain = m.group(1), m.group(2).lower(), m.group(3).lower()
+    persona = next((p for p in ROSTER if p.email == address), None)
+    if persona is not None:
+        return persona.name, persona.role, persona.org, persona.internal
+    if domain == DOMAIN:
+        return name, "", N.COMPANY_LONG, True
+    label = domain.split(".")[0].replace("-", " ").title()  # "zephyr-power" -> "Zephyr Power"
+    return name, "", label, False
 
 
 def generate(header: dict[str, Any], records: list[dict[str, Any]], opts: GenerateOptions

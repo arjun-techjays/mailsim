@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+TEST_KEY = b"test-only-identifier-key-0123456789"  # never a real key: tests only
+
 PEOPLE = [
     ("Wendell", "Quarrick"), ("Marta", "Pellowe"), ("Osgood", "Brannick"), ("Livia", "Tazewell"),
     ("Ferris", "Ockenden"), ("Halvard", "Mirabeau"), ("Ingrid", "Sorrowby"), ("Teodor", "Vasquell"),

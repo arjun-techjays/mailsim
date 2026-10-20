@@ -541,9 +541,11 @@ class Pseudonymizer:
     allocates for first-name-only, surname-only and external-address mentions (allocated in
     processing order, which is deterministic)."""
 
-    def __init__(self, registry: Registry, seed: int, id_key: bytes = b"") -> None:
-        """`id_key` keys the hash of identifiers (deal / notice / contract numbers). The CLI
-        always passes the secret key file (`var/enron/id.key`); the empty default is for tests."""
+    def __init__(self, registry: Registry, seed: int, id_key: bytes) -> None:
+        """`id_key` keys the hash of identifiers (deal / notice / contract numbers): the secret
+        key file (`var/enron/id.key`, see `enron.load_or_create_key`); tests pass their own."""
+        if len(id_key) < 16:
+            raise ValueError("an id key of at least 16 bytes is required (var/enron/id.key)")
         self.reg = registry
         self.seed = seed
         self.id_key = id_key

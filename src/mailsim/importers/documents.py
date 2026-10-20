@@ -202,6 +202,29 @@ def announced_name(body: str) -> str | None:
     return _title(" ".join(phrase))
 
 
+def _names_a_document(part: str) -> bool:
+    """A listed item that is a noun phrase naming a document ("the minutes", "Budget"), not a
+    clause that follows the list ("pls review and share comments")."""
+    words = [w.strip(",;:'\"") for w in part.split()]
+    if not words or not any(_DOC_WORD.match(w) for w in words):
+        return False
+    return bool(_LEADING.match(words[0]) or _DOC_WORD.match(words[0]) or words[0][:1].isupper())
+
+
+def announced_names(body: str) -> list[str]:
+    """Every document an attachment claim lists ("I attach an agenda, minutes and a copy of the
+    sale and purchase contract" -> Agenda, Minutes, Sale and Purchase Contract), at most three."""
+    m = _CLAIM_NP.search(body) or ATTACH_CLAIM.search(body)
+    if m is None:
+        return []
+    sentence = re.split(r"(?<=[A-Za-z0-9)])[.!?](?:\s|$)", body[m.start() : m.start() + 400])[0]
+    sentence = sentence.replace("\n", " ")
+    parts = re.split(r",\s*|\s+and\s+(?=(?:an?|the|my|our|a copy)\b)|\s+as well as\s+", sentence)
+    parts = [p for i, p in enumerate(parts) if i == 0 or _names_a_document(p)]
+    names = [announced_name(p if i == 0 else f"Attached is {p}") for i, p in enumerate(parts)]
+    return list(dict.fromkeys(n for n in names if n))[:3]
+
+
 def doc_title(kind: str, subject: str, body: str, *, subject_is_title: bool,
               stub: str | None = None) -> str:  # fmt: skip
     """The document's title: a clean stub name, the noun phrase a claim announces, a title-like
@@ -227,7 +250,8 @@ KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("contract", re.compile(r"\b(?:agreements?|contracts?|(?<!re-)confirm(?:ation)?s?|term sheet|"
                             r"amendment|lc form|letter of credit|guarant\w+|tariff|rate schedule|"
                             r"gisb|naesb|isda|master)\b", re.I)),
-    ("schedule", re.compile(r"\b(?:schedule|calendar|itinerary|agenda|timeline|timetable)\b",
+    ("agenda", re.compile(r"\bagendas?\b", re.I)),
+    ("schedule", re.compile(r"\b(?:schedule|calendar|itinerary|timeline|timetable)\b",
                             re.I)),
     ("memo", re.compile(r"\b(?:memo|memorandum|minutes|notes|outline|proposal|letter|notice|"
                         r"packet|policy|procedures?|guidelines|newsletter|issue|advisory|forms?|"
@@ -236,6 +260,7 @@ KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
                           r"position|listing|survey|study)\b", re.I)),
 )  # fmt: skip
 KIND_TITLES = {
+    "agenda": "Agenda",
     "credit_watch": "Credit Watch List", "presentation": "Presentation", "roster": "Contact List",
     "invoice": "Invoice", "spreadsheet": "Workbook", "contract": "Draft Agreement",
     "schedule": "Schedule", "memo": "Memo", "report": "Summary Report",
@@ -365,13 +390,23 @@ def _credit_watch(ctx: Context, title: str) -> list[list[Line]]:
 def _invoice(ctx: Context, title: str) -> list[list[Line]]:
     vendor = _org(ctx.seed, ctx.key, 99) if ctx.internal or not ctx.org else ctx.org
     number = f"INV-{ctx.when.year}-{_money(ctx.seed, ctx.key, 0, 1000, 9999)}"
-    items = ("Transportation charges", "Storage fees", "Balancing charges", "Service fee",
-             "Late payment interest", "Administrative fee")  # fmt: skip
+    items: tuple[str, ...] = ("Transportation charges", "Storage fees", "Balancing charges",
+                              "Service fee", "Late payment interest", "Administrative fee")  # fmt: skip
+    service = re.match(r"(?i)^(?:(?:re|fw|fwd):\s*)*invoices? (?:for|re:?)\s+(.{3,40})$",
+                       ctx.subject.strip())  # fmt: skip
+    if service:  # "Invoice for advisory work ... three-month trial period": what the mail says
+        words = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
+        span = re.search(r"(?i)\b(one|two|three|four|five|six|\d)[- ]months?\b", ctx.body)
+        n = (int(span.group(1)) if span.group(1).isdigit() else words[span.group(1).lower()]
+             ) if span else 3  # fmt: skip
+        name = service.group(1).strip(" .")
+        items = tuple(f"{name[:1].upper() + name[1:]} - month {i + 1}" for i in range(min(n, 6)))
     lines = [Line("mono", f"{'Description':<40}{'Qty':>8}{'Amount (USD)':>18}"),
              Line("mono", "-" * 66)]  # fmt: skip
     total = 0
-    for i, item in enumerate(items[: 3 + stable_hash(ctx.seed, ctx.key, "n") % 3]):
-        qty = _money(ctx.seed, ctx.key, 10 + i, 1, 30)
+    count = len(items) if service else 3 + stable_hash(ctx.seed, ctx.key, "n") % 3
+    for i, item in enumerate(items[:count]):
+        qty = 1 if service else _money(ctx.seed, ctx.key, 10 + i, 1, 30)
         amount = _money(ctx.seed, ctx.key, 20 + i, 400, 9000) * qty
         total += amount
         lines.append(Line("mono", f"{item:<40}{qty:>8}{amount:>18,.2f}"))
@@ -539,6 +574,26 @@ def _memo(ctx: Context, title: str) -> list[list[Line]]:
     return [page1, page2]
 
 
+def _agenda(ctx: Context, title: str) -> list[list[Line]]:
+    """A meeting agenda: numbered items with owners and times (not a project timetable)."""
+    topics = ("Welcome and introductions", "Review of open action items", "Commercial update",
+              "Contract and documentation status", "Risk and credit items",
+              "Next steps and date of the next meeting")  # fmt: skip
+    owners = (ctx.sender_name.split()[0], ctx.recipient_name.split()[0], "All")
+    start = 9 * 60 + 30 * (stable_hash(ctx.seed, ctx.key, "agenda") % 8)
+    rows = []
+    for i, topic in enumerate(topics, start=1):
+        at = start + 20 * (i - 1)
+        owner = owners[stable_hash(ctx.seed, ctx.key, "own", i) % len(owners)]
+        rows.append(Line("p", f"{i}.  {at // 60:02d}:{at % 60:02d}  {topic}  ({owner})"))
+    return [[Line("small", ctx.org or ctx.sender_name), Line("title", title),
+             Line("p", f"Meeting of {ctx.when.strftime('%B %d, %Y').replace(' 0', ' ')}"),
+             Line("p", ""), *rows, Line("p", ""),
+             Line("p", "Papers for the items above circulate with this agenda.")],
+            [Line("h1", "Background"), Line("p", _wrap_excerpt(ctx.body)),
+             Line("p", f"Questions on the agenda: {ctx.sender_name}.")]]  # fmt: skip
+
+
 def _presentation(ctx: Context, title: str) -> list[list[Line]]:
     """A slide deck: one topic per page, bullet points from seeded figures."""
     growth = _money(ctx.seed, ctx.key, 1, 2, 14)
@@ -627,7 +682,7 @@ def _roster(ctx: Context, title: str) -> list[list[Line]]:
 _BUILDERS = {
     "credit_watch": _credit_watch, "invoice": _invoice, "contract": _contract,
     "schedule": _schedule, "report": _report, "memo": _memo, "board_deck": _board_deck,
-    "roster": _roster, "presentation": _presentation,
+    "roster": _roster, "presentation": _presentation, "agenda": _agenda,
 }  # fmt: skip
 
 

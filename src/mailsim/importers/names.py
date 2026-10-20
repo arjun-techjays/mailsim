@@ -422,7 +422,8 @@ REAL_ORGS_CASED: tuple[str, ...] = (
     "General Electric", "Continental Airlines", "Southern Company", "Mobil", "Exxon", "Duke",
     "Reliant", "Sprint", "BT", "Dow Jones", "Bloomberg", "Reuters", "Platts", "OGE", "TEP",
     "SRP", "PNM", "APS", "SCE", "SDG&E", "LADWP", "BPA", "CNG", "COH", "AGL", "NGPL", "TETCO",
-    "ANR", "Hunt", "Border", "OATI", "ARM", "ENTEX", "Entex", "YPF", "D&T", "AA", "CDWR", "EDES", "People's", "Peoples", "WPTF", "CERS",
+    "ANR", "Hunt", "Border", "OATI", "ARM", "ENTEX", "Entex", "YPF", "D&T", "AA", "CDWR", "EDES", "People's", "Peoples", "WPTF", "CERS", "Alliance", "BEAR",
+    "Infinity", "SBPL", "SBFL",
 )  # fmt: skip
 # Internal systems of the real company: flagged in any case (the import maps the usual spellings)
 SYSTEM_NAMES_ANYCASE: tuple[str, ...] = (

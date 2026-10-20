@@ -13,6 +13,7 @@ from mailsim.importers import leadership
 from mailsim.importers.curation import derive_subject
 from mailsim.importers.leadership import GenerateOptions, Generator
 from mailsim.importers.pseudonymize import Harvester, Pseudonymizer, external_meta, org_index
+from tests.importers.conftest import TEST_KEY
 
 BODY = "the budget plan and the invoice payment are attached for review this week."
 
@@ -120,7 +121,7 @@ def test_pseudonymizer_branches():
            "From: Wendell Quarrick <wendell.quarrick@partner.org>\n"
            "ann.brannick@gmail.com and ann.brannick@yahoo.com\n")  # fmt: skip
     reg = h.finish()
-    p = Pseudonymizer(reg, 3)
+    p = Pseudonymizer(reg, 3, TEST_KEY)
     wendell = reg.lookup("Wendell", "Quarrick")
     assert wendell is not None and reg.people[wendell].domain == "partner.org"
     ann = reg.lookup("Ann", "Brannick")

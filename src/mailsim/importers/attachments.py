@@ -223,6 +223,16 @@ class UnsafeAttachment(ValueError):
     """The attachment exceeds a size / ratio limit and was not parsed (a scanner finding)."""
 
 
+class UnreadableAttachment(UnsafeAttachment):
+    """The attachment is corrupt or uses an encoding the scanner cannot read (a finding: its
+    text was not checked)."""
+
+
+# image filters carry no text; any other filter the scanner cannot decode makes it unreadable
+_IMAGE_FILTERS = (b"/DCTDecode", b"/JPXDecode", b"/CCITTFaxDecode", b"/JBIG2Decode")
+_FILTER = re.compile(rb"/Filter\s*\[?\s*/(\w+)")
+
+
 _LITERAL = re.compile(rb"\((?:\\.|[^\\()])*\)", re.S)
 _HEX = re.compile(rb"(?<![<\w])<([0-9A-Fa-f\s]{2,})>(?!>)")
 _UNESCAPE = {b"n": b"\n", b"r": b"\r", b"t": b"\t", b"b": b"\b", b"f": b"\f"}
@@ -273,8 +283,8 @@ def _inflate(data: bytes, budget: list[int]) -> bytes:
     d = zlib.decompressobj()
     try:
         out = d.decompress(data, MAX_INFLATE)
-    except zlib.error:
-        return b""
+    except zlib.error as exc:
+        raise UnreadableAttachment("a compressed PDF stream is corrupt") from exc
     if d.unconsumed_tail:
         raise UnsafeAttachment("a compressed PDF stream inflates beyond the size limit")
     budget[0] -= len(out)
@@ -290,10 +300,15 @@ _STRUCTURAL = frozenset(
 )  # fmt: skip
 
 
+_TAG = re.compile(r"<[^<>]*>")
+_ATTR = re.compile(r"(?<![\w:.-])([\w:.-]+)=\"([^\"]*)\"")
+
+
 def _xml_text(xml: str) -> list[str]:
     """Text nodes and attribute values of an XML part (namespace URIs and MIME types skipped)."""
     out = [html.unescape(t.strip()) for t in re.findall(r">([^<>]+)<", xml) if t.strip()]
-    for name, value in re.findall(r"([\w:.-]+)=\"([^\"]*)\"", xml):
+    pairs = [p for tag in _TAG.findall(xml) for p in _ATTR.findall(tag)]  # attributes in tags only
+    for name, value in pairs:
         if name.startswith("xmlns") or name in _STRUCTURAL or not value.strip():
             continue
         if re.match(r"(?:https?://(?:schemas\.|purl\.org|www\.w3\.org|ns\.adobe\.com)|urn:)|"
@@ -333,8 +348,14 @@ def pdf_text(data: bytes) -> str:
         header = data[head_from if head_from >= 0 else max(pos, s - 4096) : s]
         outside.append(data[pos:s])
         body = data[start:end].rstrip(b"\r\n")
-        if b"FlateDecode" in header:
+        filt = _FILTER.search(header)
+        if filt and filt.group(1) == b"FlateDecode":
             body = _inflate(body, budget)
+        elif filt and not any(f in header for f in _IMAGE_FILTERS):
+            raise UnreadableAttachment(f"PDF stream filter {filt.group(1).decode()} not decoded")
+        elif filt:  # an image: no text to read
+            pos = end + 9
+            continue
         if b"/Metadata" in header or body.lstrip()[:9] in (
             b"<?xpacket",
             b"<x:xmpmet",
@@ -398,6 +419,6 @@ def extract_text(data: bytes, filename: str = "", content_type: str = "") -> str
     if data.startswith(b"PK\x03\x04") or lower.endswith((".xlsx", ".docx", ".pptx", ".zip")):
         try:
             return zip_text(data)
-        except zipfile.BadZipFile:
-            return ""
+        except zipfile.BadZipFile as exc:
+            raise UnreadableAttachment("corrupt archive") from exc
     return data.decode("utf-8", "replace")

@@ -243,3 +243,34 @@ def test_pack_dates_follow_the_clock(slug):
         quoted = re.findall(r"^Date: (\w{3}, \d\d \w{3} \d{4} \d\d:\d\d)$", body, re.M)
         for q in quoted:  # a forwarded original is older than the forward
             assert datetime.strptime(q, "%a, %d %b %Y %H:%M").replace(tzinfo=sent.tzinfo) < sent
+
+
+_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+_MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August",
+           "September", "October", "November", "December")  # fmt: skip
+
+
+@pytest.mark.parametrize("slug", sorted(ROLES))
+def test_pack_weekday_dates_are_not_in_the_past_unless_said_so(slug):
+    """Independent of `dates.date_conflicts`: a weekday-named date ("Friday, October 2") in a
+    body is on or after the send date, unless a past-tense verb sits right next to it."""
+    import re
+    from datetime import date
+
+    rx = re.compile(rf"\b({'|'.join(_WEEKDAYS)}),?\s+({'|'.join(_MONTHS)})\.?\s+(\d{{1,2}})"
+                    r"(?:st|nd|rd|th)?(?:,\s*(\d{4}))?")  # fmt: skip
+    past = re.compile(r"\b(?:was|were|had|did|met|held|sent|signed|received|closed|ended|"
+                      r"happened|occurred|took place|started|began|finished|formed)\b",
+                      re.IGNORECASE)  # fmt: skip
+    _, msgs = _fixtures(slug)
+    for m in msgs:
+        sent = m["Date"].datetime.date()
+        body = m.get_body(("plain",)).get_content().replace("\r\n", "\n")
+        own = body.split("---------- Forwarded message")[0]
+        for hit in rx.finditer(own):
+            month = _MONTHS.index(hit.group(2)) + 1
+            year = int(hit.group(4)) if hit.group(4) else sent.year
+            when = date(year, month, int(hit.group(3)))
+            assert _WEEKDAYS[when.weekday()] == hit.group(1), hit.group(0)  # weekdays stay right
+            context = own[max(0, hit.start() - 30) : hit.end() + 20]
+            assert when >= sent or past.search(context), (m["Subject"], hit.group(0))

@@ -38,7 +38,12 @@ from email import policy
 from pathlib import Path
 
 from mailsim.importers import names as N
-from mailsim.importers.attachments import MAX_ATTACHMENT, UnsafeAttachment, extract_text
+from mailsim.importers.attachments import (
+    MAX_ATTACHMENT,
+    UnreadableAttachment,
+    UnsafeAttachment,
+    extract_text,
+)
 from mailsim.importers.pseudonymize import (
     ALNUM_ID,
     DEAL_ALNUM,
@@ -180,6 +185,7 @@ _ORG_PHRASE = re.compile(
 )
 _FICTIONAL = frozenset(
     {*N.FICTIONAL_ORG_WORDS, *N.FAKE_ORG_NAMES, *N.FAKE_FIRST, *N.FAKE_LAST, *N.FAKE_PLACES,
+     *(w.title() for d in N.FAKE_ORGS for w in d.split("-")),
      *N.PUBLIC_ORGS, *(w for v in (*N.ENTITY_MAP.values(), *N.THIRD_PARTY_MAP.values())
                        for w in v.split())}
 ) - frozenset(N.COMMON_WORDS)  # fmt: skip
@@ -230,7 +236,11 @@ def digit_ids(text: str, allowed: frozenset[str] = frozenset()) -> list[str]:
         run, before, after = m.group(0), text[max(0, m.start() - 4) : m.start()], text[m.end() :]
         if run in allowed or _compact_date(run):
             continue
-        if re.search(r"(?:\$|USD ?|[0-9][.,])$", before) or re.match(r"[.,][0-9]", after):
+        if re.search(r"(?:\$|USD ?)$", before):
+            continue  # money
+        # a decimal (1234567.5) or a thousands group (1234567,890); "111111,222222" is a list
+        # and "111111.222222" two ids, so neither excuses a run
+        if re.match(r"\.\d{1,4}(?!\d)|,\d{3}(?!\d)", after):
             continue
         out.append(run)
     return out
@@ -255,6 +265,10 @@ def org_mentions(line: str) -> list[str]:
         if m.group(1) or any(w in N.PLACES for w in heads):
             out.append(m.group(0).strip())
     return list(dict.fromkeys(out))
+
+
+def _kind(exc: UnsafeAttachment) -> str:
+    return "unreadable-attachment" if isinstance(exc, UnreadableAttachment) else "unsafe-attachment"
 
 
 class Scanner:
@@ -460,7 +474,7 @@ class Scanner:
                 try:
                     text = extract_text(payload, name, ctype)
                 except UnsafeAttachment as exc:
-                    out.append(Finding(label, 0, "unsafe-attachment", str(exc)))
+                    out.append(Finding(label, 0, _kind(exc), str(exc)))
                     continue
                 if payload.strip() and not text.strip():
                     out.append(Finding(label, 0, "unreadable-attachment", name or ctype))
@@ -502,7 +516,7 @@ class Scanner:
                 try:
                     text = extract_text(data, f.name)
                 except UnsafeAttachment as exc:
-                    out.append(Finding(str(f), 0, "unsafe-attachment", str(exc)))
+                    out.append(Finding(str(f), 0, _kind(exc), str(exc)))
                     continue
                 # the digit-id rule is for mail and attachments (configuration files hold
                 # durations and counters)

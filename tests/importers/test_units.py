@@ -17,6 +17,7 @@ from mailsim.importers.pseudonymize import (
     refs_in,
     unknown_proper_nouns,
 )
+from tests.importers.conftest import TEST_KEY
 
 LOTUS_CHAIN = (
     "Grace,\n\nPlease, put it on my schedule.\n\nWendell\n\n"
@@ -96,7 +97,7 @@ def _pseudo(text: str, seed: int = 5) -> Pseudonymizer:
     h = Harvester()
     h.feed(text)
     h.feed("the mike is the word. " * 3)
-    return Pseudonymizer(h.finish(), seed)
+    return Pseudonymizer(h.finish(), seed, TEST_KEY)
 
 
 def test_harvest_and_template():

@@ -104,7 +104,7 @@ class ImportConfig:
     min_chars: int = 40
     max_chars: int = 20_000
     harvest_all: bool = True  # build the name registry from every row, not only the sample
-    id_key: bytes = b""  # secret key for hashed identifiers (the CLI reads var/enron/id.key)
+    id_key: bytes = b""  # secret key for hashed identifiers: required (the CLI reads id.key)
 
 
 @dataclass

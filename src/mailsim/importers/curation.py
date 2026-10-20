@@ -233,6 +233,8 @@ AUTOMATED_WORDS: dict[str, tuple[str, ...]] = {
         r"you don't need to reply",
         r"this is to remind you",
         r"synchroniz\w+ (?:mailbox|folder)",
+        r"delivery status notification",
+        r"automatically generated",
     ),
     "mass_mail": (
         r"dear [\w ]{0,40}customers?\b",
@@ -305,6 +307,10 @@ AUTOMATED_WORDS: dict[str, tuple[str, ...]] = {
         r"quote of the day",
         r"columnist",
         r"writes to the",
+        r"hopes that you and your (?:family|families)",
+        r"(?:flood|storm|hurricane|disaster) relief",
+        r"tropical storm",
+        r"community relations",
     ),
     "event": (
         r"webcast",
@@ -828,8 +834,11 @@ _NAME_LINE = re.compile(
     rf"^-*\s*(?:{_PH}[ .,]*)+(?:[A-Z]\.?)?-*\s*$|^-*\s*[A-Za-z]{{1,3}}\.?$|^-*\s*[a-z]{{2,12}}\.?$"
 )
 _STRONG_SIG = re.compile(
-    r"555-01\d\d|\(555\)|\bx55\d\d\b|@|\{\{[pqsx]:\d+:e\}\}|https?://|www\.|100 Commerce Street|"
-    r"P\.O\. Box|\b79999\b|"
+    r"555-01\d\d|\(555\)|\bx55\d\d\b|@|\{\{[pqsx]:\d+:e\}\}|https?://|www\.|"
+    + re.escape(N.FAKE_STREET)
+    + r"|P\.O\. Box|\b"
+    + N.FAKE_ZIP
+    + r"\b|"
     r"\b(?:phone|fax|cell|mobile|pager|direct|office|tel|ph|voice|e-?mail|web)\b\s*[:#.(]|"
     r"\((?:ph|fax|phone|cell|office|help)\)|\bCT \d|^[-_*=~]{3,}$|^sent from|"
     r"\b(?:vice president|vp|director|manager|counsel|analyst|specialist|coordinator|assistant|"
@@ -920,6 +929,14 @@ def rewrite_greeting(template: str, to_first: str | None, *, single: bool = True
             lines[idx] = f"{word or 'Hi'} all{punct if punct != '-' else ','}"
         else:
             lines[idx] = f"{word + ' ' if word else ''}{to_first}{punct}"
+        return "\n".join(lines)
+    nick = re.match(
+        rf"^(?:{_PH}|[A-Z][a-z]+)\s+(?i:lady|man|dude|guy|girl|buddy|boss|friend)"
+        r"\s*(?P<punct>[,:!])\s*$",
+        line,
+    )  # "X lady," -> the recipient
+    if nick and to_first:
+        lines[idx] = f"{to_first}{nick.group('punct')}"
         return "\n".join(lines)
     listed = re.match(
         rf"^(?:{_PH}|[A-Z][a-z]+)(?:\s*(?:,|and|&)\s*(?:{_PH}|[A-Z][a-z]+))+"
@@ -1046,7 +1063,8 @@ MISPLACED = re.compile(
     rf"Desk|Pipeline|Field|Unit \d)\b|\b(?:at|from|to) the {_PSEUDO}\b(?! [A-Z])|"
     rf"\bfrom {_PSEUDO} to (?:NP|SP|ZP|COB|Mid)|\b(?:visit(?:ed)?|trip|went|accompanied us) to "
     rf"{_PSEUDO}\b|\b(?:Pt\.|Port|Fort|Lake|Mount|Mt\.) {_PSEUDO}\b|\b{_PSEUDO} campus\b|"
-    rf"\b{_PSEUDO} my (?:ignorance|french|delay)\b|(?:Street|Avenue|Road|Drive|Blvd|Suite \d+)\.?,"
+    rf"\b{_PSEUDO} my (?:ignorance|french|delay)\b|\b[A-Z]{{2,4}}\d\w* or {_PSEUDO}\b|"
+    rf"\b(?:Black|White|Red|Blue|Green|Grand|Big|Little|Great|Old|New) {_PSEUDO}\b|(?:Street|Avenue|Road|Drive|Blvd|Suite \d+)\.?,"
     rf"\s+{_PSEUDO}(?: {_PSEUDO})?,\s+[A-Z]{{2}}\b"
 )
 _VOCATIVE = re.compile(
@@ -1058,6 +1076,15 @@ _VOCATIVE = re.compile(
 def misplaced_names(text: str) -> list[str]:
     """Person pseudonyms in place, desk or asset positions ("Long Term Caleb", "Silas Plant")."""
     return [m.group(0) for m in MISPLACED.finditer(text)]
+
+
+_MID_VOCATIVE = re.compile(rf"(?m)^\s*({_PSEUDO})\s*[,:]\s+\S")
+
+
+def stray_vocatives(body: str, names: set[str]) -> list[str]:
+    """Lines after the opening that address someone who is not on the mail ("Yara, we put ...")."""
+    rest = body.split("\n", 1)[1] if "\n" in body else ""
+    return [m.group(1) for m in _MID_VOCATIVE.finditer(rest) if m.group(1) not in names]
 
 
 def addressed_elsewhere(body: str, to_first: str) -> bool:

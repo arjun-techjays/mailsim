@@ -210,7 +210,17 @@ def test_pdf_extraction_is_a_single_pass():
     assert {"Hi", "HI@"} <= set(A.pdf_text(utf16).split("\n"))
     endless = b"%PDF-1.4\n1 0 obj\n<< >>\nstream\n(never ends"
     assert A.pdf_text(endless) == ""
-    assert A.extract_text(b"PK\x03\x04broken", "x.docx") == ""
+    with pytest.raises(A.UnreadableAttachment, match="corrupt archive"):
+        A.extract_text(b"PK\x03\x04broken", "x.docx")
+    with pytest.raises(A.UnreadableAttachment, match="LZWDecode"):
+        A.pdf_text(b"%PDF-1.4\n1 0 obj\n<< /Filter /LZWDecode >>\nstream\nxx\nendstream\nendobj\n")
+    image = b"%PDF-1.4\n1 0 obj\n<< /Filter /DCTDecode >>\nstream\n(not text)\nendstream\nendobj\n"
+    assert A.pdf_text(image) == ""
+    att = ParsedAttachment("c.pdf", "application/pdf", b"%PDF-1.4\n1 0 obj\n<< /Filter /FlateDecode "
+                           b">>\nstream\nbad\nendstream\nendobj\n", False, None)  # fmt: skip
+    assert [f.kind for f in Scanner().scan_message(_mail("See it.\n", [att]))] == [
+        "unreadable-attachment"
+    ]
 
 
 # --------------------------------------------------------------- organisations (D-3)
@@ -458,7 +468,7 @@ def test_documents_carry_the_senders_organisation():
         ("Rough cut at slides for the meeting.", "", "presentation"),
         ("Attached please find the interview packet for the person.", "", "memo"),
         ("Attached is the agenda. The contract is under review.",
-         "Attached is the agenda", "schedule"),
+         "Attached is the agenda", "agenda"),
         ("Attached is a revised hotlist of names.", "", "credit_watch"),
     ],
 )  # fmt: skip
@@ -533,6 +543,7 @@ def test_ceo_triggers_are_whole_payment_words():
     assert not any(w in t for t in L.CEO_TRIGGERS for w in ("request", "release"))
     assert all(t.startswith(" ") for t in L.CEO_TRIGGERS)
     assert fires("I will wire the funds today.") and fires("Is the payment done?\n")
+    assert fires("Did you send the wire?") and fires("(the deposit)") and fires("an escrow!")
     assert fires("The deposit, please.") and fires("Funds in escrow.")
     assert not fires("Please release the request.") and not fires("The wireless network")
     assert not fires("The deposition is set.") and not fires("Transfers are fine")
@@ -678,3 +689,82 @@ def test_rendered_text_checks_and_more_voice_rules():
     ]  # fmt: skip
     for (group, text), kw, reason in cases:
         assert C.role_reason(group, text, **kw) == reason, reason
+
+
+def test_pseudonymizer_requires_an_id_key():
+    h = Harvester()
+    h.feed("From: Wendell Quarrick <wendell.quarrick@enron.com>\n")
+    with pytest.raises(ValueError, match="id key"):
+        Pseudonymizer(h.finish(), 5, b"")
+
+
+def test_round3_weekday_dates_lists_and_orgs():
+    sent = date(2026, 10, 6)
+    assert D.date_conflicts("Leave the meeting on the schedule for this Friday, October 2.", sent)
+    assert D.date_conflicts("We met on Friday, October 2.", sent) == []
+    assert D.tense_at("next Monday, October 12", 5, 23) == "future"
+    assert digit_ids("111111,222222") == ["111111", "222222"]
+    assert digit_ids("111111.222222") == ["111111", "222222"]
+    assert digit_ids("1234567,890 and 1234567.5 and $1500000") == []
+    for text in ("Alliance seems to have taken the interest", "the BEAR Guarantee letter",
+                 "Infinity number 10300 with SBPL and SBFL"):  # fmt: skip
+        assert org_mentions(text), text
+
+
+def test_xml_text_is_linear():
+    import time
+
+    start = time.perf_counter()
+    A._xml_text("<a>" + "w" * 80_000 + "</a>")
+    A._xml_text('<a b="1">' + "w" * 80_000 + "=")
+    assert time.perf_counter() - start < 1
+
+
+def test_round3_residues():
+    # hub/colour positions and nickname greetings
+    assert C.misplaced_names("Book it at NYZ6 or Caleb by noon.")
+    assert C.misplaced_names("The Black Fenwick deal closed.")
+    assert C.rewrite_greeting("Fenwick lady,\n\nThe memo is final.", "Helena").startswith(
+        "Helena,\n"
+    )
+    # mid-body vocatives to someone who is not on the mail
+    body = "Hi Owen,\n\nThe memo is final.\nCaleb, please send it on.\n"
+    assert C.stray_vocatives(body, {"Owen"}) == ["Caleb"]
+    assert C.stray_vocatives(body, {"Owen", "Caleb"}) == []
+    assert C.stray_vocatives("Caleb, one line only", set()) == []
+    # automated notices and relief mail
+    for text in (
+        "This is an automatically generated Delivery Status Notification.",
+        "The company hopes that you and your family are safe after the tropical storm.",
+        "Details of the flood relief fund are below.",
+    ):
+        assert C.role_reason("director", text) == "mass-mail", text
+    # a claim's list keeps only parts that name a document
+    assert DOC.announced_names(
+        "Attached is the draft proposal for the Chairman, pls review and share comments."
+    ) == ["Proposal"]
+    assert DOC.announced_names("Attached are the agenda, the minutes and the budget.") == [
+        "Agenda", "Minutes", "Budget"
+    ]  # fmt: skip
+
+
+def test_forwarded_invoice_is_branded_by_its_issuer():
+    fwd = "---------- Forwarded message ----------"
+    body = (f"Please pay this.\n\n{fwd}\nFrom: Lena Hart <lena.hart@zephyr-power.example.test>\n"
+            "Subject: Invoice\n\nAttached is our invoice for March.\n")  # fmt: skip
+    assert L._forwarded_issuer(body) == ("Lena Hart", "", "Zephyr Power", False)
+    own = body.replace("Please pay this.", "Attached is the invoice.")
+    assert L._forwarded_issuer(own) is None
+    assert L._forwarded_issuer("Attached is the invoice.") is None
+    assert L._forwarded_issuer(f"FYI\n{fwd}\nFrom: someone\n\nAttached is the file.\n") is None
+    inside = body.replace("lena.hart@zephyr-power.example.test", f"lena.hart@{L.DOMAIN}")
+    assert L._forwarded_issuer(inside)[2:] == (N.COMPANY_LONG, True)
+    ctx = DOC.Context(seed=1, key="k", subject="Invoices for transport services",
+                      body="Attached are the three-month invoices.", sender_name="Lena Hart",
+                      sender_role="Accounts", recipient_name="Owen",
+                      when=datetime(2026, 3, 2, tzinfo=UTC), org="Zephyr Power",
+                      internal=False)  # fmt: skip
+    text = A.extract_text(DOC.build("invoice", ctx).data, "i.pdf")
+    assert "Zephyr Power" in text and "transport services - month 3" in text.lower()
+    agenda = A.extract_text(DOC.build("agenda", ctx).data, "a.pdf")
+    assert "Meeting of March 2, 2026" in agenda and "Welcome and introductions" in agenda
