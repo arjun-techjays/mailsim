@@ -28,7 +28,7 @@
     {
       "fixture": "fixtures/001-there-is-another-report-that-needs.eml",
       "topic": "finance",
-      "thread": 9,
+      "thread": 8,
       "attachments": 0,
       "suggested_labels": [
         "Finance"
@@ -44,167 +44,7 @@
       ]
     },
     {
-      "fixture": "fixtures/003-please-use-this-revised-data.eml",
-      "topic": "hr",
-      "thread": 25,
-      "attachments": 0,
-      "suggested_labels": [
-        "People"
-      ]
-    },
-    {
-      "fixture": "fixtures/004-mila-bramley-has-all-of-the-details.eml",
-      "topic": "deals",
-      "thread": 28,
-      "attachments": 0,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/005-the-nyiso-back-up-dispatch-system-is-sch.eml",
-      "topic": "newsletter",
-      "thread": 29,
-      "attachments": 0,
-      "suggested_labels": [
-        "Newsletters"
-      ]
-    },
-    {
-      "fixture": "fixtures/006-it-was-an-honor-to-represent-cns.eml",
-      "topic": "deals",
-      "thread": 27,
-      "attachments": 0,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/007-fw-invoice-for-advisory-work.eml",
-      "topic": "finance",
-      "thread": 0,
-      "attachments": 1,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/008-the-list-of-new-phone-numbers.eml",
-      "topic": "board",
-      "thread": 18,
-      "attachments": 0,
-      "suggested_labels": [
-        "Board"
-      ]
-    },
-    {
-      "fixture": "fixtures/009-please-prepare-an-annex-b-per-terms.eml",
-      "topic": "finance",
-      "thread": 6,
-      "attachments": 1,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/010-it-s-attached.eml",
-      "topic": "finance",
-      "thread": 2,
-      "attachments": 1,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/011-westline-promissory-note-issued-to-corva.eml",
-      "topic": "board",
-      "thread": 16,
-      "attachments": 1,
-      "suggested_labels": [
-        "Board"
-      ]
-    },
-    {
-      "fixture": "fixtures/012-the-iso-board-just-voted-to-make.eml",
-      "topic": "board",
-      "thread": 17,
-      "attachments": 0,
-      "suggested_labels": [
-        "Board"
-      ]
-    },
-    {
-      "fixture": "fixtures/013-can-you-create-a-spreadsheet-summarizing.eml",
-      "topic": "vendor",
-      "thread": 13,
-      "attachments": 0,
-      "suggested_labels": [
-        "Vendors"
-      ]
-    },
-    {
-      "fixture": "fixtures/014-this-is-the-contract-that-dunmore-requir.eml",
-      "topic": "vendor",
-      "thread": 11,
-      "attachments": 1,
-      "suggested_labels": [
-        "Vendors"
-      ]
-    },
-    {
-      "fixture": "fixtures/015-re-westline-promissory-note-issued-to-co.eml",
-      "topic": "board",
-      "thread": 16,
-      "attachments": 0,
-      "suggested_labels": [
-        "Board"
-      ]
-    },
-    {
-      "fixture": "fixtures/016-global-government-affairs-weekly-confere.eml",
-      "topic": "scheduling",
-      "thread": 19,
-      "attachments": 0,
-      "suggested_labels": [
-        "Calendar"
-      ]
-    },
-    {
-      "fixture": "fixtures/017-the-credit-worksheets-for-an-isda.eml",
-      "topic": "legal",
-      "thread": 22,
-      "attachments": 1,
-      "suggested_labels": [
-        "Legal"
-      ]
-    },
-    {
-      "fixture": "fixtures/018-he-did-go-out-of-his-way.eml",
-      "topic": "general",
-      "thread": 30,
-      "attachments": 0,
-      "suggested_labels": []
-    },
-    {
-      "fixture": "fixtures/019-when-i-asked-the-question.eml",
-      "topic": "finance",
-      "thread": 1,
-      "attachments": 0,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/020-re-global-government-affairs-weekly-conf.eml",
-      "topic": "scheduling",
-      "thread": 19,
-      "attachments": 0,
-      "suggested_labels": [
-        "Calendar"
-      ]
-    },
-    {
-      "fixture": "fixtures/021-per-my-conversations-with-mira-langstrom.eml",
+      "fixture": "fixtures/003-when-you-get-a-chance.eml",
       "topic": "finance",
       "thread": 10,
       "attachments": 0,
@@ -213,7 +53,115 @@
       ]
     },
     {
-      "fixture": "fixtures/022-fw-curtailment-software-document.eml",
+      "fixture": "fixtures/004-please-use-this-revised-data.eml",
+      "topic": "hr",
+      "thread": 25,
+      "attachments": 0,
+      "suggested_labels": [
+        "People"
+      ]
+    },
+    {
+      "fixture": "fixtures/005-mila-bramley-has-all-of-the-details.eml",
+      "topic": "deals",
+      "thread": 28,
+      "attachments": 0,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/006-the-nyiso-back-up-dispatch-system-is-sch.eml",
+      "topic": "newsletter",
+      "thread": 29,
+      "attachments": 0,
+      "suggested_labels": [
+        "Newsletters"
+      ]
+    },
+    {
+      "fixture": "fixtures/007-it-was-an-honor-to-represent-cns.eml",
+      "topic": "deals",
+      "thread": 27,
+      "attachments": 0,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/008-fw-invoice-for-advisory-work.eml",
+      "topic": "finance",
+      "thread": 0,
+      "attachments": 1,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/009-the-list-of-new-phone-numbers.eml",
+      "topic": "board",
+      "thread": 18,
+      "attachments": 0,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/010-please-prepare-an-annex-b-per-terms.eml",
+      "topic": "finance",
+      "thread": 6,
+      "attachments": 1,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/011-it-s-attached.eml",
+      "topic": "finance",
+      "thread": 2,
+      "attachments": 1,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/012-westline-promissory-note-issued-to-corva.eml",
+      "topic": "board",
+      "thread": 16,
+      "attachments": 1,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/013-the-iso-board-just-voted-to-make.eml",
+      "topic": "board",
+      "thread": 17,
+      "attachments": 0,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/014-can-you-create-a-spreadsheet-summarizing.eml",
+      "topic": "vendor",
+      "thread": 13,
+      "attachments": 0,
+      "suggested_labels": [
+        "Vendors"
+      ]
+    },
+    {
+      "fixture": "fixtures/015-this-is-the-contract-that-dunmore-requir.eml",
+      "topic": "vendor",
+      "thread": 11,
+      "attachments": 1,
+      "suggested_labels": [
+        "Vendors"
+      ]
+    },
+    {
+      "fixture": "fixtures/016-i-haven-t-heard-back-from-you-about.eml",
       "topic": "ops",
       "thread": 24,
       "attachments": 0,
@@ -222,7 +170,68 @@
       ]
     },
     {
-      "fixture": "fixtures/023-you-are-correct-for-us-core-procurement.eml",
+      "fixture": "fixtures/017-re-westline-promissory-note-issued-to-co.eml",
+      "topic": "board",
+      "thread": 16,
+      "attachments": 0,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/018-global-government-affairs-weekly-confere.eml",
+      "topic": "scheduling",
+      "thread": 19,
+      "attachments": 0,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/019-the-credit-worksheets-for-an-isda.eml",
+      "topic": "legal",
+      "thread": 22,
+      "attachments": 1,
+      "suggested_labels": [
+        "Legal"
+      ]
+    },
+    {
+      "fixture": "fixtures/020-he-did-go-out-of-his-way.eml",
+      "topic": "general",
+      "thread": 30,
+      "attachments": 0,
+      "suggested_labels": []
+    },
+    {
+      "fixture": "fixtures/021-when-i-asked-the-question.eml",
+      "topic": "finance",
+      "thread": 1,
+      "attachments": 0,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/022-re-global-government-affairs-weekly-conf.eml",
+      "topic": "scheduling",
+      "thread": 19,
+      "attachments": 0,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/023-per-my-conversations-with-mira-langstrom.eml",
+      "topic": "finance",
+      "thread": 9,
+      "attachments": 0,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/024-you-are-correct-for-us-core-procurement.eml",
       "topic": "vendor",
       "thread": 14,
       "attachments": 0,
@@ -231,7 +240,7 @@
       ]
     },
     {
-      "fixture": "fixtures/024-ravenhurst-inc.eml",
+      "fixture": "fixtures/025-ravenhurst-inc.eml",
       "topic": "finance",
       "thread": 7,
       "attachments": 0,
@@ -240,7 +249,7 @@
       ]
     },
     {
-      "fixture": "fixtures/025-did-you-notice-emmissions-trading-made-6.eml",
+      "fixture": "fixtures/026-did-you-notice-emmissions-trading-made-6.eml",
       "topic": "finance",
       "thread": 3,
       "attachments": 0,
@@ -249,7 +258,7 @@
       ]
     },
     {
-      "fixture": "fixtures/026-what-is-our-flight-schedule-for-monday.eml",
+      "fixture": "fixtures/027-what-is-our-flight-schedule-for-monday.eml",
       "topic": "scheduling",
       "thread": 20,
       "attachments": 0,
@@ -258,21 +267,12 @@
       ]
     },
     {
-      "fixture": "fixtures/027-re-what-is-our-flight-schedule-for-monda.eml",
+      "fixture": "fixtures/028-re-what-is-our-flight-schedule-for-monda.eml",
       "topic": "scheduling",
       "thread": 20,
       "attachments": 0,
       "suggested_labels": [
         "Calendar"
-      ]
-    },
-    {
-      "fixture": "fixtures/028-fw-thackeray-bridge-swaps.eml",
-      "topic": "finance",
-      "thread": 8,
-      "attachments": 0,
-      "suggested_labels": [
-        "Finance"
       ]
     },
     {

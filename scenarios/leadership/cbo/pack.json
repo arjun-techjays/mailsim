@@ -7,7 +7,7 @@
   },
   "seed": 7,
   "messages": 32,
-  "threads": 28,
+  "threads": 30,
   "attachments": 10,
   "topics": {
     "board": 4,
@@ -25,25 +25,43 @@
   ],
   "fixtures": [
     {
-      "fixture": "fixtures/001-the-attached-file-contains-the-audit-iss.eml",
+      "fixture": "fixtures/001-the-revised-model.eml",
+      "topic": "deals",
+      "thread": 11,
+      "attachments": 1,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/002-the-attached-file-contains-the-audit-iss.eml",
       "topic": "finance",
-      "thread": 16,
+      "thread": 18,
       "attachments": 1,
       "suggested_labels": [
         "Finance"
       ]
     },
     {
-      "fixture": "fixtures/002-fw-nerc-2026-summer-assessment.eml",
+      "fixture": "fixtures/003-fw-nerc-2026-summer-assessment.eml",
       "topic": "ops",
-      "thread": 21,
+      "thread": 23,
       "attachments": 0,
       "suggested_labels": [
         "Operations"
       ]
     },
     {
-      "fixture": "fixtures/003-the-transaction-agreement-and-master-fir.eml",
+      "fixture": "fixtures/004-please-set-up-a-meeting-to-discuss.eml",
+      "topic": "deals",
+      "thread": 10,
+      "attachments": 0,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/005-the-transaction-agreement-and-master-fir.eml",
       "topic": "legal",
       "thread": 12,
       "attachments": 1,
@@ -52,7 +70,7 @@
       ]
     },
     {
-      "fixture": "fixtures/004-trader-wrote-deal-down-wrong-in-log.eml",
+      "fixture": "fixtures/006-trader-wrote-deal-down-wrong-in-log.eml",
       "topic": "deals",
       "thread": 1,
       "attachments": 0,
@@ -61,219 +79,7 @@
       ]
     },
     {
-      "fixture": "fixtures/005-the-annuity-was-booked-10-2-26.eml",
-      "topic": "deals",
-      "thread": 9,
-      "attachments": 0,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/006-the-draft-message-points.eml",
-      "topic": "board",
-      "thread": 19,
-      "attachments": 1,
-      "suggested_labels": [
-        "Board"
-      ]
-    },
-    {
-      "fixture": "fixtures/007-legal-question.eml",
-      "topic": "legal",
-      "thread": 13,
-      "attachments": 1,
-      "suggested_labels": [
-        "Legal"
-      ]
-    },
-    {
-      "fixture": "fixtures/008-cna-incumbency-certificate.eml",
-      "topic": "deals",
-      "thread": 10,
-      "attachments": 1,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/009-for-deal-847596-celeste-vance-brannock-s.eml",
-      "topic": "deals",
-      "thread": 0,
-      "attachments": 0,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/010-re-cna-incumbency-certificate.eml",
-      "topic": "deals",
-      "thread": 10,
-      "attachments": 1,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/011-research-intelligence.eml",
-      "topic": "scheduling",
-      "thread": 14,
-      "attachments": 0,
-      "suggested_labels": [
-        "Calendar"
-      ]
-    },
-    {
-      "fixture": "fixtures/012-re-research-intelligence.eml",
-      "topic": "scheduling",
-      "thread": 14,
-      "attachments": 0,
-      "suggested_labels": [
-        "Calendar"
-      ]
-    },
-    {
-      "fixture": "fixtures/013-good-morning.eml",
-      "topic": "general",
-      "thread": 25,
-      "attachments": 0,
-      "suggested_labels": []
-    },
-    {
-      "fixture": "fixtures/014-i-would-like-to-have-a-planning.eml",
-      "topic": "scheduling",
-      "thread": 15,
-      "attachments": 0,
-      "suggested_labels": [
-        "Calendar"
-      ]
-    },
-    {
-      "fixture": "fixtures/015-re-research-intelligence.eml",
-      "topic": "scheduling",
-      "thread": 14,
-      "attachments": 0,
-      "suggested_labels": [
-        "Calendar"
-      ]
-    },
-    {
-      "fixture": "fixtures/016-damon-asked-me-to-let-you-know.eml",
-      "topic": "personal",
-      "thread": 23,
-      "attachments": 0,
-      "suggested_labels": [
-        "Personal"
-      ]
-    },
-    {
-      "fixture": "fixtures/017-congratulations-on-your-expanded-role.eml",
-      "topic": "personal",
-      "thread": 22,
-      "attachments": 0,
-      "suggested_labels": [
-        "Personal"
-      ]
-    },
-    {
-      "fixture": "fixtures/018-the-list-of-top-cps-with-credit.eml",
-      "topic": "finance",
-      "thread": 17,
-      "attachments": 1,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/019-today-has-disappeared-so-i-don-t-think.eml",
-      "topic": "deals",
-      "thread": 2,
-      "attachments": 0,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/020-my-proposed-revisions-to-the-transaction.eml",
-      "topic": "deals",
-      "thread": 7,
-      "attachments": 1,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/021-we-need-to-complete-the-review.eml",
-      "topic": "ops",
-      "thread": 20,
-      "attachments": 0,
-      "suggested_labels": [
-        "Operations"
-      ]
-    },
-    {
-      "fixture": "fixtures/022-texas-has-the-items.eml",
-      "topic": "general",
-      "thread": 24,
-      "attachments": 0,
-      "suggested_labels": []
-    },
-    {
-      "fixture": "fixtures/023-crude-24x7-wti-marketing-effort.eml",
-      "topic": "deals",
-      "thread": 4,
-      "attachments": 0,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/024-bear-guarantee-letter.eml",
-      "topic": "legal",
-      "thread": 11,
-      "attachments": 0,
-      "suggested_labels": [
-        "Legal"
-      ]
-    },
-    {
-      "fixture": "fixtures/025-i-have-reviewed-the-three-forwards.eml",
-      "topic": "deals",
-      "thread": 6,
-      "attachments": 0,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/026-re-bear-guarantee-letter.eml",
-      "topic": "legal",
-      "thread": 11,
-      "attachments": 0,
-      "suggested_labels": [
-        "Legal"
-      ]
-    },
-    {
-      "fixture": "fixtures/027-i-will-give-the-form.eml",
-      "topic": "board",
-      "thread": 18,
-      "attachments": 0,
-      "suggested_labels": [
-        "Board"
-      ]
-    },
-    {
-      "fixture": "fixtures/028-the-slides-with-your-suggested-edits-inc.eml",
-      "topic": "deals",
-      "thread": 3,
-      "attachments": 1,
-      "suggested_labels": [
-        "Deals"
-      ]
-    },
-    {
-      "fixture": "fixtures/029-crude-24x7-wti-marketing-effort.eml",
+      "fixture": "fixtures/007-the-annuity-was-booked-10-2-26.eml",
       "topic": "deals",
       "thread": 8,
       "attachments": 0,
@@ -282,7 +88,156 @@
       ]
     },
     {
-      "fixture": "fixtures/030-there-are-two-deals-that-do-not.eml",
+      "fixture": "fixtures/008-the-draft-message-points.eml",
+      "topic": "board",
+      "thread": 21,
+      "attachments": 1,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/009-quick-thought.eml",
+      "topic": "deals",
+      "thread": 9,
+      "attachments": 0,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/010-legal-question.eml",
+      "topic": "legal",
+      "thread": 13,
+      "attachments": 1,
+      "suggested_labels": [
+        "Legal"
+      ]
+    },
+    {
+      "fixture": "fixtures/011-for-deal-847596-celeste-vance-brannock-s.eml",
+      "topic": "deals",
+      "thread": 0,
+      "attachments": 0,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/012-research-intelligence.eml",
+      "topic": "scheduling",
+      "thread": 16,
+      "attachments": 0,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/013-re-research-intelligence.eml",
+      "topic": "scheduling",
+      "thread": 16,
+      "attachments": 0,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/014-good-morning.eml",
+      "topic": "general",
+      "thread": 27,
+      "attachments": 0,
+      "suggested_labels": []
+    },
+    {
+      "fixture": "fixtures/015-i-would-like-to-have-a-planning.eml",
+      "topic": "scheduling",
+      "thread": 17,
+      "attachments": 0,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/016-re-research-intelligence.eml",
+      "topic": "scheduling",
+      "thread": 16,
+      "attachments": 0,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/017-damon-asked-me-to-let-you-know.eml",
+      "topic": "personal",
+      "thread": 25,
+      "attachments": 0,
+      "suggested_labels": [
+        "Personal"
+      ]
+    },
+    {
+      "fixture": "fixtures/018-congratulations-on-your-expanded-role.eml",
+      "topic": "personal",
+      "thread": 24,
+      "attachments": 0,
+      "suggested_labels": [
+        "Personal"
+      ]
+    },
+    {
+      "fixture": "fixtures/019-the-list-of-top-cps-with-credit.eml",
+      "topic": "finance",
+      "thread": 19,
+      "attachments": 1,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/020-my-proposed-revisions-to-the-transaction.eml",
+      "topic": "deals",
+      "thread": 6,
+      "attachments": 1,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/021-we-need-to-complete-the-review.eml",
+      "topic": "ops",
+      "thread": 22,
+      "attachments": 0,
+      "suggested_labels": [
+        "Operations"
+      ]
+    },
+    {
+      "fixture": "fixtures/022-texas-has-the-items.eml",
+      "topic": "general",
+      "thread": 26,
+      "attachments": 0,
+      "suggested_labels": []
+    },
+    {
+      "fixture": "fixtures/023-crude-24x7-wti-marketing-effort.eml",
+      "topic": "deals",
+      "thread": 3,
+      "attachments": 0,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/024-a-list-of-notaries-in-cna-legal.eml",
+      "topic": "legal",
+      "thread": 15,
+      "attachments": 1,
+      "suggested_labels": [
+        "Legal"
+      ]
+    },
+    {
+      "fixture": "fixtures/025-i-have-reviewed-the-three-forwards.eml",
       "topic": "deals",
       "thread": 5,
       "attachments": 0,
@@ -291,9 +246,54 @@
       ]
     },
     {
+      "fixture": "fixtures/026-i-will-give-the-form.eml",
+      "topic": "board",
+      "thread": 20,
+      "attachments": 0,
+      "suggested_labels": [
+        "Board"
+      ]
+    },
+    {
+      "fixture": "fixtures/027-we-have-received-an-executed-first-amend.eml",
+      "topic": "legal",
+      "thread": 14,
+      "attachments": 0,
+      "suggested_labels": [
+        "Legal"
+      ]
+    },
+    {
+      "fixture": "fixtures/028-the-slides-with-your-suggested-edits-inc.eml",
+      "topic": "deals",
+      "thread": 2,
+      "attachments": 1,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/029-crude-24x7-wti-marketing-effort.eml",
+      "topic": "deals",
+      "thread": 7,
+      "attachments": 0,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
+      "fixture": "fixtures/030-there-are-two-deals-that-do-not.eml",
+      "topic": "deals",
+      "thread": 4,
+      "attachments": 0,
+      "suggested_labels": [
+        "Deals"
+      ]
+    },
+    {
       "fixture": "fixtures/031-confidential-board-pre-read-project-lark.eml",
       "topic": "board",
-      "thread": 26,
+      "thread": 28,
       "attachments": 1,
       "suggested_labels": [
         "Board"
@@ -302,7 +302,7 @@
     {
       "fixture": "fixtures/032-larkspur-deck-before-thursday.eml",
       "topic": "board",
-      "thread": 27,
+      "thread": 29,
       "attachments": 0,
       "suggested_labels": [
         "Board"

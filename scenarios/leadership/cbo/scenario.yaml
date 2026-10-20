@@ -115,33 +115,33 @@ scenario:
   - owner: cfo
   - owner: cbo
     initial_messages:
-    - fixture: fixtures/001-the-attached-file-contains-the-audit-iss.eml
-    - fixture: fixtures/002-fw-nerc-2026-summer-assessment.eml
-    - fixture: fixtures/003-the-transaction-agreement-and-master-fir.eml
-    - fixture: fixtures/004-trader-wrote-deal-down-wrong-in-log.eml
-    - fixture: fixtures/005-the-annuity-was-booked-10-2-26.eml
-    - fixture: fixtures/006-the-draft-message-points.eml
-    - fixture: fixtures/007-legal-question.eml
-    - fixture: fixtures/008-cna-incumbency-certificate.eml
-    - fixture: fixtures/009-for-deal-847596-celeste-vance-brannock-s.eml
-    - fixture: fixtures/010-re-cna-incumbency-certificate.eml
-    - fixture: fixtures/011-research-intelligence.eml
-    - fixture: fixtures/012-re-research-intelligence.eml
-    - fixture: fixtures/013-good-morning.eml
-    - fixture: fixtures/014-i-would-like-to-have-a-planning.eml
-    - fixture: fixtures/015-re-research-intelligence.eml
-    - fixture: fixtures/016-damon-asked-me-to-let-you-know.eml
-    - fixture: fixtures/017-congratulations-on-your-expanded-role.eml
-    - fixture: fixtures/018-the-list-of-top-cps-with-credit.eml
-    - fixture: fixtures/019-today-has-disappeared-so-i-don-t-think.eml
+    - fixture: fixtures/001-the-revised-model.eml
+    - fixture: fixtures/002-the-attached-file-contains-the-audit-iss.eml
+    - fixture: fixtures/003-fw-nerc-2026-summer-assessment.eml
+    - fixture: fixtures/004-please-set-up-a-meeting-to-discuss.eml
+    - fixture: fixtures/005-the-transaction-agreement-and-master-fir.eml
+    - fixture: fixtures/006-trader-wrote-deal-down-wrong-in-log.eml
+    - fixture: fixtures/007-the-annuity-was-booked-10-2-26.eml
+    - fixture: fixtures/008-the-draft-message-points.eml
+    - fixture: fixtures/009-quick-thought.eml
+    - fixture: fixtures/010-legal-question.eml
+    - fixture: fixtures/011-for-deal-847596-celeste-vance-brannock-s.eml
+    - fixture: fixtures/012-research-intelligence.eml
+    - fixture: fixtures/013-re-research-intelligence.eml
+    - fixture: fixtures/014-good-morning.eml
+    - fixture: fixtures/015-i-would-like-to-have-a-planning.eml
+    - fixture: fixtures/016-re-research-intelligence.eml
+    - fixture: fixtures/017-damon-asked-me-to-let-you-know.eml
+    - fixture: fixtures/018-congratulations-on-your-expanded-role.eml
+    - fixture: fixtures/019-the-list-of-top-cps-with-credit.eml
     - fixture: fixtures/020-my-proposed-revisions-to-the-transaction.eml
     - fixture: fixtures/021-we-need-to-complete-the-review.eml
     - fixture: fixtures/022-texas-has-the-items.eml
     - fixture: fixtures/023-crude-24x7-wti-marketing-effort.eml
-    - fixture: fixtures/024-bear-guarantee-letter.eml
+    - fixture: fixtures/024-a-list-of-notaries-in-cna-legal.eml
     - fixture: fixtures/025-i-have-reviewed-the-three-forwards.eml
-    - fixture: fixtures/026-re-bear-guarantee-letter.eml
-    - fixture: fixtures/027-i-will-give-the-form.eml
+    - fixture: fixtures/026-i-will-give-the-form.eml
+    - fixture: fixtures/027-we-have-received-an-executed-first-amend.eml
     - fixture: fixtures/028-the-slides-with-your-suggested-edits-inc.eml
     - fixture: fixtures/029-crude-24x7-wti-marketing-effort.eml
     - fixture: fixtures/030-there-are-two-deals-that-do-not.eml

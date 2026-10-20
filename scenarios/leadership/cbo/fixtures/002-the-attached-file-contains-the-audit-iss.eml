@@ -1,12 +1,12 @@
-Message-ID: <3487ab5292c57d7ec287@brightwater-audit.example.test>
+Message-ID: <73a768d5a807f0e034d9@brightwater-audit.example.test>
 Date: Tue, 06 Oct 2026 10:30:00 +0000
 From: Tom Hargreaves <tom.hargreaves@brightwater-audit.example.test>
 To: Natalie Okafor <natalie.okafor@corvane.example.test>
 Subject: The attached file contains the audit issues
 MIME-Version: 1.0
-Content-Type: multipart/mixed; boundary="=====a3cd61e6b2059c106de1803d=="
+Content-Type: multipart/mixed; boundary="=====e1b60e628352e3b46437c97a=="
 
---=====a3cd61e6b2059c106de1803d==
+--=====e1b60e628352e3b46437c97a==
 Content-Type: text/plain; charset="utf-8"
 Content-Transfer-Encoding: quoted-printable
 
@@ -20,7 +20,7 @@ Please call if you have any questions.
 Thank you,
 Tom
 
---=====a3cd61e6b2059c106de1803d==
+--=====e1b60e628352e3b46437c97a==
 Content-Type: application/pdf
 Content-Transfer-Encoding: base64
 Content-Disposition: attachment; filename="Memo-2026-10-06.pdf"
@@ -73,4 +73,4 @@ IDAwMDAwIG4gCjAwMDAwMDA1NjcgMDAwMDAgbiAKMDAwMDAwMDcxMyAwMDAwMCBuIAowMDAwMDAx
 NzQ0IDAwMDAwIG4gCjAwMDAwMDE4OTEgMDAwMDAgbiAKdHJhaWxlcgo8PCAvU2l6ZSAxMSAvUm9v
 dCAxIDAgUiAvSW5mbyA2IDAgUiA+PgpzdGFydHhyZWYKMjMxMQolJUVPRgo=
 
---=====a3cd61e6b2059c106de1803d==--
+--=====e1b60e628352e3b46437c97a==--

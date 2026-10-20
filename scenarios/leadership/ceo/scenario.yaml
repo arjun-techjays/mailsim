@@ -116,21 +116,21 @@ scenario:
     - fixture: fixtures/001-7-is-fine-with-me-although.eml
     - fixture: fixtures/002-fw-legal-credit-meeting.eml
     - fixture: fixtures/003-can-you-send-the-following-to-everyone.eml
-    - fixture: fixtures/004-for-the-time-being.eml
-    - fixture: fixtures/005-in-discussing-the-omnibus-with-outside-c.eml
-    - fixture: fixtures/006-my-outline-to-use-while-talking.eml
-    - fixture: fixtures/007-re-legal-credit-meeting.eml
-    - fixture: fixtures/008-is-a-2-page-financial-and-statistical.eml
-    - fixture: fixtures/009-a-draft-proposal-for-the-chairman.eml
-    - fixture: fixtures/010-kingsley-contracts.eml
-    - fixture: fixtures/011-the-latest-version-of-the-letter.eml
-    - fixture: fixtures/012-e-mail-has-been-a-bit-problematic-here.eml
-    - fixture: fixtures/013-fothergill-lady.eml
-    - fixture: fixtures/014-re-kingsley-contracts.eml
-    - fixture: fixtures/015-marisol-winslow.eml
-    - fixture: fixtures/016-do-we-need-to-reference-the-payment.eml
-    - fixture: fixtures/017-re-marisol-winslow.eml
-    - fixture: fixtures/018-juniperline-inc-isda.eml
+    - fixture: fixtures/004-in-discussing-the-omnibus-with-outside-c.eml
+    - fixture: fixtures/005-my-outline-to-use-while-talking.eml
+    - fixture: fixtures/006-re-legal-credit-meeting.eml
+    - fixture: fixtures/007-is-a-2-page-financial-and-statistical.eml
+    - fixture: fixtures/008-a-draft-proposal-for-the-chairman.eml
+    - fixture: fixtures/009-kingsley-contracts.eml
+    - fixture: fixtures/010-the-latest-version-of-the-letter.eml
+    - fixture: fixtures/011-e-mail-has-been-a-bit-problematic-here.eml
+    - fixture: fixtures/012-fothergill-lady.eml
+    - fixture: fixtures/013-re-kingsley-contracts.eml
+    - fixture: fixtures/014-marisol-winslow.eml
+    - fixture: fixtures/015-do-we-need-to-reference-the-payment.eml
+    - fixture: fixtures/016-re-marisol-winslow.eml
+    - fixture: fixtures/017-juniperline-inc-isda.eml
+    - fixture: fixtures/018-fw-mkt-thoughts.eml
     - fixture: fixtures/019-re-juniperline-inc-isda.eml
     - fixture: fixtures/020-fw-agreements.eml
     - fixture: fixtures/021-please-see-the-attached-comments-draft.eml

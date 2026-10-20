@@ -17,54 +17,13 @@
     "vendor": 5
   },
   "hashed_ids": [
-    "910033"
+    "800888",
+    "910033",
+    "934062"
   ],
   "fixtures": [
     {
-      "fixture": "fixtures/001-m-p-wrote-masterminded-the-partnership-a.eml",
-      "topic": "finance",
-      "thread": 1,
-      "attachments": 0,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/002-owen-new-ctr-power-trader-id-for.eml",
-      "topic": "finance",
-      "thread": 11,
-      "attachments": 0,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/003-a-revised-credit-worksheet-for-dunmore.eml",
-      "topic": "finance",
-      "thread": 7,
-      "attachments": 1,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/004-the-memo-referenced-above.eml",
-      "topic": "scheduling",
-      "thread": 19,
-      "attachments": 1,
-      "suggested_labels": [
-        "Calendar"
-      ]
-    },
-    {
-      "fixture": "fixtures/005-looks-like-we-ll-be-staying-the-night.eml",
-      "topic": "general",
-      "thread": 23,
-      "attachments": 0,
-      "suggested_labels": []
-    },
-    {
-      "fixture": "fixtures/006-after-going-throught-the-numbers.eml",
+      "fixture": "fixtures/001-owen-new-ctr-power-trader-id-for.eml",
       "topic": "finance",
       "thread": 9,
       "attachments": 0,
@@ -73,9 +32,52 @@
       ]
     },
     {
-      "fixture": "fixtures/007-i-have-a-question-in-regards.eml",
+      "fixture": "fixtures/002-a-revised-credit-worksheet-for-dunmore.eml",
       "topic": "finance",
       "thread": 6,
+      "attachments": 1,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/003-the-memo-referenced-above.eml",
+      "topic": "scheduling",
+      "thread": 19,
+      "attachments": 1,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/004-looks-like-we-ll-be-staying-the-night.eml",
+      "topic": "general",
+      "thread": 23,
+      "attachments": 0,
+      "suggested_labels": []
+    },
+    {
+      "fixture": "fixtures/005-this-expense-project-will-be-settled.eml",
+      "topic": "finance",
+      "thread": 12,
+      "attachments": 0,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/006-i-have-a-question-in-regards.eml",
+      "topic": "finance",
+      "thread": 5,
+      "attachments": 0,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/007-ok-to-buy-and-sell-west-physical.eml",
+      "topic": "finance",
+      "thread": 11,
       "attachments": 0,
       "suggested_labels": [
         "Finance"
@@ -154,7 +156,7 @@
     {
       "fixture": "fixtures/016-ansel-provided-financial-premium-for-elo.eml",
       "topic": "finance",
-      "thread": 8,
+      "thread": 7,
       "attachments": 0,
       "suggested_labels": [
         "Finance"
@@ -163,7 +165,7 @@
     {
       "fixture": "fixtures/017-thea-will-be-doing-cash-while.eml",
       "topic": "finance",
-      "thread": 2,
+      "thread": 1,
       "attachments": 0,
       "suggested_labels": [
         "Finance"
@@ -172,7 +174,7 @@
     {
       "fixture": "fixtures/018-i-just-got-off-the-phone.eml",
       "topic": "finance",
-      "thread": 3,
+      "thread": 2,
       "attachments": 0,
       "suggested_labels": [
         "Finance"
@@ -190,7 +192,7 @@
     {
       "fixture": "fixtures/020-the-latest-set-of-documents-which.eml",
       "topic": "finance",
-      "thread": 4,
+      "thread": 3,
       "attachments": 1,
       "suggested_labels": [
         "Finance"
@@ -199,7 +201,7 @@
     {
       "fixture": "fixtures/021-the-corvane-americas-master-schedule-of-.eml",
       "topic": "finance",
-      "thread": 10,
+      "thread": 8,
       "attachments": 1,
       "suggested_labels": [
         "Finance"
@@ -208,7 +210,7 @@
     {
       "fixture": "fixtures/022-file-for-the-latest-statement-of-work.eml",
       "topic": "finance",
-      "thread": 12,
+      "thread": 10,
       "attachments": 1,
       "suggested_labels": [
         "Finance"
@@ -217,7 +219,7 @@
     {
       "fixture": "fixtures/023-three-wire-requests-for-immediate-paymen.eml",
       "topic": "finance",
-      "thread": 5,
+      "thread": 4,
       "attachments": 1,
       "suggested_labels": [
         "Finance"

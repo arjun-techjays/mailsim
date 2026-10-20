@@ -1,12 +1,12 @@
-Message-ID: <acecd2e98d49e5050e46@northstar-partners.example.test>
+Message-ID: <096b734c6bc45700d121@northstar-partners.example.test>
 Date: Mon, 12 Oct 2026 16:54:00 +0000
 From: Sam Adeyemi <sam.adeyemi@northstar-partners.example.test>
 To: Natalie Okafor <natalie.okafor@corvane.example.test>
 Subject: My proposed revisions to the Transaction Agreement
 MIME-Version: 1.0
-Content-Type: multipart/mixed; boundary="=====e7a73e8917c33a1abbb9c12d=="
+Content-Type: multipart/mixed; boundary="=====a65e49644c72288565edbc8a=="
 
---=====e7a73e8917c33a1abbb9c12d==
+--=====a65e49644c72288565edbc8a==
 Content-Type: text/plain; charset="utf-8"
 Content-Transfer-Encoding: 7bit
 
@@ -20,7 +20,7 @@ Give me a call if you have any questions.
 
 Sam
 
---=====e7a73e8917c33a1abbb9c12d==
+--=====a65e49644c72288565edbc8a==
 Content-Type: application/pdf
 Content-Transfer-Encoding: base64
 Content-Disposition: attachment;
@@ -114,4 +114,4 @@ MDA3MzEgMDAwMDAgbiAKMDAwMDAwMjM1MSAwMDAwMCBuIAowMDAwMDAyNDk4IDAwMDAwIG4gCjAw
 MDAwMDM1NzUgMDAwMDAgbiAKMDAwMDAwMzcyMyAwMDAwMCBuIAp0cmFpbGVyCjw8IC9TaXplIDEz
 IC9Sb290IDEgMCBSIC9JbmZvIDYgMCBSID4+CnN0YXJ0eHJlZgo0NTU2CiUlRU9GCg==
 
---=====e7a73e8917c33a1abbb9c12d==--
+--=====a65e49644c72288565edbc8a==--
