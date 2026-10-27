@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+from datetime import UTC, datetime
 from email import policy
 from email.message import EmailMessage
 from email.utils import format_datetime, formataddr
@@ -34,7 +34,10 @@ def build_mime(
     """Bcc is intentionally never written to the wire format."""
     msg = EmailMessage(policy=policy.SMTP)
     msg["Message-ID"] = message_id
-    msg["Date"] = format_datetime(date)
+    # Always UTC: a timestamptz read back from PostgreSQL carries the session's TimeZone, and
+    # the bytes (hence blob refs and the state hash) must not depend on it. A naive value is
+    # left as is (astimezone would read the host's local zone).
+    msg["Date"] = format_datetime(date.astimezone(UTC) if date.tzinfo is not None else date)
     msg["From"] = _fmt(from_)
     if to:
         msg["To"] = ", ".join(_fmt(a) for a in to)
