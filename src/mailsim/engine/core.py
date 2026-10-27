@@ -54,6 +54,7 @@ from mailsim.mime.limits import MimeLimits
 from mailsim.mime.parse import ParsedAttachment, parse_mime
 from mailsim.scenario.answer_keys import answer_key_for
 from mailsim.scenario.schema import (
+    DEFAULT_RUN_CAPS,
     TRIGGER_ACTIONS,
     UNGATED_AGENT_OPERATIONS,
     ScenarioBody,
@@ -87,6 +88,21 @@ MAX_RECIPIENTS = 100
 
 def counts_against_budget(operation: str) -> bool:
     return operation not in READ_OPERATIONS and operation not in UNGATED_AGENT_OPERATIONS
+
+
+def run_cap(config: dict[str, Any], name: str) -> int:
+    """The run's value of a per-run resource cap (scenario `evaluation.limits`); runs whose
+    scenario does not set it, including runs created before the cap existed, get the
+    server default."""
+    value = (config.get("limits") or {}).get(name)
+    return int(value) if value is not None else DEFAULT_RUN_CAPS[name]
+
+
+def _limit_exceeded(what: str, cap: str, limit: int) -> SimulationLimitExceeded:
+    """The refusal for a reached cap. `details.cap` names it for operators and the evaluator
+    (`no_limit_exceeded` with `limit:`); an agent sees neither (api.agent_errors)."""
+    return SimulationLimitExceeded(f"{what} limit of {limit} reached",
+                                   details={"limit": limit, "cap": cap})  # fmt: skip
 
 
 @dataclass
@@ -246,6 +262,7 @@ class SimEngine:
                             operation=operation,
                         )
                     self._arm_triggers(ctx, operation)
+                    self._count_usage(run, operation)
                 if ctx.gen.counter != run.id_counter:
                     # ids were drawn after the last event: record it so replay stays exact
                     ctx.emit("ids.reserved", {"counter": ctx.gen.counter}, actor=actor,
@@ -276,8 +293,19 @@ class SimEngine:
                 input_,
                 exc,
                 count=guarded and actor == AGENT and not probe and counts_against_budget(operation),
+                usage=guarded and actor == AGENT and not probe,
             )
             raise
+
+    @staticmethod
+    def _count_usage(run: m.Run, operation: str) -> None:
+        """Resource-cap counters of a guarded agent command, kept on the run row in the same
+        transaction as the audit row that records it (no event: reads and sent_copy write
+        none). Successful or failed alike, like the write budget; refused by the guard: no."""
+        if operation in READ_OPERATIONS:
+            run.agent_reads += 1
+        elif operation == "sent_copy":
+            run.agent_sent_copies += 1
 
     def _record_denied(
         self,
@@ -288,6 +316,7 @@ class SimEngine:
         input_: dict[str, Any],
         exc: SimError,
         count: bool = False,
+        usage: bool = False,
     ) -> None:
         with self._sf.begin() as s:
             try:
@@ -311,6 +340,8 @@ class SimEngine:
                         outcome=str(exc.code),
                     ),
                 )
+            if usage:
+                self._count_usage(run, operation)
             s.add(
                 m.ActionRow(
                     run_id=run.id,
@@ -382,9 +413,22 @@ class SimEngine:
                 raise PermissionDenied("agent may only access its assigned mailbox")
         limit = ctx.config["limits"]["max_agent_actions"]
         if counts_against_budget(operation) and run.agent_actions >= limit:
-            raise SimulationLimitExceeded(
-                f"agent action limit of {limit} reached", details={"limit": limit}
-            )
+            raise _limit_exceeded("agent action", "max_agent_actions", limit)
+        if connection_test.get():
+            return  # an operator's read-only probe: never counted, so never capped
+        # per-run resource caps (spec 10): checked before the command, so one command may
+        # overshoot max_agent_events by the events it writes itself
+        if operation in READ_OPERATIONS:
+            limit = run_cap(ctx.config, "max_agent_reads")
+            if run.agent_reads >= limit:
+                raise _limit_exceeded("agent read", "max_agent_reads", limit)
+        if operation == "sent_copy":
+            limit = run_cap(ctx.config, "max_sent_copies")
+            if run.agent_sent_copies >= limit:
+                raise _limit_exceeded("sent copy", "max_sent_copies", limit)
+        limit = run_cap(ctx.config, "max_agent_events")
+        if run.agent_events >= limit:
+            raise _limit_exceeded("agent event", "max_agent_events", limit)
 
     def _arm_triggers(self, ctx: Ctx, operation: str) -> None:
         rows = ctx.session.execute(
@@ -1048,7 +1092,8 @@ class SimEngine:
         limit = c.config["limits"]["max_virtual_duration_seconds"]
         if (target - start).total_seconds() > limit:
             raise SimulationLimitExceeded(
-                f"virtual duration limit of {limit}s exceeded", details={"limit": limit}
+                f"virtual duration limit of {limit}s exceeded",
+                details={"limit": limit, "cap": "max_virtual_duration_seconds"},
             )
         if stop_at is not None:
             target = max(c.now, min(target, parse_ts(stop_at)))
@@ -1505,11 +1550,12 @@ class SimEngine:
     def modify_labels(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str, *,
                       add: Sequence[str] = (), remove: Sequence[str] = (), actor: str = AGENT) -> None:  # fmt: skip
         def fn(c: Ctx) -> None:
-            self._message(c, mailbox_id, message_id)
+            row = self._message(c, mailbox_id, message_id)
             if any(not x.strip() for x in (*add, *remove)):
                 raise InvalidRequest("label names must not be empty")
             if actor == AGENT:  # SENT, DRAFT, INBOX, ...: derived, never set by hand
                 refuse_system_labels((*add, *remove))
+                self._check_label_cap(c, row, add, remove)
             c.emit("message.labels_changed",
                    {"mailbox_id": mailbox_id, "message_id": message_id, "add": list(add), "remove": list(remove)},
                    actor=actor, operation="label")  # fmt: skip
@@ -1534,6 +1580,18 @@ class SimEngine:
         self._command(scope, run_id, actor, "flag",
                       {"message_id": message_id, "add": list(add), "remove": list(remove)}, fn,
                       mailbox_id=mailbox_id)  # fmt: skip
+
+    @staticmethod
+    def _check_label_cap(c: Ctx, row: m.Message, add: Sequence[str],
+                         remove: Sequence[str]) -> None:  # fmt: skip
+        """max_labels_per_message: refuse an agent label change that adds a label and leaves
+        the message with more labels (keywords, categories) than the cap. Removing is always
+        allowed, also on a message already above it. Same set arithmetic as the projector."""
+        current = set(row.labels)
+        after = (current | set(add)) - set(remove)
+        limit = run_cap(c.config, "max_labels_per_message")
+        if len(after) > limit and after - current:
+            raise _limit_exceeded("labels per message", "max_labels_per_message", limit)
 
     @staticmethod
     def _check_draft_flag(row: m.Message, add: Sequence[str], remove: Sequence[str]) -> None:

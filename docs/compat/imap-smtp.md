@@ -192,7 +192,12 @@ each listed `\Deleted` message with its own engine `delete` (one action per mess
 (Gmail `insert` semantics: no delivery), then applies the given flags/keywords; answers
 `[APPENDUID]`. An appended message is never sent mail: it can't be moved or copied into `Sent`.
 `\Draft` in the flags or a keyword spelling a system label is refused before anything is
-stored (`NO [NOPERM]` / `NO [CANNOT]`) and recorded as a refused `insert`.
+stored (`NO [NOPERM]` / `NO [CANNOT]`) and recorded as a refused `insert`. More than 50
+keywords, or a keyword over 225 characters, in one `APPEND` or `STORE` answers
+`NO [CANNOT] INVALID_REQUEST` before anything is written (the label cap every interface
+applies to one request). Keywords that would take the message over the scenario's
+`max_labels_per_message` are refused with `NO [LIMIT]` after the message was stored: the
+message is kept without them (APPEND stores first, then applies flags and keywords).
 `Sent` and `Drafts` hold only what this account sent or drafted:
 
 - **APPEND to `Sent`** (a client filing its copy after an SMTP send) answers OK and stores
@@ -217,7 +222,11 @@ stored (`NO [NOPERM]` / `NO [CANNOT]`) and recorded as a refused `insert`.
 (`NOT_FOUND` -> `NONEXISTENT`, `PERMISSION_DENIED` -> `NOPERM`, `RUN_NOT_ACTIVE` ->
 `UNAVAILABLE`, `SIMULATION_LIMIT_EXCEEDED`/`RATE_LIMITED` -> `LIMIT`, `INVALID_REQUEST`/
 `UNSUPPORTED_OPERATION` -> `CANNOT`, `CONFLICT` -> `INUSE`). The budget error reads
-`NO [LIMIT] QUOTA_EXCEEDED: action limit reached`; a run that is not active reads
+`NO [LIMIT] QUOTA_EXCEEDED: action limit reached`, and so do the per-run caps (reads,
+`sent_copy`, agent events, labels per message; see the README). Every command polls the change
+feed (one read) and a body `FETCH` reads each message, so once `max_agent_reads` is reached
+every command but `LOGOUT` answers `NO [LIMIT]`; a `FETCH` that reaches it ends with
+`NO [LIMIT]` after the responses already sent. A run that is not active reads
 `RUN_NOT_ACTIVE: mailbox is not available` (also at LOGIN).
 
 **Framing limits.** Command line 64 KiB (`* BYE` beyond it); synchronizing literals up to

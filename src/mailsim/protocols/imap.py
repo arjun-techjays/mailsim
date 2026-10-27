@@ -18,14 +18,16 @@ import contextlib
 import logging
 import re
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any
 
 from mailsim.api.agent_errors import agent_view
-from mailsim.domain.errors import SimError, UnsupportedOperation
+from mailsim.domain.errors import InvalidRequest, SimError, UnsupportedOperation
 from mailsim.domain.models import (
+    MAX_LABEL_CHARS,
+    MAX_LABELS_PER_CHANGE,
     CanonicalMessage,
     draft_flag_error,
     is_system_label,
@@ -109,6 +111,15 @@ class WriteTimeout(Exception):
 # --------------------------------------------------------------------------- helpers
 def is_keyword(name: str) -> bool:
     return bool(_KEYWORD_RE.match(name))
+
+
+def check_keyword_list(keywords: Collection[str]) -> None:
+    """The label cap every interface applies to one request (domain.models): at most
+    MAX_LABELS_PER_CHANGE keywords of at most MAX_LABEL_CHARS characters. Checked before
+    anything is written; NO [CANNOT] INVALID_REQUEST, like a REST/Gmail/Graph/MCP 400."""
+    if len(keywords) > MAX_LABELS_PER_CHANGE or any(len(k) > MAX_LABEL_CHARS for k in keywords):
+        raise InvalidRequest(f"at most {MAX_LABELS_PER_CHANGE} keywords of at most "
+                             f"{MAX_LABEL_CHARS} characters per command")  # fmt: skip
 
 
 def wildcard_match(pattern: str, name: str, *, fold: bool = False) -> bool:
@@ -846,6 +857,7 @@ class ImapSession:
                 raise ParseError(f"invalid flag {flag[:40]}")
             else:
                 keywords.add(flag)
+        check_keyword_list(keywords)
         by_uid = self._sync(out, expunges=uid_mode)
         targets = self._targets(args[0], uid_mode, by_uid)
         # refused (and recorded) before any write: a keyword "Sent" is no system flag, and
@@ -976,6 +988,7 @@ class ImapSession:
                 keywords.append(flag)
             else:
                 raise ParseError(f"invalid flag {flag[:40]}")
+        check_keyword_list(set(keywords))
         self._poll()  # UIDVALIDITY in APPENDUID must be current
         dest = self._folder(astring(args[0]))
         if dest is None:

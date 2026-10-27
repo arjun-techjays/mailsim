@@ -14,6 +14,7 @@ import {
   refLabel,
   referencedFixtures,
   removePersona,
+  RUN_CAPS,
   setPersonaId,
   slugId,
   toDocument,
@@ -277,5 +278,30 @@ describe('missing references (integrator follow-up)', () => {
     expect(doc.scenario.mailboxes[0]?.owner).toBe('');
     expect(doc.scenario.events[0]?.event.from).toBe('');
     expect(doc.scenario.agent.mailbox).toBe('');
+  });
+});
+
+describe('per-run resource caps', () => {
+  const withLimits = (limits: Record<string, unknown>) => ({ ...FULL, scenario: { ...FULL.scenario, evaluation: { limits } } });
+
+  it('round-trips caps set in the document and keeps them known', () => {
+    const doc = withLimits({ max_agent_actions: 5, max_virtual_duration_seconds: 60, max_agent_reads: 40, max_sent_copies: 3, max_agent_events: 900, max_labels_per_message: 7 });
+    const { form } = fromDocument(doc);
+    expect(form.caps).toEqual({ max_agent_reads: '40', max_sent_copies: '3', max_agent_events: '900', max_labels_per_message: '7' });
+    expect((toDocument(form).scenario as { evaluation: unknown }).evaluation).toEqual(doc.scenario.evaluation);
+    expect(unknownKeys(doc)).toEqual([]);
+  });
+
+  it('leaves unset or blank caps out of the document (server defaults)', () => {
+    const f = fullForm();
+    expect(f.caps).toEqual({});
+    f.caps = { max_agent_reads: '  ', max_labels_per_message: ' 12 ' };
+    expect((toDocument(f).scenario as { evaluation: unknown }).evaluation).toEqual({
+      limits: { max_agent_actions: 100, max_virtual_duration_seconds: 86400, max_labels_per_message: 12 },
+    });
+    delete f.caps; // a draft saved before caps existed
+    expect((toDocument(f).scenario as { evaluation: unknown }).evaluation).toEqual(FULL.scenario.evaluation);
+    expect(blankForm().caps).toEqual({});
+    expect(RUN_CAPS.map((c) => c.key)).toEqual(['max_agent_reads', 'max_sent_copies', 'max_agent_events', 'max_labels_per_message']);
   });
 });

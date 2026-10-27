@@ -85,7 +85,7 @@ def test_clock_advance_tick_and_limits(api, run):
         "INVALID_REQUEST")  # fmt: skip
     body = err(api.call("POST", f"/v1/runs/{rid}/clock/advance", json={"seconds": 99999}), 429,
                "SIMULATION_LIMIT_EXCEEDED")  # fmt: skip
-    assert body["details"] == {"limit": 3600}
+    assert body["details"] == {"limit": 3600, "cap": "max_virtual_duration_seconds"}
 
 
 def test_state_and_actions_by_role(api, run):
