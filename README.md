@@ -403,9 +403,16 @@ Re-grading a run recorded before this change can give a different result:
   limit reached"), recorded as a `SIMULATION_LIMIT_EXCEEDED` action whose `details.cap` names
   the cap; `invariant: no_limit_exceeded` fails on any of them and takes an optional
   `limit: <cap name>` to check one. Reads count engine reads, not client requests: an IMAP
-  command polls the change feed (one read) and a body FETCH reads each message. The event cap
-  is checked before a command, so the command that reaches it completes. A label-cap refusal is
-  a failed write and costs budget. Refusals still write an audit row each.
+  command polls the change feed (one read) and a body FETCH reads each message. Reads an
+  interface makes to answer a write that request already committed (Gmail returning the sent
+  message, a REST/Graph PATCH returning the message, an IMAP re-sync after STORE) are recorded
+  but neither counted nor refused, so a committed write never answers "quota exceeded"; reads
+  before the write, and requests that write nothing, count as usual. The event cap is checked
+  before a command, so the command that reaches it completes and may exceed it by its own
+  events (a send: its copies and deliveries; an expunge or bulk delete: one per message). A
+  label-cap refusal is a failed write and costs budget; a new message (Gmail insert/import,
+  IMAP APPEND) with more labels than the cap is refused before it is stored. Refusals still
+  write an audit row each.
 * The audit action log records recipients, counts and sizes but not subjects, bcc or bodies.
 * `actor` is a trusted-caller argument; Phase 2/3 must expose agent-facing facades that hard-code it.
 

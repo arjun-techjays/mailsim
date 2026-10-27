@@ -195,9 +195,8 @@ each listed `\Deleted` message with its own engine `delete` (one action per mess
 stored (`NO [NOPERM]` / `NO [CANNOT]`) and recorded as a refused `insert`. More than 50
 keywords, or a keyword over 225 characters, in one `APPEND` or `STORE` answers
 `NO [CANNOT] INVALID_REQUEST` before anything is written (the label cap every interface
-applies to one request). Keywords that would take the message over the scenario's
-`max_labels_per_message` are refused with `NO [LIMIT]` after the message was stored: the
-message is kept without them (APPEND stores first, then applies flags and keywords).
+applies to one request). More keywords than the scenario's `max_labels_per_message` answer
+`NO [LIMIT]`, also before anything is stored.
 `Sent` and `Drafts` hold only what this account sent or drafted:
 
 - **APPEND to `Sent`** (a client filing its copy after an SMTP send) answers OK and stores
@@ -226,7 +225,9 @@ message is kept without them (APPEND stores first, then applies flags and keywor
 `sent_copy`, agent events, labels per message; see the README). Every command polls the change
 feed (one read) and a body `FETCH` reads each message, so once `max_agent_reads` is reached
 every command but `LOGOUT` answers `NO [LIMIT]`; a `FETCH` that reaches it ends with
-`NO [LIMIT]` after the responses already sent. A run that is not active reads
+`NO [LIMIT]` after the responses already sent. The re-sync a `STORE`, `APPEND`, `COPY` or `MOVE`
+does after its write is not counted or refused, so a command whose write happened never
+answers `NO [LIMIT]`. A run that is not active reads
 `RUN_NOT_ACTIVE: mailbox is not available` (also at LOGIN).
 
 **Framing limits.** Command line 64 KiB (`* BYE` beyond it); synchronizing literals up to

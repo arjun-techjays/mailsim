@@ -4,14 +4,16 @@ The HTTP app serves several interfaces; the path decides which one a request bel
 agent REST mailbox routes (`/v1/mailboxes/...`) are ``rest``, the Gmail / Graph adapters and
 the MCP endpoint are ``gmail`` / ``graph`` / ``mcp_http``, and every other route (control
 plane, simulator, operator reads) is ``api``. Sync handlers run in worker threads that copy
-this request's context, so the engine sees the value.
+this request's context, so the engine sees the value. Each request is also one agent request
+(engine/context.py `use_agent_request`): reads that build the response to a write it already
+committed are read-backs, exempt from the read/event caps.
 """
 
 from __future__ import annotations
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from mailsim.engine.context import use_interface
+from mailsim.engine.context import use_agent_request, use_interface
 
 PREFIXES: tuple[tuple[str, str], ...] = (
     ("/v1/mailboxes/", "rest"),
@@ -37,5 +39,5 @@ class InterfaceAttribution:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        with use_interface(interface_for_path(scope.get("path", ""))):
+        with use_interface(interface_for_path(scope.get("path", ""))), use_agent_request():
             await self.app(scope, receive, send)

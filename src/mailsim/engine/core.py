@@ -43,7 +43,12 @@ from mailsim.domain.models import (
 )
 from mailsim.domain.states import NO_BUILD, TERMINAL, RunStatus, check_transition
 from mailsim.engine import projectors as _projectors  # noqa: F401  (registers projectors)
-from mailsim.engine.context import connection_test, current_interface
+from mailsim.engine.context import (
+    connection_test,
+    current_interface,
+    is_read_back,
+    note_agent_write,
+)
 from mailsim.engine.delivery import DeliveryPolicy, ExternalMode
 from mailsim.engine.log import Event, append, id_generator, lock_run, save_ids
 from mailsim.engine.pagination import Page, check_page_size, decode_cursor, encode_cursor
@@ -96,6 +101,11 @@ def run_cap(config: dict[str, Any], name: str) -> int:
     server default."""
     value = (config.get("limits") or {}).get(name)
     return int(value) if value is not None else DEFAULT_RUN_CAPS[name]
+
+
+def labels_per_message_exceeded(limit: int) -> SimulationLimitExceeded:
+    """The refusal for a message that would carry more agent labels than max_labels_per_message."""
+    return _limit_exceeded("labels per message", "max_labels_per_message", limit)
 
 
 def _limit_exceeded(what: str, cap: str, limit: int) -> SimulationLimitExceeded:
@@ -236,12 +246,15 @@ class SimEngine:
     ) -> T:
         guarded = False
         probe = actor == AGENT and connection_test.get()
+        # the interface building its response to a write this request already committed:
+        # recorded, but not counted against or refused by the read/event caps (context.py)
+        read_back = actor == AGENT and operation in READ_OPERATIONS and is_read_back()
         try:
             with self._sf.begin() as s:
                 run = lock_run(s, scope, run_id)
                 seq_start = run.next_seq
                 ctx = Ctx(s, run, id_generator(run))
-                self._guard(ctx, actor, operation, mailbox_id, require_running)
+                self._guard(ctx, actor, operation, mailbox_id, require_running, read_back)
                 if probe and operation not in READ_OPERATIONS:
                     raise PermissionDenied("a connection test may only read")
                 guarded = True
@@ -263,7 +276,8 @@ class SimEngine:
                             operation=operation,
                         )
                     self._arm_triggers(ctx, operation)
-                    self._count_usage(run, operation)
+                    if not read_back:
+                        self._count_usage(run, operation)
                 if ctx.gen.counter != run.id_counter:
                     # ids were drawn after the last event: record it so replay stays exact
                     ctx.emit("ids.reserved", {"counter": ctx.gen.counter}, actor=actor,
@@ -282,7 +296,9 @@ class SimEngine:
                         seq_end=run.next_seq - 1,
                     )
                 )
-                return result
+            if actor == AGENT and not probe and operation not in READ_OPERATIONS:
+                note_agent_write()  # committed: this request's later reads are read-backs
+            return result
         except SimError as exc:
             # Budget rule: every agent command that passed the permission/mailbox/limit guard
             # consumes budget, whether it then succeeds or fails.
@@ -294,7 +310,7 @@ class SimEngine:
                 input_,
                 exc,
                 count=guarded and actor == AGENT and not probe and counts_against_budget(operation),
-                usage=guarded and actor == AGENT and not probe,
+                usage=guarded and actor == AGENT and not probe and not read_back,
             )
             raise
 
@@ -392,7 +408,13 @@ class SimEngine:
         )
 
     def _guard(
-        self, ctx: Ctx, actor: str, operation: str, mailbox_id: str | None, require_running: bool
+        self,
+        ctx: Ctx,
+        actor: str,
+        operation: str,
+        mailbox_id: str | None,
+        require_running: bool,
+        read_back: bool = False,
     ) -> None:
         run = ctx.run
         if run.replay_of is not None and not (actor != AGENT and operation in READ_OPERATIONS):
@@ -415,8 +437,10 @@ class SimEngine:
         limit = ctx.config["limits"]["max_agent_actions"]
         if counts_against_budget(operation) and run.agent_actions >= limit:
             raise _limit_exceeded("agent action", "max_agent_actions", limit)
-        if connection_test.get():
-            return  # an operator's read-only probe: never counted, so never capped
+        if connection_test.get() or read_back:
+            # an operator's read-only probe, or the read-back of a committed write: never
+            # counted, so never capped
+            return
         # per-run resource caps (spec 10): checked before the command, so one command may
         # overshoot max_agent_events by the events it writes itself
         if operation in READ_OPERATIONS:
@@ -1585,14 +1609,22 @@ class SimEngine:
     @staticmethod
     def _check_label_cap(c: Ctx, row: m.Message, add: Sequence[str],
                          remove: Sequence[str]) -> None:  # fmt: skip
-        """max_labels_per_message: refuse an agent label change that adds a label and leaves
-        the message with more labels (keywords, categories) than the cap. Removing is always
-        allowed, also on a message already above it. Same set arithmetic as the projector."""
+        """max_labels_per_message: refuse an agent label change that leaves the message with
+        more labels (keywords, categories) than the cap AND more than it had. Removing, and
+        swapping names without adding to the count (a rename, a category replacement), are
+        always allowed, also on a message already above the cap. Same set arithmetic as the
+        projector."""
         current = set(row.labels)
         after = (current | set(add)) - set(remove)
         limit = run_cap(c.config, "max_labels_per_message")
-        if len(after) > limit and after - current:
-            raise _limit_exceeded("labels per message", "max_labels_per_message", limit)
+        if len(after) > limit and len(after) > len(current):
+            raise labels_per_message_exceeded(limit)
+
+    def label_cap(self, scope: Scope, run_id: str) -> int:
+        """Internal, unaudited lookup for an interface's pre-check before storing a message with
+        labels (not an agent read): the run's max_labels_per_message."""
+        with self._sf() as s:
+            return run_cap(get_run(s, scope, run_id).config, "max_labels_per_message")
 
     @staticmethod
     def _check_draft_flag(row: m.Message, add: Sequence[str], remove: Sequence[str]) -> None:
@@ -2445,6 +2477,7 @@ __all__ = [
     "MAX_ADVANCE_SECONDS",
     "MAX_ATTACHMENT_READ_BYTES",
     "MAX_RECIPIENTS",
+    "labels_per_message_exceeded",
     "SIMULATOR",
     "DraftThreading",
     "ReplayResult",

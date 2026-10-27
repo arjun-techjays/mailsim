@@ -435,12 +435,14 @@ class GmailService:
                 raise UnsupportedOperation(f"label {label_id} is not supported")
         folder = next((lb.LABEL_FOLDER[x] for x in ("TRASH", "INBOX", "SENT") if x in label_ids),
                       "archive")  # fmt: skip
+        names = [lb.user_label_name(x) for x in label_ids if lb.is_user_label_id(x)]
+        # more user labels than the run's per-message cap: refused before anything is stored
+        self.mb.check_new_message_labels(names, folder=folder, size=len(raw))
         mid = str(self.mb.insert_message(raw, folder=folder)["message_id"])
         flags = ([] if "UNREAD" in label_ids else ["SEEN"]) + [lb.LABEL_FLAG[x] for x in label_ids
                                                                if x in lb.LABEL_FLAG]  # fmt: skip
         if flags:
             self.mb.set_flags(mid, add=flags)
-        names = [lb.user_label_name(x) for x in label_ids if lb.is_user_label_id(x)]
         if names:
             self.mb.modify_labels(mid, add=names)
         self._changed()

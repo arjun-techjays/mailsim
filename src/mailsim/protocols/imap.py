@@ -33,7 +33,7 @@ from mailsim.domain.models import (
     is_system_label,
     system_label_error,
 )
-from mailsim.engine.context import use_interface
+from mailsim.engine.context import use_agent_request, use_interface
 from mailsim.mime.build import build_mime
 from mailsim.mime.parse import parse_mime
 from mailsim.protocols import imapmime
@@ -284,7 +284,8 @@ class ImapSession:
         tag, name, args = str(tokens[0]), str(tokens[1]).upper(), tokens[2:]
         out: list[bytes] = []
         try:
-            reply = self._dispatch(tag, name, args, out)
+            with use_agent_request():  # one command: the re-sync after its write is a read-back
+                reply = self._dispatch(tag, name, args, out)
         except ParseError as exc:
             return Reply([*out, f"{tag} BAD {_one_line(str(exc))}\r\n".encode()])
         except imapmime.SectionError as exc:
@@ -1005,6 +1006,8 @@ class ImapSession:
         )
         if error is not None:
             self._mb.record_refused("insert", error, folder=str(dest["name"]), size=len(raw))
+        # more keywords than the run's per-message label cap: refused before anything is stored
+        self._mb.check_new_message_labels(keywords, folder=str(dest["name"]), size=len(raw))
         new_id = str(self._mb.insert_message(raw, folder=str(dest["name"]))["message_id"])
         if system:
             self._mb.set_flags(new_id, add=sorted(set(system)))
@@ -1048,6 +1051,7 @@ class ImapSession:
         error = system_label_error(keywords)
         if error is not None:
             self._mb.record_refused("insert", error, folder=str(dest["name"]), size=len(raw))
+        self._mb.check_new_message_labels(keywords, folder=str(dest["name"]), size=len(raw))
         draft = self._mb.create_draft(
             to=[a.email for a in parsed.to], cc=[a.email for a in parsed.cc],
             bcc=[a.email for a in parsed.bcc], subject=parsed.subject,

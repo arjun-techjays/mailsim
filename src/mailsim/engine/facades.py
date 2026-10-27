@@ -30,6 +30,7 @@ from mailsim.engine.core import (
     DraftThreading,
     ReplayResult,
     SimEngine,
+    labels_per_message_exceeded,
 )
 from mailsim.engine.pagination import Page
 from mailsim.store.repos import Scope
@@ -147,6 +148,20 @@ class AgentMailbox:
         refusal (guarded, budgeted, in the activity). Raises that refusal (or the guard's)."""
         self._e.record_refused(*self._a(), operation, error, message_id=message_id, add=add,
                                remove=remove, folder=folder, size=size, actor=AGENT)  # fmt: skip
+
+    def check_new_message_labels(self, names: Sequence[str], *, folder: str,
+                                 size: int) -> None:  # fmt: skip
+        """Before storing a message that gets labels (Gmail insert/import labelIds, IMAP APPEND
+        keywords): refuse (and record, as a refused `insert`, budgeted like the write) more
+        distinct labels than the run's max_labels_per_message, so nothing is stored. No-op
+        within the cap."""
+        count = len(set(names))
+        if count == 0:
+            return
+        limit = self._e.label_cap(self._scope, self.run_id)
+        if count > limit:
+            self.record_refused("insert", labels_per_message_exceeded(limit), folder=folder,
+                                size=size)  # fmt: skip
 
     def sent_copy(self, folder: str, size: int) -> None:
         """Record a client's copy of a sent message filed into Sent (stores nothing)."""

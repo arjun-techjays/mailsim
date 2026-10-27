@@ -62,11 +62,27 @@ def _blocked_without_event(ctx: EvaluationContext, p: Point) -> list[Occurrence]
     )  # fmt: skip
 
 
+# Refusals recorded before limits were named in `details.cap`: the two limits that existed
+# then, recognised by their (unchanged) message
+_LEGACY_LIMIT_MESSAGES = (
+    ("agent action limit of ", "max_agent_actions"),
+    ("virtual duration limit of ", "max_virtual_duration_seconds"),
+)
+
+
 def _limit_name(o: Occurrence) -> str | None:
-    """Which run limit refused the action (`details.cap`; older recordings name none)."""
+    """Which run limit refused the action: `details.cap`, or for older recordings the limit
+    their message names."""
     details = o.result.get("details")
     cap = details.get("cap") if isinstance(details, dict) else None
-    return cap if isinstance(cap, str) else None
+    if isinstance(cap, str):
+        return cap
+    message = o.result.get("message")
+    if isinstance(message, str):
+        for prefix, name in _LEGACY_LIMIT_MESSAGES:
+            if message.startswith(prefix):
+                return name
+    return None
 
 
 def _find(ctx: EvaluationContext, invariant: str, p: Point, limit: str | None = None) -> Finding:

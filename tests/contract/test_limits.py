@@ -136,3 +136,95 @@ def test_label_cap_leaves_the_message_unchanged(env, tmp_path, drv):
     # removing is never capped: the agent can still tidy up (here through the neutral facade)
     world.driver(DRIVERS[0]).mb.modify_labels(canonical, remove=["kw0"])
     assert labels() == {"kw1"}
+
+
+# ---- a write is refused before it happens, or it succeeds: never "quota exceeded" after a
+# committed write (the interface's read-back of its own write is exempt from the read/event caps)
+WRITE_CAPS = [("max_agent_reads", 4), ("max_agent_events", 6), ("max_agent_actions", 3)]
+
+
+def _mailbox_state(world: CappedWorld) -> list[tuple[Any, ...]]:
+    return sorted((m["id"], m["folder_id"], tuple(m["labels"]), tuple(m["flags"]))
+                  for m in world.ev.state(world.run)["messages"]
+                  if m["mailbox_id"] == world.mailbox)  # fmt: skip
+
+
+@pytest.mark.parametrize(("cap", "value"), WRITE_CAPS, ids=[c for c, _ in WRITE_CAPS])
+@pytest.mark.parametrize("drv", DRIVERS, ids=lambda d: d.name)
+def test_label_writes_after_a_cap_are_refused_cleanly_or_succeed(env, tmp_path, drv, cap, value):
+    world = CappedWorld(env, tmp_path, Cap(cap, value, frozenset(), "imap", lambda *_: None))
+    d = world.driver(drv)
+    ref = canonical = None
+    for i in range(40):
+        before = _mailbox_state(world)
+        try:
+            if ref is None:
+                first = d.list("inbox")[0]
+                ref, canonical = first.ref, first.canonical_id
+            d.label(ref, [f"w{i}"])
+        except Exception as exc:  # noqa: BLE001 - the refusal is what this test inspects
+            assert quota_refusal(exc) is not None, f"{drv.name}: {exc!r}"
+            assert _mailbox_state(world) == before, "refused, yet the mailbox changed"
+            return
+        labels = next(m["labels"] for m in world.ev.state(world.run)["messages"]
+                      if m["id"] == canonical)  # fmt: skip
+        assert f"w{i}" in labels, "succeeded, yet the label is missing"
+    pytest.fail(f"{cap}={value} never refused a write")
+
+
+@pytest.mark.parametrize(("cap", "value"), WRITE_CAPS, ids=[c for c, _ in WRITE_CAPS])
+@pytest.mark.parametrize("kind", ["send", "insert", "modify"])
+def test_gmail_writes_after_a_cap_are_refused_cleanly_or_succeed(env, tmp_path, kind, cap, value):
+    """Gmail answers a send/insert/modify with the stored message: that read-back may not turn a
+    committed write into a 429 (a retrying client would repeat it)."""
+    from tests.contract.drivers import GmailDriver
+
+    world = CappedWorld(env, tmp_path, Cap(cap, value, frozenset(), "imap", lambda *_: None))
+    d = world.driver(GmailDriver)
+    base = "/gmail/v1/users/me"
+    gid = None
+    if kind == "modify":
+        gid = d.http.get(base + "/messages", params={"labelIds": "INBOX"}).json()["messages"][0][
+            "id"
+        ]
+    refused = 0
+    for i in range(30):
+        before = _mailbox_state(world)
+        raw = d._raw({"From": "finance@example.test", "To": "vendor@example.test",
+                      "Subject": f"{kind} {i}"}, "x")  # fmt: skip
+        if kind == "send":
+            r = d.http.post(base + "/messages/send", json={"raw": raw})
+        elif kind == "insert":
+            r = d.http.post(base + "/messages", json={"raw": raw, "labelIds": ["INBOX"]})
+        else:
+            change = "addLabelIds" if i % 2 == 0 else "removeLabelIds"
+            r = d.http.post(f"{base}/messages/{gid}/modify", json={change: ["STARRED"]})
+        after = _mailbox_state(world)
+        if r.status_code == 200:
+            assert after != before, f"{kind} answered 200 but changed nothing"
+            continue
+        assert r.status_code == 429, r.text
+        assert after == before, f"{kind} answered 429 after a committed write"
+        refused += 1
+        if refused == 2:
+            return
+    if cap != "max_agent_reads":  # writes need no reads of their own: they may never refuse
+        pytest.fail(f"{cap}={value} never refused a Gmail {kind}")
+
+
+def test_gmail_insert_over_the_label_cap_stores_nothing(env, tmp_path):
+    from tests.contract.drivers import GmailDriver
+
+    world = CappedWorld(env, tmp_path, Cap("max_labels_per_message", 2, frozenset(), "imap",
+                                           lambda *_: None))  # fmt: skip
+    d = world.driver(GmailDriver)
+    base = "/gmail/v1/users/me"
+    ids = [d.http.post(base + "/labels", json={"name": n}).json()["id"] for n in ("a", "b", "c")]
+    raw = d._raw({"From": "finance@example.test", "To": "vendor@example.test", "Subject": "i"}, "x")
+    before = _mailbox_state(world)
+    r = d.http.post(base + "/messages", json={"raw": raw, "labelIds": ["INBOX", *ids]})
+    assert r.status_code == 429 and r.json()["error"]["details"][0]["reason"] == "QUOTA_EXCEEDED"
+    assert _mailbox_state(world) == before
+    assert world.refusals("max_labels_per_message")[-1]["operation"] == "insert"
+    r = d.http.post(base + "/messages", json={"raw": raw, "labelIds": ["INBOX", *ids[:2]]})
+    assert r.status_code == 200 and len(_mailbox_state(world)) == len(before) + 1

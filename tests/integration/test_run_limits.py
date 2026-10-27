@@ -12,7 +12,7 @@ from mailsim.domain.errors import NotFound, SimulationLimitExceeded
 from mailsim.engine.context import use_connection_test
 from mailsim.engine.core import CONTROLLER
 from mailsim.store import models as m
-from tests.scenarios import write_variant
+from tests.scenarios import ROOT, write_variant
 
 pytestmark = pytest.mark.db
 
@@ -148,12 +148,14 @@ def test_labels_per_message_cap(env, tmp_path):
     assert _counters(env, run)["actions"] == actions + 1  # a guarded write: it costs budget
     labels = set(env.engine.get_message(env.scope, run, fm, msg.id, actor=CONTROLLER).labels)
     assert {"b", "c"} <= labels and not labels & {"a", "d"}
-    # above the cap (written by the controller, which is not capped): removing is allowed,
-    # adding is not
+    # above the cap (written by the controller, which is not capped): removing, and swapping
+    # names without adding to the count (a rename, a category replacement), are allowed;
+    # growing is not
     env.engine.modify_labels(env.scope, run, fm, msg.id, add=["x", "y"], actor=CONTROLLER)
+    env.engine.modify_labels(env.scope, run, fm, msg.id, add=["z"], remove=["x"])  # 4 -> 4
     with pytest.raises(SimulationLimitExceeded):
-        env.engine.modify_labels(env.scope, run, fm, msg.id, add=["z"], remove=["x"])
-    env.engine.modify_labels(env.scope, run, fm, msg.id, remove=["x"])
+        env.engine.modify_labels(env.scope, run, fm, msg.id, add=["p", "q"], remove=["z"])
+    env.engine.modify_labels(env.scope, run, fm, msg.id, remove=["z"])
     other = env.engine.list_messages(env.scope, run, fm)[1]  # the cap is per message
     env.engine.modify_labels(env.scope, run, fm, other.id, add=["a", "b"])
 
@@ -189,3 +191,130 @@ def test_write_and_time_budgets_name_their_cap(env, tmp_path):
     with pytest.raises(SimulationLimitExceeded) as ei:
         env.engine.advance(env.scope, run, 120)
     assert ei.value.details == {"limit": 60, "cap": "max_virtual_duration_seconds"}
+
+
+def test_migration_0010_backfills_agent_events_of_runs_in_flight(tmp_path):
+    """Runs created before 0010 get agent_events from their log (current epoch, actor agent);
+    reads and sent copies were never counted and start at 0."""
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import sessionmaker
+
+    from mailsim.engine.core import SimEngine
+    from mailsim.scenario.loader import load_scenario
+    from mailsim.scenario.service import create_scenario_version
+    from mailsim.store import repos
+    from mailsim.store.blob import FilesystemBlobStore
+    from mailsim.store.db import run_migrations
+    from tests.conftest import scratch_database
+
+    with scratch_database("backfill") as url:
+        run_migrations(url)
+        db = create_engine(url)
+        try:
+            sf = sessionmaker(db, expire_on_commit=False)
+            with sf.begin() as s:
+                tenant = repos.create_tenant(s, "t")
+                scope = repos.Scope(tenant.id, repos.create_project(s, tenant.id, "p").id)
+            blobs = FilesystemBlobStore(tmp_path / "blobs")
+            engine = SimEngine(sf, blobs)
+            with sf.begin() as s:
+                version = create_scenario_version(
+                    s, scope, load_scenario(_limited(tmp_path, max_agent_reads=50)), blobs
+                ).id
+            run = engine.create_run(scope, version)
+            engine.start_run(scope, run)
+            fm = engine.mailbox_id_for(scope, run, "finance_manager")
+            msg = engine.list_messages(scope, run, fm)[0]
+            for flag in ("FLAGGED", "SEEN"):
+                engine.set_flags(scope, run, fm, msg.id, add=[flag])
+            with sf() as s:
+                before = s.get(m.Run, run).agent_events
+            assert before == 4
+            db.dispose()
+            from alembic import command
+            from alembic.config import Config
+
+            cfg = Config(str(ROOT / "alembic.ini"))
+            cfg.set_main_option("script_location", str(ROOT / "migrations"))
+            cfg.set_main_option("sqlalchemy.url", url.replace("%", "%%"))
+            command.downgrade(cfg, "0009")  # as if the run had been made before the caps existed
+            run_migrations(url)
+            with db.connect() as conn:
+                row = conn.execute(
+                    text("SELECT agent_events, agent_reads, agent_sent_copies FROM runs "
+                         "WHERE id = :r"), {"r": run},
+                ).one()  # fmt: skip
+            assert tuple(row) == (before, 0, 0)
+        finally:
+            db.dispose()
+
+
+def test_new_message_label_pre_check(env, tmp_path):
+    """Gmail insert/import labelIds and IMAP APPEND keywords are checked before the message is
+    stored: over the cap, a refused (budgeted) insert and nothing stored."""
+    from mailsim.engine.facades import AgentMailbox
+
+    run = env.run(_limited(tmp_path, max_labels_per_message=2))
+    fm = env.mbx(run, "finance_manager")
+    mb = AgentMailbox(env.engine, env.scope, run, fm)
+    count = len(mb.list_messages(folder="inbox").items)
+    mb.check_new_message_labels([], folder="inbox", size=10)  # nothing to check: no action
+    mb.check_new_message_labels(["a", "b", "a"], folder="inbox", size=10)  # 2 distinct: fine
+    assert _counters(env, run)["actions"] == 0
+    with pytest.raises(SimulationLimitExceeded) as ei:
+        mb.check_new_message_labels(["a", "b", "c"], folder="inbox", size=10)
+    assert ei.value.details == {"limit": 2, "cap": "max_labels_per_message"}
+    denied = _last_denied(env, run)
+    assert denied["operation"] == "insert" and denied["input"] == {"bytes": 10, "folder": "inbox"}
+    assert _counters(env, run)["actions"] == 1  # refused like the write it stands for
+    assert len(mb.list_messages(folder="inbox").items) == count
+
+
+def test_read_backs_of_a_committed_write_are_exempt_only_in_its_request(env, tmp_path):
+    from mailsim.engine.context import is_read_back, use_agent_request
+
+    run = env.run(_limited(tmp_path, max_agent_reads=2, max_agent_events=4))
+    fm = env.mbx(run, "finance_manager")
+    msg = env.engine.list_messages(env.scope, run, fm)[0]  # read 1
+    with use_agent_request():
+        env.engine.list_folders(env.scope, run, fm)  # read 2: before any write, it counts
+        with pytest.raises(SimulationLimitExceeded):  # and the cap applies
+            env.engine.list_folders(env.scope, run, fm)
+        assert not is_read_back()
+        env.engine.set_flags(env.scope, run, fm, msg.id, add=["FLAGGED"])  # events: 2
+        env.engine.set_flags(env.scope, run, fm, msg.id, add=["SEEN"])  # events: 4 (= cap)
+        assert is_read_back()
+        for _ in range(3):  # the read-back: recorded, not counted, not refused by either cap
+            env.engine.get_message(env.scope, run, fm, msg.id)
+        with pytest.raises(SimulationLimitExceeded):  # writes stay capped
+            env.engine.set_flags(env.scope, run, fm, msg.id, add=["ANSWERED"])
+        with use_agent_request():  # a new request starts without the exemption
+            assert not is_read_back()
+            with pytest.raises(SimulationLimitExceeded):
+                env.engine.get_message(env.scope, run, fm, msg.id)
+    assert not is_read_back()
+    with pytest.raises(SimulationLimitExceeded):  # outside any request: no exemption either
+        env.engine.get_message(env.scope, run, fm, msg.id)
+    assert _counters(env, run)["reads"] == 2
+    reads = [a for a in env.engine.actions(env.scope, run) if a["operation"] == "read"]
+    assert sum(a["outcome"] == "ok" for a in reads) == 5  # the read-backs are in the audit
+
+
+def test_a_refused_write_does_not_open_the_exemption(env, tmp_path):
+    from mailsim.engine.context import is_read_back, use_agent_request
+
+    run = env.run(_limited(tmp_path, max_agent_reads=1, max_agent_actions=1))
+    fm = env.mbx(run, "finance_manager")
+    msg = env.engine.list_messages(env.scope, run, fm)[0]
+    env.engine.set_flags(env.scope, run, fm, msg.id, add=["FLAGGED"])  # budget spent
+    with use_agent_request():
+        with pytest.raises(SimulationLimitExceeded):
+            env.engine.set_flags(env.scope, run, fm, msg.id, add=["SEEN"])
+        with pytest.raises(NotFound):  # a write that fails inside does not open it either
+            env.engine.move(env.scope, run, fm, "msg_nope", "archive")
+        assert not is_read_back()
+        with pytest.raises(SimulationLimitExceeded):
+            env.engine.list_folders(env.scope, run, fm)
+    with use_agent_request(), use_connection_test():
+        env.engine.list_folders(env.scope, run, fm)  # a probe's read is not a write either
+        assert not is_read_back()
