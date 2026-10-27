@@ -31,7 +31,7 @@ producing a pack that differs everywhere.
 ```bash
 uv sync --extra import            # pyarrow (pinned) for the parquet reader
 # 0. restore the team key (once per checkout; see "Identifier key")
-bw get notes "mailsim / enron id.key" > var/enron/id.key && chmod 600 var/enron/id.key
+mkdir -p var/enron && (umask 077; bw get notes "mailsim / enron id.key" > var/enron/id.key)
 mkdir -p var/cache/enron
 for i in 0 1; do
   curl -sSfL --proto '=https' -o var/cache/enron/$i.parquet \
@@ -101,9 +101,12 @@ digests behind `names.HASHED_DENY` (one per line), which are needed to re-key th
 
 ```bash
 bw login && export BW_SESSION=$(bw unlock --raw)
-bw get notes "mailsim / enron id.key" > var/enron/id.key && chmod 600 var/enron/id.key
-bw get attachment registry.json --itemid "$(bw get item 'mailsim / enron id.key' | \
-  python -c 'import json,sys;print(json.load(sys.stdin)["id"])')" --output var/enron/registry.json
+mkdir -p var/enron
+(umask 077; bw get notes "mailsim / enron id.key" > var/enron/id.key)   # owner-only from the start
+(umask 077; bw get attachment registry.json --itemid "$(bw get item 'mailsim / enron id.key' | \
+  python -c 'import json,sys;print(json.load(sys.stdin)["id"])')" --output var/enron/registry.json)
+chmod 600 var/enron/id.key var/enron/registry.json
+bw lock && unset BW_SESSION
 ```
 
 **Nothing creates a key.** `sim import enron`, `sim generate leadership` and `sim import scan`
@@ -114,7 +117,7 @@ different key is an error (exit 2) pointing here; a key file readable by other u
 warning.
 
 **Rotation** (only if the key leaks) is manual: generate a new key
-(`python -c 'import secrets;print(secrets.token_hex(32))' > var/enron/id.key`, `chmod 600`),
+(`(umask 077; python -c 'import secrets;print(secrets.token_hex(32))' > var/enron/id.key)`),
 put `enron.id_key_check(key)` into `names.ID_KEY_CHECK`, replace every `names.HASHED_DENY`
 entry with `pseudonymize.deny_entry(key, digest)` for the digests kept in the Bitwarden item,
 re-import, regenerate and scan the pack, then replace the Bitwarden note. **Adding a name** to
