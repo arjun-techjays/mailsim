@@ -169,7 +169,8 @@ def test_label_writes_after_a_cap_are_refused_cleanly_or_succeed(env, tmp_path, 
         labels = next(m["labels"] for m in world.ev.state(world.run)["messages"]
                       if m["id"] == canonical)  # fmt: skip
         assert f"w{i}" in labels, "succeeded, yet the label is missing"
-    pytest.fail(f"{cap}={value} never refused a write")
+    if cap != "max_agent_reads":  # a write that needs no reads of its own may never be refused
+        pytest.fail(f"{cap}={value} never refused a write")
 
 
 @pytest.mark.parametrize(("cap", "value"), WRITE_CAPS, ids=[c for c, _ in WRITE_CAPS])
@@ -196,8 +197,9 @@ def test_gmail_writes_after_a_cap_are_refused_cleanly_or_succeed(env, tmp_path, 
             r = d.http.post(base + "/messages/send", json={"raw": raw})
         elif kind == "insert":
             r = d.http.post(base + "/messages", json={"raw": raw, "labelIds": ["INBOX"]})
-        else:
-            change = "addLabelIds" if i % 2 == 0 else "removeLabelIds"
+        else:  # toggle the star from the current state, so every call is a real change
+            starred = any("FLAGGED" in flags for _id, _f, _l, flags in before)
+            change = "removeLabelIds" if starred else "addLabelIds"
             r = d.http.post(f"{base}/messages/{gid}/modify", json={change: ["STARRED"]})
         after = _mailbox_state(world)
         if r.status_code == 200:

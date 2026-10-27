@@ -303,15 +303,15 @@ def test_read_backs_of_a_committed_write_are_exempt_only_in_its_request(env, tmp
 def test_a_refused_write_does_not_open_the_exemption(env, tmp_path):
     from mailsim.engine.context import is_read_back, use_agent_request
 
-    run = env.run(_limited(tmp_path, max_agent_reads=1, max_agent_actions=1))
+    run = env.run(_limited(tmp_path, max_agent_reads=1, max_agent_actions=2))
     fm = env.mbx(run, "finance_manager")
     msg = env.engine.list_messages(env.scope, run, fm)[0]
-    env.engine.set_flags(env.scope, run, fm, msg.id, add=["FLAGGED"])  # budget spent
+    env.engine.set_flags(env.scope, run, fm, msg.id, add=["FLAGGED"])
     with use_agent_request():
-        with pytest.raises(SimulationLimitExceeded):
+        with pytest.raises(NotFound):  # a write that fails inside does not open it
+            env.engine.move(env.scope, run, fm, "msg_nope", "archive")  # budget now spent
+        with pytest.raises(SimulationLimitExceeded):  # nor does one the guard refuses
             env.engine.set_flags(env.scope, run, fm, msg.id, add=["SEEN"])
-        with pytest.raises(NotFound):  # a write that fails inside does not open it either
-            env.engine.move(env.scope, run, fm, "msg_nope", "archive")
         assert not is_read_back()
         with pytest.raises(SimulationLimitExceeded):
             env.engine.list_folders(env.scope, run, fm)

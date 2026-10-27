@@ -189,7 +189,8 @@ each listed `\Deleted` message with its own engine `delete` (one action per mess
 `THREADID` the engine thread id, `MAILBOXID` the engine folder id.
 
 **APPEND** to `INBOX`, `Trash` or `Archive` stores the literal verbatim via `insert_message`
-(Gmail `insert` semantics: no delivery), then applies the given flags/keywords; answers
+(Gmail `insert` semantics: no delivery) with the given flags/keywords in the same write (all or
+nothing); answers
 `[APPENDUID]`. An appended message is never sent mail: it can't be moved or copied into `Sent`.
 `\Draft` in the flags or a keyword spelling a system label is refused before anything is
 stored (`NO [NOPERM]` / `NO [CANNOT]`) and recorded as a refused `insert`. More than 50
@@ -224,7 +225,8 @@ applies to one request). More keywords than the scenario's `max_labels_per_messa
 `NO [LIMIT] QUOTA_EXCEEDED: action limit reached`, and so do the per-run caps (reads,
 `sent_copy`, agent events, labels per message; see the README). Every command polls the change
 feed (one read) and a body `FETCH` reads each message, so once `max_agent_reads` is reached
-every command but `LOGOUT` answers `NO [LIMIT]`; a `FETCH` that reaches it ends with
+every command but `LOGOUT` answers `NO [LIMIT]` (`LOGIN` included: it reads the mailbox, and
+SMTP `AUTH` answers `452 4.5.3 quota exceeded`); a `FETCH` that reaches it ends with
 `NO [LIMIT]` after the responses already sent. The re-sync a `STORE`, `APPEND`, `COPY` or `MOVE`
 does after its write is not counted or refused, so a command whose write happened never
 answers `NO [LIMIT]`. A run that is not active reads

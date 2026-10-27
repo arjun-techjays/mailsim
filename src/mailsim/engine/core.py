@@ -1730,8 +1730,13 @@ class SimEngine:
                              mailbox_id=mailbox_id)  # fmt: skip
 
     def insert_message(self, scope: Scope, run_id: str, mailbox_id: str, raw: bytes, *,
-                       folder: str = "inbox", actor: str = AGENT) -> dict[str, Any]:  # fmt: skip
-        """Place a message into the mailbox WITHOUT sending it (Gmail `insert` semantics)."""
+                       folder: str = "inbox", flags: Sequence[str] = (),
+                       labels: Sequence[str] = (), actor: str = AGENT) -> dict[str, Any]:  # fmt: skip
+        """Place a message into the mailbox WITHOUT sending it (Gmail `insert` semantics),
+        with its initial `flags` and `labels` (Gmail insert labelIds, IMAP APPEND flags and
+        keywords) in the SAME `insert` command: all of it is stored or none of it (a refused
+        flag or label, the per-message label cap, the budget or the event cap)."""
+        flags, labels = sorted(set(flags)), sorted(set(labels))
 
         def fn(c: Ctx) -> dict[str, Any]:
             target = self._resolve_folder(c, mailbox_id, folder)
@@ -1747,13 +1752,35 @@ class SimEngine:
                     f"account {'sent' if target.system_type == 'sent' else 'drafted'}",
                     details={"folder": target.system_type},
                 )
+            bad = [f for f in flags if f not in VALID_FLAGS]
+            if bad:
+                raise InvalidRequest(f"unknown flag(s): {bad}")
+            if any(not x.strip() for x in labels):
+                raise InvalidRequest("label names must not be empty")
+            if actor == AGENT:
+                error = draft_flag_error(False, flags, ())  # an inserted message is no draft
+                if error is not None:
+                    raise error
+                refuse_system_labels(labels)
+                limit = run_cap(c.config, "max_labels_per_message")
+                if len(labels) > limit:
+                    raise labels_per_message_exceeded(limit)
             mid = self._insert_raw(c, mailbox_id, raw, event_type="message.inserted",
                                    folder_type=target.system_type, received_at=c.now,
                                    actor=actor, operation="insert")  # fmt: skip
+            for event_type, names in (("message.flags_changed", flags),
+                                      ("message.labels_changed", labels)):  # fmt: skip
+                if names:
+                    c.emit(event_type, {"mailbox_id": mailbox_id, "message_id": mid,
+                                        "add": list(names), "remove": []},
+                           actor=actor, operation="insert")  # fmt: skip
             return {"message_id": mid}
 
-        return self._command(scope, run_id, actor, "insert", {"bytes": len(raw), "folder": folder},
-                             fn, mailbox_id=mailbox_id)  # fmt: skip
+        input_: dict[str, Any] = {"bytes": len(raw), "folder": folder}
+        if flags or labels:
+            input_ |= {"flags": flags, "labels": labels}
+        return self._command(scope, run_id, actor, "insert", input_, fn,
+                             mailbox_id=mailbox_id)  # fmt: skip
 
     def _draft(self, c: Ctx, mailbox_id: str, message_id: str) -> m.Message:
         row = self._message(c, mailbox_id, message_id)

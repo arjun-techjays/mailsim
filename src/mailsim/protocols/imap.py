@@ -418,6 +418,8 @@ class ImapSession:
                 return self._failed(
                     tag, "NO [UNAVAILABLE] RUN_NOT_ACTIVE: mailbox is not available"
                 )
+            if exc.code == "SIMULATION_LIMIT_EXCEEDED":  # a per-run cap, not the credential
+                return f"NO [LIMIT] {_one_line(exc.reason)}"
             if exc.code is not None:
                 return self._failed(tag, f"NO [AUTHORIZATIONFAILED] {_one_line(exc.reason)}")
             return self._failed(tag, "NO [AUTHENTICATIONFAILED] Authentication failed")
@@ -1006,13 +1008,9 @@ class ImapSession:
         )
         if error is not None:
             self._mb.record_refused("insert", error, folder=str(dest["name"]), size=len(raw))
-        # more keywords than the run's per-message label cap: refused before anything is stored
-        self._mb.check_new_message_labels(keywords, folder=str(dest["name"]), size=len(raw))
-        new_id = str(self._mb.insert_message(raw, folder=str(dest["name"]))["message_id"])
-        if system:
-            self._mb.set_flags(new_id, add=sorted(set(system)))
-        if keywords:
-            self._mb.modify_labels(new_id, add=sorted(set(keywords)))
+        # one insert with its flags and keywords: stored with all of them or not at all
+        new_id = str(self._mb.insert_message(raw, folder=str(dest["name"]), flags=system,
+                                             labels=keywords)["message_id"])  # fmt: skip
         if self.selected is not None and self.selected.engine_folder == str(dest["name"]):
             self._sync(out, expunges=False)
         uids = self._new_uids(dest, [new_id])

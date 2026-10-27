@@ -76,7 +76,7 @@ All paths are under `/gmail/v1/users/{userId}`; media uploads under
 | `messages.list` | `q`, `labelIds` (repeated, AND), `maxResults` (default 100, max 500), `pageToken`, `includeSpamTrash` | read; free text also `search` |
 | `messages.get` | `format=minimal\|metadata\|full\|raw`, `metadataHeaders` | read |
 | `messages.send` | JSON `raw` (+`threadId`); upload `media`/`multipart` | `send`, or one `reply` (see below) |
-| `messages.insert`, `messages.import` | JSON `raw` + `labelIds`; upload `media`/`multipart` | `insert` (+`flag`, +`label`) |
+| `messages.insert`, `messages.import` | JSON `raw` + `labelIds`; upload `media`/`multipart` | `insert` (flags and labels in the same write) |
 | `messages.modify`, `batchModify` | `addLabelIds`, `removeLabelIds` | `move` / `flag` / `label` |
 | `messages.trash`, `untrash` | yes | `move` |
 | `messages.delete`, `batchDelete` | yes (permanent) | `delete` |
@@ -117,8 +117,9 @@ All paths are under `/gmail/v1/users/{userId}`; media uploads under
 
 Places a message without sending it (never delivered to anyone). `labelIds` decide the result:
 folder by precedence `TRASH` > `INBOX`, otherwise archived; without `UNREAD` the message
-is read; `STARRED`/`ANSWERED`/`DELETED` set flags; user labels are applied. Each of those after the
-insert itself is a separate write. `DRAFT` is refused (400, use drafts) and, unlike Gmail, so is
+is read; `STARRED`/`ANSWERED`/`DELETED` set flags; user labels are applied. All of it is ONE
+`insert` write: the message is stored with all of them or not at all (a refused label, the
+per-message label cap, the budget). `DRAFT` is refused (400, use drafts) and, unlike Gmail, so is
 `SENT` (403 `PERMISSION_DENIED`): Sent holds only mail this account actually sent, so an inserted
 message can't stand in for a sent one. `internalDateSource` is
 ignored (the `Date` header is used, else the virtual clock). The raw message needs a `From`.

@@ -135,6 +135,8 @@ class SandboxHandler:
                                             password.decode("utf-8", "replace"))  # fmt: skip
         except AuthFailed as exc:
             log.info("SMTP AUTH failed: %s", exc.reason)
+            if exc.code == "SIMULATION_LIMIT_EXCEEDED":  # a per-run cap, not the credential
+                return AuthResult(success=False, handled=False, message="452 4.5.3 quota exceeded")
             if exc.code is not None:  # valid key, but the engine refused this mailbox / run
                 return AuthResult(success=False, handled=False,
                                   message=f"535 5.7.8 {_line(exc.reason)}")  # fmt: skip

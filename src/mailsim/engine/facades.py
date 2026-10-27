@@ -197,8 +197,11 @@ class AgentMailbox:
         return _agent_send_result(self._e.forward(*self._a(), message_id, to=to, text=text, cc=cc,
                                                   actor=AGENT))  # fmt: skip
 
-    def insert_message(self, raw: bytes, *, folder: str = "inbox") -> dict[str, Any]:
-        return self._e.insert_message(*self._a(), raw, folder=folder, actor=AGENT)
+    def insert_message(self, raw: bytes, *, folder: str = "inbox", flags: Sequence[str] = (),
+                       labels: Sequence[str] = ()) -> dict[str, Any]:  # fmt: skip
+        """Insert with its initial flags and labels as ONE write (all or nothing)."""
+        return self._e.insert_message(*self._a(), raw, folder=folder, flags=flags, labels=labels,
+                                      actor=AGENT)  # fmt: skip
 
     def create_draft(self, *, to: list[str], subject: str, text: str = "",
                      cc: list[str] | None = None, bcc: list[str] | None = None,

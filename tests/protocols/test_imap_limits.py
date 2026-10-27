@@ -107,3 +107,18 @@ def test_writes_after_the_read_cap_are_refused_cleanly_or_succeed(make_proto):
         if store_typ == "NO" and append_typ == "NO":
             return
     pytest.fail("the read cap never refused a command")
+
+
+def test_login_and_auth_over_the_read_cap_answer_quota(make_proto):
+    """LOGIN (IMAP) and AUTH (SMTP) read the mailbox: over the read cap they answer the quota
+    error, not an authentication failure, and do not count as failed logins."""
+    import smtplib
+
+    proto = make_proto(_with(max_agent_reads=1))
+    proto.mailbox.list_folders()  # the one read
+    raw = proto.raw()
+    for n in range(4):  # never "too many failed attempts": a quota is not a bad credential
+        line = raw.cmd(f"a{n} LOGIN {AGENT} {proto.key}".encode())[-1]
+        assert line == f"a{n} NO [LIMIT] QUOTA_EXCEEDED: action limit reached\r\n".encode()
+    with pytest.raises(smtplib.SMTPException, match="4.5.3 quota exceeded"):
+        proto.smtp()
