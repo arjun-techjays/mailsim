@@ -9,8 +9,10 @@ const API = process.env.MAILSIM_API_URL;
 export default defineConfig({
   testDir: './e2e/real',
   fullyParallel: false,
+  forbidOnly: !!process.env.CI,
   retries: 0,
-  reporter: [['list']],
+  // the HTML report is uploaded by the e2e-real CI job when it fails
+  reporter: [['list'], ['html', { open: 'never' }]],
   timeout: 60_000,
   use: { baseURL: `http://127.0.0.1:${PORT}`, trace: 'retain-on-failure' },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
