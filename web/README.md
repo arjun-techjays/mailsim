@@ -76,8 +76,9 @@ CI (`e2e-real` job) runs `npm run e2e:real` on every push and PR against a fresh
 and `python -m mailsim.serve serve --local-no-auth` on `127.0.0.1:18011`. The job reads the launch
 token from the server's `#local_token=` line and passes it as `MAILSIM_LOCAL_TOKEN`. This runs the
 scenario-pack, local-no-auth and health specs; the key-gated specs skip. If it fails, the job
-uploads the HTML report, the traces and the API log, with the token removed. To reproduce it
-locally:
+uploads the HTML report, the traces and the API log. The token is removed from the API log only.
+The traces and the report still contain it, but it is minted for that job and stops working when
+the job ends. To reproduce it locally:
 
 ```bash
 python -m mailsim.serve serve --local-no-auth --port 18011   # copy the token from the printed link
