@@ -30,8 +30,7 @@ producing a pack that differs everywhere.
 
 ```bash
 uv sync --extra import            # pyarrow (pinned) for the parquet reader
-# 0. restore the team key (once per checkout; see "Identifier key")
-mkdir -p var/enron && (umask 077; bw get notes "mailsim / enron id.key" > var/enron/id.key)
+# 0. restore the team secrets once per checkout: see "Identifier key" (restore script)
 mkdir -p var/cache/enron
 for i in 0 1; do
   curl -sSfL --proto '=https' -o var/cache/enron/$i.parquet \
@@ -60,8 +59,7 @@ git status --porcelain scenarios/leadership      # empty unless the generator it
 
 All three commands read `var/enron/id.key` by default (`--id-key` to point elsewhere). When
 only the generator changed, steps 2-5 are enough: keep `corpus.jsonl` and `registry.json`
-(restore `registry.json` from the same password-manager item if you do not have it) and do not
-re-import.
+(restore `registry.json` with the same script if you do not have it) and do not re-import.
 
 Generator options:
 
@@ -97,17 +95,39 @@ corpus changes and so does every fixture that shows one.
 [Bitwarden](https://bitwarden.com) organisation (open source; the free tier is enough). The
 note holds the key and nothing else. The same item carries `registry.json` as an attachment
 (real names: same handling as the key) and, in a custom field `deny digests`, the sha256
-digests behind `names.HASHED_DENY` (one per line), which are needed to re-key the deny list. Restore it with the Bitwarden CLI:
+digests behind `names.HASHED_DENY` (one per line), which are needed to re-key the deny list
+and which `tests/importers/test_pack.py` checks the committed entries against.
+
+**Restore** with the Bitwarden CLI. The script writes each file to a temporary name and moves
+it into place only when `bw` succeeded and the result is not empty, and it refuses to touch an
+existing file, so a locked vault or a missing item can never destroy a key you already have:
 
 ```bash
-bw login && export BW_SESSION=$(bw unlock --raw)
+bw login --check || bw login
+export BW_SESSION="$(bw unlock --raw)"
 mkdir -p var/enron
-(umask 077; bw get notes "mailsim / enron id.key" > var/enron/id.key)   # owner-only from the start
-(umask 077; bw get attachment registry.json --itemid "$(bw get item 'mailsim / enron id.key' | \
-  python -c 'import json,sys;print(json.load(sys.stdin)["id"])')" --output var/enron/registry.json)
-chmod 600 var/enron/id.key var/enron/registry.json
+(
+  set -eu; set -o pipefail; umask 077; cd var/enron
+  for f in id.key registry.json deny-digests.txt; do
+    if [ -s "$f" ]; then echo "var/enron/$f exists: move it away first" >&2; exit 1; fi
+  done
+  trap 'rm -f id.key.tmp registry.json.tmp deny-digests.txt.tmp' EXIT
+  item="mailsim / enron id.key"
+  id="$(bw get item "$item" | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')"
+  bw get notes "$item" > id.key.tmp
+  bw get attachment registry.json --itemid "$id" --output registry.json.tmp
+  bw get item "$item" | python3 -c 'import json,sys
+print(next(f["value"] for f in json.load(sys.stdin)["fields"] if f["name"] == "deny digests"))' \
+    > deny-digests.txt.tmp
+  for f in id.key registry.json deny-digests.txt; do
+    [ -s "$f.tmp" ] || { echo "empty $f from bw: nothing restored" >&2; exit 1; }
+  done
+  for f in id.key registry.json deny-digests.txt; do mv -n "$f.tmp" "$f"; done
+)
 bw lock && unset BW_SESSION
 ```
+
+`var/enron/deny-digests.txt` is git-ignored like the rest of `var/`.
 
 **Nothing creates a key.** `sim import enron`, `sim generate leadership` and `sim import scan`
 read it (`--id-key`; the import defaults to `id.key` next to `--out`, the others to
@@ -116,13 +136,28 @@ truncated HMAC of a constant, which reveals nothing about the key). A missing, s
 different key is an error (exit 2) pointing here; a key file readable by other users gets a
 warning.
 
-**Rotation** (only if the key leaks) is manual: generate a new key
-(`(umask 077; python -c 'import secrets;print(secrets.token_hex(32))' > var/enron/id.key)`),
-put `enron.id_key_check(key)` into `names.ID_KEY_CHECK`, replace every `names.HASHED_DENY`
-entry with `pseudonymize.deny_entry(key, digest)` for the digests kept in the Bitwarden item,
-re-import, regenerate and scan the pack, then replace the Bitwarden note. **Adding a name** to
-the deny list works the same way: `deny_entry(key, sha256(name.lower()))`; add its digest to
-the Bitwarden item too. Every fixture with a hashed id changes.
+In the steps below, `key` means the bytes of the ASCII hex text in the key file, exactly as
+`enron.load_key` returns them (`text.strip().encode()`), **not** `bytes.fromhex(text)`.
+
+**Rotation** (only if the key leaks) is manual and never overwrites the old key before the new
+one is stored:
+
+1. Write the new key next to the old one, refusing to overwrite:
+   `[ -e var/enron/id.key.new ] || (umask 077; python3 -c 'import secrets;print(secrets.token_hex(32))' > var/enron/id.key.new)`.
+2. Store it in a new Bitwarden item (or a new version of the note), with the registry and
+   the deny digests, before anything else.
+3. Put `enron.id_key_check(key)` into `names.ID_KEY_CHECK` and replace every
+   `names.HASHED_DENY` entry with `pseudonymize.deny_entry(key, digest)` for each line of
+   `var/enron/deny-digests.txt`.
+4. `mv var/enron/id.key var/enron/id.key.old && mv var/enron/id.key.new var/enron/id.key`,
+   then re-import, regenerate and scan the pack. Every fixture with a hashed id changes.
+5. Delete `id.key.old` and the old Bitwarden note only after the new pack is merged.
+
+**Adding a name** to the deny list: the scanner and the pseudonymizer match one capitalised
+**single token** at a time, so add one entry per token:
+`pseudonymize.deny_entry(key, hashlib.sha256(token.lower().encode()).hexdigest())`. Append
+the digest (`hashlib.sha256(token.lower().encode()).hexdigest()`) to the Bitwarden field
+`deny digests` and to `var/enron/deny-digests.txt`, never the token itself.
 
 ## Run a leadership inbox locally
 
@@ -358,10 +393,10 @@ against the CEO pack and checks that the results agree.
   * agreement negotiation by or with the executive assistant or a board member;
   * clerical requests to an executive ("please print in color"), finance and trading work for
     the head of people, and the CEO thanking a subordinate for an opportunity;
-  * company-secretarial paperwork (incumbency, secretary's or officer's certificates, good
-    standing, specimen signatures, minute book, articles of incorporation, banking
-    resolutions) written by the CEO, CFO, CBO or COO: that is counsel's or the company
-    secretary's work (`curation.CORPORATE_SECRETARIAL`);
+  * company-secretarial paperwork (incumbency, secretary's or officer's certificates,
+    certificates of good standing, specimen signatures, minute book, articles of
+    incorporation, banking resolutions) written by the CEO, CFO, CBO or COO: that is
+    counsel's or the company secretary's work (`curation.CORPORATE_SECRETARIAL`);
   * internal mail forwarded to an outsider.
   After rendering, a message is also skipped when a person pseudonym sits where a place, desk
   or asset belongs ("Long Term X", "Port X", "Street, X Y, CA") or when the body opens by
@@ -409,13 +444,16 @@ against the CEO pack and checks that the results agree.
   sentence that announces it before the rest of the mail: credit watch list, presentation,
   invoice, draft agreement (clauses and signature blocks), schedule, management report,
   contact list, spreadsheet (`.xlsx`) or memo. Spreadsheets follow their title: a **credit
-  worksheet** is about the counterparty the mail names ("for Dunmore", else a seeded
-  fictional firm) and carries its rating, two or three years of financials in USD millions
-  with ratios computed from them, proposed terms per master agreement the mail mentions
-  (ISDA, EEI, NAESB), a collateral threshold matrix when the mail mentions one, and a
-  recommendation that follows the rating; a **threshold table** lists both parties' collateral
-  thresholds by rating for the same counterparty; a list of people when the mail is about
-  rotations or staff; otherwise a list of trades. Titles come from a clean stub name, the noun phrase the claim names
+  worksheet** is about the counterparty the mail names ("for Dunmore": only a name from the
+  fictional pools counts, else a fictional firm seeded by the mail) and carries its rating,
+  two or three years of financials in USD millions with ratios computed from them, proposed
+  terms per master agreement the mail mentions (else one seeded per mail), a collateral
+  threshold matrix when the mail mentions one, and a recommendation that follows the rating;
+  a **threshold table** lists both parties' collateral thresholds by rating. Both come from one
+  credit profile per counterparty: the terms threshold is the matrix value at the
+  counterparty's own rating, the threshold table's Party B column is that matrix, and all the
+  files of one mail name the same counterparty and agreement. Otherwise a list of people when
+  the mail is about rotations or staff, or a list of trades. Titles come from a clean stub name, the noun phrase the claim names
   ("attached is the revised Precedent Agreement" -> "Precedent Agreement"), a title-like
   original subject or the kind's generic title, never a sentence fragment. Documents carry
   the sender's organisation (letterhead, footer, PDF producer): only company staff send

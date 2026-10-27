@@ -18,7 +18,7 @@ from mailsim.importers import curation as C
 from mailsim.importers import enron, leadership
 from mailsim.importers import names as N
 from mailsim.importers.pii import Scanner
-from mailsim.importers.pseudonymize import DenyList
+from mailsim.importers.pseudonymize import DenyList, deny_entry
 from mailsim.scenario.answer_keys import create_answer_key_version, load_answer_key
 from mailsim.scenario.loader import load_scenario
 from tests.scenarios import ROOT
@@ -69,6 +69,21 @@ def test_deny_list_is_keyed_with_the_team_key():
     assert all(re.fullmatch(r"[0-9a-f]{64}", e) for e in N.HASHED_DENY)
     findings = Scanner(deny=DenyList(key)).scan_paths([PACK])
     assert not findings, f"{len(findings)} findings (kinds: {sorted({f.kind for f in findings})})"
+
+
+DENY_DIGESTS = ROOT / "var" / "enron" / "deny-digests.txt"
+
+
+@pytest.mark.skipif(not (ID_KEY.is_file() and DENY_DIGESTS.is_file()),
+                    reason="no local team id key or deny digests (var/enron)")  # fmt: skip
+def test_deny_list_entries_are_the_keyed_digests():
+    # issue #9: every committed entry is exactly the team-keyed HMAC of one of the sha256
+    # digests kept with the key (Bitwarden field "deny digests" -> var/enron/deny-digests.txt);
+    # a wrong, missing or extra entry fails here, independent of what the pack contains
+    key = enron.load_key(ID_KEY)
+    digests = DENY_DIGESTS.read_text(encoding="ascii").split()
+    assert digests and all(re.fullmatch(r"[0-9a-f]{64}", d) for d in digests)
+    assert {deny_entry(key, d) for d in digests} == N.HASHED_DENY
 
 
 @pytest.mark.parametrize("slug", sorted(ROLES))
