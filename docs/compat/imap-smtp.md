@@ -225,8 +225,8 @@ applies to one request). More keywords than the scenario's `max_labels_per_messa
 `NO [LIMIT] QUOTA_EXCEEDED: action limit reached`, and so do the per-run caps (reads,
 `sent_copy`, agent events, labels per message; see the README). Every command polls the change
 feed (one read) and a body `FETCH` reads each message, so once `max_agent_reads` is reached
-every command but `LOGOUT` answers `NO [LIMIT]` (`LOGIN` included: it reads the mailbox, and
-SMTP `AUTH` answers `452 4.5.3 quota exceeded`); a `FETCH` that reaches it ends with
+every command but `LOGIN` and `LOGOUT` answers `NO [LIMIT]` (the login's mailbox check is not
+an agent read: an agent at its read cap can still log in, and send over SMTP); a `FETCH` that reaches it ends with
 `NO [LIMIT]` after the responses already sent. The re-sync a `STORE`, `APPEND`, `COPY` or `MOVE`
 does after its write is not counted or refused, so a command whose write happened never
 answers `NO [LIMIT]`. A run that is not active reads

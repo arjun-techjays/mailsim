@@ -121,6 +121,9 @@ class Ctx:
     run: m.Run
     gen: IdGenerator
     _names: dict[str, str] | None = None
+    # further operations this command also performed, for `after_agent_action` triggers (an
+    # insert carrying flags/labels fires flag/label triggers as the separate writes did)
+    also_triggers: list[str] = field(default_factory=list)
 
     def persona_names(self) -> dict[str, str]:
         """email -> display name of the scenario's personas that have one (PersonaSpec.name).
@@ -254,7 +257,7 @@ class SimEngine:
                 run = lock_run(s, scope, run_id)
                 seq_start = run.next_seq
                 ctx = Ctx(s, run, id_generator(run))
-                self._guard(ctx, actor, operation, mailbox_id, require_running, read_back)
+                self._guard(ctx, actor, operation, mailbox_id, require_running, uncapped=read_back)
                 if probe and operation not in READ_OPERATIONS:
                     raise PermissionDenied("a connection test may only read")
                 guarded = True
@@ -275,7 +278,8 @@ class SimEngine:
                             actor=AGENT,
                             operation=operation,
                         )
-                    self._arm_triggers(ctx, operation)
+                    for triggered in (operation, *ctx.also_triggers):
+                        self._arm_triggers(ctx, triggered)
                     if not read_back:
                         self._count_usage(run, operation)
                 if ctx.gen.counter != run.id_counter:
@@ -414,7 +418,8 @@ class SimEngine:
         operation: str,
         mailbox_id: str | None,
         require_running: bool,
-        read_back: bool = False,
+        *,
+        uncapped: bool = False,
     ) -> None:
         run = ctx.run
         if run.replay_of is not None and not (actor != AGENT and operation in READ_OPERATIONS):
@@ -437,9 +442,9 @@ class SimEngine:
         limit = ctx.config["limits"]["max_agent_actions"]
         if counts_against_budget(operation) and run.agent_actions >= limit:
             raise _limit_exceeded("agent action", "max_agent_actions", limit)
-        if connection_test.get() or read_back:
-            # an operator's read-only probe, or the read-back of a committed write: never
-            # counted, so never capped
+        if connection_test.get() or uncapped:
+            # an operator's read-only probe, the read-back of a committed write, or a session
+            # lookup at login: never counted, so never capped
             return
         # per-run resource caps (spec 10): checked before the command, so one command may
         # overshoot max_agent_events by the events it writes itself
@@ -1620,6 +1625,28 @@ class SimEngine:
         if len(after) > limit and len(after) > len(current):
             raise labels_per_message_exceeded(limit)
 
+    def session_mailbox(self, scope: Scope, run_id: str, mailbox_id: str) -> dict[str, Any]:
+        """Lookup for an IMAP/SMTP login (not an agent read): the agent's mailbox address and
+        the run's latest event sequence, after the same run / permission / mailbox guard an
+        agent read passes, but never the read or event caps. Those bound what an agent reads,
+        not whether it may connect, so an agent at max_agent_reads can still log in and send
+        over SMTP. A successful lookup is not recorded (a login is no agent action); a refused
+        one is, like any denied agent attempt (e.g. another persona's mailbox). An operator's
+        connection test records its probe as before."""
+        if connection_test.get():
+            self.mailbox_info(scope, run_id, mailbox_id)  # the probe's activity row
+        try:
+            with self._sf() as s:
+                run = get_run(s, scope, run_id)
+                ctx = Ctx(s, run, id_generator(run))
+                self._guard(ctx, AGENT, "read", mailbox_id, True, uncapped=True)
+                mb = self._mailbox(ctx, mailbox_id)
+                return {"mailbox_id": mb.id, "email": mb.email,
+                        "latest_sequence": run.next_seq - 1}  # fmt: skip
+        except SimError as exc:
+            self._record_denied(scope, run_id, AGENT, "read", {}, exc)
+            raise
+
     def label_cap(self, scope: Scope, run_id: str) -> int:
         """Internal, unaudited lookup for an interface's pre-check before storing a message with
         labels (not an agent read): the run's max_labels_per_message."""
@@ -1768,12 +1795,13 @@ class SimEngine:
             mid = self._insert_raw(c, mailbox_id, raw, event_type="message.inserted",
                                    folder_type=target.system_type, received_at=c.now,
                                    actor=actor, operation="insert")  # fmt: skip
-            for event_type, names in (("message.flags_changed", flags),
-                                      ("message.labels_changed", labels)):  # fmt: skip
+            for event_type, names, op in (("message.flags_changed", flags, "flag"),
+                                          ("message.labels_changed", labels, "label")):  # fmt: skip
                 if names:
                     c.emit(event_type, {"mailbox_id": mailbox_id, "message_id": mid,
                                         "add": list(names), "remove": []},
                            actor=actor, operation="insert")  # fmt: skip
+                    c.also_triggers.append(op)  # as the separate flag/label write did
             return {"message_id": mid}
 
         input_: dict[str, Any] = {"bytes": len(raw), "folder": folder}

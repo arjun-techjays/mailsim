@@ -86,8 +86,10 @@ class Authenticator:
             raise AuthFailed("protocol listeners accept agent credentials only")
         mailbox = AgentMailbox(self.engine, Scope(principal.tenant_id, principal.project_id),
                                principal.run_id, principal.mailbox_id)  # fmt: skip
-        try:  # the engine decides: run active, mailbox is the agent's, ... (an audited read)
-            info = mailbox.mailbox_info()
+        try:  # the engine decides: run active, mailbox is the agent's, ... (not an agent read:
+            # unaudited, outside the read/event caps, so an agent at its read cap can still
+            # connect, as it can over REST/Gmail/Graph/MCP)
+            info = mailbox.session_mailbox()
         except SimError as exc:
             agent_code, message, _ = agent_view(str(exc.code), exc.message)
             raise AuthFailed(f"{agent_code}: {message}", code=str(exc.code)) from None

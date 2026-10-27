@@ -109,16 +109,23 @@ def test_writes_after_the_read_cap_are_refused_cleanly_or_succeed(make_proto):
     pytest.fail("the read cap never refused a command")
 
 
-def test_login_and_auth_over_the_read_cap_answer_quota(make_proto):
-    """LOGIN (IMAP) and AUTH (SMTP) read the mailbox: over the read cap they answer the quota
-    error, not an authentication failure, and do not count as failed logins."""
-    import smtplib
-
+def test_login_and_smtp_work_at_the_read_cap(make_proto):
+    """The mailbox check at LOGIN / AUTH is not an agent read (unaudited, never capped): an
+    agent at its read cap can still log in and send over SMTP, as over REST/Gmail/Graph/MCP.
+    Reads it then asks for are refused."""
     proto = make_proto(_with(max_agent_reads=1))
     proto.mailbox.list_folders()  # the one read
-    raw = proto.raw()
-    for n in range(4):  # never "too many failed attempts": a quota is not a bad credential
-        line = raw.cmd(f"a{n} LOGIN {AGENT} {proto.key}".encode())[-1]
-        assert line == f"a{n} NO [LIMIT] QUOTA_EXCEEDED: action limit reached\r\n".encode()
-    with pytest.raises(smtplib.SMTPException, match="4.5.3 quota exceeded"):
-        proto.smtp()
+    before = proto.actions()
+    c = proto.imap()  # LOGIN succeeds
+    typ, data = c.select("INBOX")  # SELECT reads: refused
+    assert typ == "NO" and data[0].startswith(b"[LIMIT] QUOTA_EXCEEDED")
+    s = proto.smtp()  # AUTH succeeds
+    s.sendmail(
+        AGENT,
+        ["vendor@example.test"],
+        b"From: finance@example.test\r\nTo: vendor@example.test\r\nSubject: at cap\r\n\r\nx",
+    )
+    after = proto.actions()[len(before) :]
+    assert ("agent", "send", "ok") in after
+    assert [a for a in after if a[1] == "read" and a[2] == "ok"] == []  # logins read nothing
+    assert _reads(proto) == 1

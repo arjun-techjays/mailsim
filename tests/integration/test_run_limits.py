@@ -346,3 +346,35 @@ def test_insert_applies_flags_and_labels_in_one_write_or_none(env, tmp_path):
                                     "flags": ["FLAGGED", "SEEN"], "labels": ["a", "b"]}  # fmt: skip
     assert _counters(env, run)["actions"] == 5  # one budget unit per insert, refusals included
     env.engine.insert_message(env.scope, run, fm, raw, labels=["x", "y", "z"], actor=CONTROLLER)
+
+
+def test_insert_with_flags_and_labels_fires_their_triggers(env, tmp_path):
+    """`after_agent_action` triggers on flag/label fire for an insert that carries flags and
+    labels, as the separate flag/label writes it replaced did."""
+
+    def tweak(s: dict[str, Any]) -> None:
+        s["agent"]["allowed_operations"] = []
+        for action in ("insert", "flag", "label"):
+            s["events"].append({
+                "id": f"after-{action}", "trigger": {"type": "after_agent_action", "action": action},
+                "event": {"type": "email.receive", "from": "vendor", "to": "finance_manager",
+                          "subject": f"after {action}", "body": "x"},
+            })  # fmt: skip
+
+    raw = (b"From: vendor@example.test\r\nTo: finance@example.test\r\nSubject: in\r\n"
+           b"Message-ID: <trig@example.test>\r\n\r\nbody\r\n")  # fmt: skip
+
+    def armed(run: str) -> list[str]:
+        with env.session_factory() as s:
+            rows = s.query(m.ScheduledEvent).filter(m.ScheduledEvent.run_id == run).all()
+            return sorted(r.id for r in rows if r.status == "armed")
+
+    plain = env.run(write_variant(tmp_path, tweak))
+    fm = env.mbx(plain, "finance_manager")
+    env.engine.insert_message(env.scope, plain, fm, raw)
+    assert armed(plain) == ["after-insert"]
+    both = env.run(write_variant(tmp_path, tweak))
+    fm = env.mbx(both, "finance_manager")
+    env.engine.insert_message(env.scope, both, fm, raw, flags=["SEEN"], labels=["ops"])
+    assert armed(both) == ["after-flag", "after-insert", "after-label"]
+    assert _counters(env, both)["actions"] == 1  # one budget unit for all three

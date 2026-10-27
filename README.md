@@ -437,8 +437,14 @@ Re-grading a run recorded before this change can give a different result:
   before a command, so the command that reaches it completes and may exceed it by its own
   events (a send: its copies and deliveries; an expunge or bulk delete: one per message). A
   label-cap refusal is a failed write and costs budget; a new message (Gmail insert/import,
-  IMAP APPEND) with more labels than the cap is refused before it is stored. Refusals still
-  write an audit row each.
+  IMAP APPEND) with more labels than the cap is refused before it is stored. Each item of a
+  Gmail batch or thread operation counts its own reads (one item's write exempts nothing for
+  the next). The mailbox check at IMAP LOGIN / SMTP AUTH is not an agent read: an agent at its
+  read cap can still connect and send. Refusals still write an audit row each.
+* **Gmail insert/import and IMAP APPEND are one write.** A message's initial flags and labels
+  (`labelIds`, APPEND flags/keywords) are applied in the same `insert`: stored with all of them
+  or not at all, and one budget unit where it used to be up to three (`insert`, `flag`,
+  `label`). `after_agent_action` triggers on `flag` / `label` still fire for such an insert.
 * The audit action log records recipients, counts and sizes but not subjects, bcc or bodies.
 * `actor` is a trusted-caller argument; Phase 2/3 must expose agent-facing facades that hard-code it.
 

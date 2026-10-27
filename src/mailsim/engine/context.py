@@ -82,6 +82,20 @@ def use_agent_request() -> Iterator[AgentRequest]:
         agent_request.reset(token)
 
 
+@contextmanager
+def use_request_item() -> Iterator[AgentRequest]:
+    """One item of a request that loops over agent-supplied ids (Gmail batchModify/batchDelete,
+    thread operations): its reads count until ITS OWN write, so one item's write never
+    exempts another item's reads (an id repeated a thousand times buys nothing). A write in
+    it still marks the enclosing request, whose response building after the loop remains a
+    read-back."""
+    parent = agent_request.get()
+    with use_agent_request() as item:
+        yield item
+    if parent is not None and item.wrote:
+        parent.wrote = True
+
+
 def in_agent_request[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
     """`fn` wrapped so each call is one fresh agent request (for worker-thread hand-offs)."""
 
@@ -128,6 +142,7 @@ __all__ = [
     "note_agent_write",
     "use_agent_request",
     "use_connection_test",
+    "use_request_item",
     "use_interface",
     "with_interface",
 ]

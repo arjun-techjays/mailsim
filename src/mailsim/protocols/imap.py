@@ -418,12 +418,11 @@ class ImapSession:
                 return self._failed(
                     tag, "NO [UNAVAILABLE] RUN_NOT_ACTIVE: mailbox is not available"
                 )
-            if exc.code == "SIMULATION_LIMIT_EXCEEDED":  # a per-run cap, not the credential
-                return f"NO [LIMIT] {_one_line(exc.reason)}"
             if exc.code is not None:
                 return self._failed(tag, f"NO [AUTHORIZATIONFAILED] {_one_line(exc.reason)}")
             return self._failed(tag, "NO [AUTHENTICATIONFAILED] Authentication failed")
-        self._seq = int(self._mb.list_changes(0, limit=1)["latest_sequence"])
+        # where this session's change feed starts: part of logging in, not an agent read
+        self._seq = int(self._mb.session_mailbox()["latest_sequence"])
         caps = " ".join(self.capabilities())
         return f"OK [CAPABILITY {caps}] authenticated as {self.agent.address}"
 

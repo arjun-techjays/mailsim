@@ -149,6 +149,12 @@ class AgentMailbox:
         self._e.record_refused(*self._a(), operation, error, message_id=message_id, add=add,
                                remove=remove, folder=folder, size=size, actor=AGENT)  # fmt: skip
 
+    def session_mailbox(self) -> dict[str, Any]:
+        """For a protocol login: this mailbox's address and the run's latest event sequence,
+        after the agent guard (run active, permission, own mailbox), unaudited and outside the
+        read/event caps."""
+        return self._e.session_mailbox(*self._a())
+
     def check_new_message_labels(self, names: Sequence[str], *, folder: str,
                                  size: int) -> None:  # fmt: skip
         """Before storing a message that gets labels (Gmail insert/import labelIds, IMAP APPEND

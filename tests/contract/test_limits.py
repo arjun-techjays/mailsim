@@ -230,3 +230,42 @@ def test_gmail_insert_over_the_label_cap_stores_nothing(env, tmp_path):
     assert world.refusals("max_labels_per_message")[-1]["operation"] == "insert"
     r = d.http.post(base + "/messages", json={"raw": raw, "labelIds": ["INBOX", *ids[:2]]})
     assert r.status_code == 200 and len(_mailbox_state(world)) == len(before) + 1
+
+
+def test_gmail_batch_items_count_their_own_reads(env, tmp_path):
+    """One item's write never exempts another item's reads: a batch that repeats an id after
+    a single real write still counts, and is capped by, its reads."""
+    from tests.contract.drivers import GmailDriver
+
+    world = CappedWorld(env, tmp_path, Cap("max_agent_reads", 4, frozenset(), "imap",
+                                           lambda *_: None))  # fmt: skip
+    d = world.driver(GmailDriver)
+    base = "/gmail/v1/users/me"
+    gid = d.http.get(base + "/messages").json()["messages"][0]["id"]  # read 1
+    r = d.http.post(base + "/messages/batchModify",
+                    json={"ids": [gid] * 1000, "addLabelIds": ["STARRED"]})  # fmt: skip
+    assert r.status_code == 429  # the second item's reads hit the cap
+    reads = [a for a in world.ev.actions(world.run) if a["operation"] == "read"]
+    assert sum(a["outcome"] == "ok" for a in reads) <= 6  # not ~3000
+    assert world.refusals("max_agent_reads")
+    flagged = [m for m in world.ev.state(world.run)["messages"] if "FLAGGED" in m["flags"]]
+    assert len(flagged) == 1  # the first item's write stands
+    with world.env.session_factory() as s:
+        from mailsim.store import models as m
+
+        assert s.get(m.Run, world.run).agent_reads == 4
+
+
+@pytest.mark.parametrize("path", ["batchModify", "batchDelete"])
+def test_gmail_batch_of_one_answers_after_its_write(env, tmp_path, path):
+    """Within one item, the read-back after its own write stays exempt (a batch at the read
+    cap whose item needs no further reads succeeds)."""
+    from tests.contract.drivers import GmailDriver
+
+    world = CappedWorld(env, tmp_path, Cap("max_agent_reads", 3, frozenset(), "imap",
+                                           lambda *_: None))  # fmt: skip
+    d = world.driver(GmailDriver)
+    base = "/gmail/v1/users/me"
+    gid = d.http.get(base + "/messages").json()["messages"][0]["id"]  # read 1
+    body = {"ids": [gid]} | ({"addLabelIds": ["STARRED"]} if path == "batchModify" else {})
+    assert d.http.post(f"{base}/messages/{path}", json=body).status_code == 204
