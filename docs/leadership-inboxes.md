@@ -21,8 +21,17 @@ ordinary versioned scenarios: one per target inbox.
 
 ## Regenerate the pack
 
+Three local inputs decide the output byte for byte: the team's **identifier key**
+(`var/enron/id.key`, see [Identifier key](#identifier-key)), the parquet shards and the
+command line below. The import derives `var/enron/corpus.jsonl` and `var/enron/registry.json`
+from them; both are inputs of the generator (the registry also steers the pseudonym choice).
+Without the team key the import, the generator and the scan stop with an error instead of
+producing a pack that differs everywhere.
+
 ```bash
 uv sync --extra import            # pyarrow (pinned) for the parquet reader
+# 0. restore the team key (once per checkout; see "Identifier key")
+bw get notes "mailsim / enron id.key" > var/enron/id.key && chmod 600 var/enron/id.key
 mkdir -p var/cache/enron
 for i in 0 1; do
   curl -sSfL --proto '=https' -o var/cache/enron/$i.parquet \
@@ -37,11 +46,22 @@ uv run sim import enron --parquet var/cache/enron/0.parquet var/cache/enron/1.pa
 uv run sim generate leadership --corpus var/enron/corpus.jsonl --out scenarios/leadership \
   --seed 7 --roles ceo,cfo,cbo,director_finance --names var/enron/registry.json
 
-# 3. scan for residual PII: built-in deny lists + every real name harvested by step 1.
-#    .eml files are parsed: headers, decoded bodies and attachment text (PDF, XLSX) are scanned.
+# 3. REQUIRED GATE: scan for residual PII (built-in deny lists + every real name harvested by
+#    step 1). .eml files are parsed: headers, decoded bodies and attachment text (PDF, XLSX).
+#    It must exit 0 with 0 findings; never commit a pack that fails it.
 uv run sim import scan scenarios/leadership --names var/enron/registry.json   # exit 1 on findings
-uv run sim validate scenarios/leadership/ceo/scenario.yaml
+
+# 4. validate every scenario
+for r in ceo cfo cbo director-finance; do uv run sim validate scenarios/leadership/$r/scenario.yaml; done
+
+# 5. reproducibility: with an unchanged generator, the committed pack must come back unchanged
+git status --porcelain scenarios/leadership      # empty unless the generator itself changed
 ```
+
+All three commands read `var/enron/id.key` by default (`--id-key` to point elsewhere). When
+only the generator changed, steps 2-5 are enough: keep `corpus.jsonl` and `registry.json`
+(restore `registry.json` from the same password-manager item if you do not have it) and do not
+re-import.
 
 Generator options:
 
@@ -65,11 +85,37 @@ the command above.
 `var/enron/corpus.jsonl` (templates and metadata) and `var/enron/registry.json` (the real names
 found by the import) stay in the git-ignored `var/`. **Never commit them.**
 
-The import also needs a **secret key** for hashed identifiers (deal, notice and contract
-numbers): `var/enron/id.key` (`--id-key`, default `id.key` next to `--out`). The first import
-creates it (32 random bytes, hex, owner-only permissions). Re-running the import reproduces
-the same corpus only with the same key file, so keep it with the corpus and **never commit
-it**. Without the key, hashed ids cannot be brute-forced from the public seed.
+## Identifier key
+
+`var/enron/id.key` is the team's **secret key** for hashed identifiers (deal, notice and
+contract numbers are replaced by HMAC-SHA256 hashes under it). 64 hex characters, owner-only
+permissions, git-ignored: **never commit, print or paste it.** Without it, hashed ids cannot be
+brute-forced from the public seed; with a different key, every hashed id in a re-imported
+corpus changes and so does every fixture that shows one.
+
+**Where it is kept.** A Secure Note item named `mailsim / enron id.key` in the team's
+[Bitwarden](https://bitwarden.com) organisation (open source; the free tier is enough). The
+note holds the key and nothing else. The same item carries `registry.json` as an attachment
+(real names: same handling as the key). Restore it with the Bitwarden CLI:
+
+```bash
+bw login && export BW_SESSION=$(bw unlock --raw)
+bw get notes "mailsim / enron id.key" > var/enron/id.key && chmod 600 var/enron/id.key
+bw get attachment registry.json --itemid "$(bw get item 'mailsim / enron id.key' | \
+  python -c 'import json,sys;print(json.load(sys.stdin)["id"])')" --output var/enron/registry.json
+```
+
+**Nothing creates a key.** `sim import enron`, `sim generate leadership` and `sim import scan`
+read it (`--id-key`; the import defaults to `id.key` next to `--out`, the others to
+`var/enron/id.key`) and check it against `names.ID_KEY_CHECK`, a public check value (a
+truncated HMAC of a constant, which reveals nothing about the key). A missing, short or
+different key is an error (exit 2) pointing here; a key file readable by other users gets a
+warning.
+
+**Rotation** (only if the key leaks) is manual: generate a new key
+(`python -c 'import secrets;print(secrets.token_hex(32))' > var/enron/id.key`, `chmod 600`),
+put `enron.id_key_check(key)` into `names.ID_KEY_CHECK`, re-import, regenerate and scan the
+pack, then replace the Bitwarden note. Every fixture with a hashed id changes.
 
 ## Run a leadership inbox locally
 

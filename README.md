@@ -326,8 +326,8 @@ company, generated from the public Enron corpus by `sim import enron` and
 risk items and minimal answer keys. Greetings and sign-offs match the bound personas, records
 that do not fit their sender are skipped, dates follow the scenario clock, and messages that
 say something is attached carry a generated PDF or XLSX branded by the sender's organisation.
-Identifiers are hashed with a secret key (`var/enron/id.key`, created by the import, never
-committed). `sim import scan` checks headers, decoded bodies and attachment text, including
+Identifiers are hashed with the team's secret key (`var/enron/id.key`, kept in the team's
+Bitwarden and never committed; the CLI refuses to run without it). `sim import scan` checks headers, decoded bodies and attachment text, including
 real organisations and any 6+ digit run that is not a listed hashed id. See
 [`docs/leadership-inboxes.md`](docs/leadership-inboxes.md).
 

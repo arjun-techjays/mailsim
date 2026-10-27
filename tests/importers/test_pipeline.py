@@ -76,28 +76,30 @@ def test_corpus_and_parquet_errors(tmp_path):
         list(enron.read_parquet([tmp_path / "bad.parquet"]))
 
 
-def test_cli_import_scan_generate(shards, tmp_path, capsys):
+def test_cli_import_scan_generate(shards, tmp_path, capsys, id_key_file):
     corpus, reg = tmp_path / "var" / "corpus.jsonl", tmp_path / "var" / "registry.json"
+    key = ("--id-key", str(id_key_file))
     code, out = _run(capsys, "import", "enron", "--parquet", *map(str, shards), "--limit", "1000",
-                     "--seed", "7", "--out", str(corpus), "--registry-out", str(reg))  # fmt: skip
+                     "--seed", "7", "--out", str(corpus), "--registry-out", str(reg), *key)  # fmt: skip
     assert code == 0 and out["ok"] and out["records"] > 200 and len(out["sha256"]) == 64
-    key = tmp_path / "var" / "id.key"  # the secret for hashed ids, next to the corpus
-    assert key.is_file() and key.stat().st_mode & 0o777 == 0o600
+    assert not (tmp_path / "var" / "id.key").exists()  # the import never creates a key
     code, out = _run(capsys, "import", "enron", "--parquet", *map(str, shards), "--limit", "50",
-                     "--out", str(tmp_path / "q.jsonl"), "--keep-quotes", "--sample-harvest")  # fmt: skip
+                     "--out", str(tmp_path / "q.jsonl"), "--keep-quotes", "--sample-harvest",
+                     *key)  # fmt: skip
     assert code == 0 and out["sampled"] == 50
     pack = tmp_path / "pack"
     code, out = _run(capsys, "generate", "leadership", "--corpus", str(corpus), "--out", str(pack),
                      "--roles", "ceo,cfo", "--volume", "ceo=8, cfo=7", "--names", str(reg),
-                     "--seed", "3", "--days", "6", "--start-at", "2026-10-16T08:00:00Z")  # fmt: skip
+                     "--seed", "3", "--days", "6", "--start-at", "2026-10-16T08:00:00Z",
+                     *key)  # fmt: skip
     assert code == 0, out
     assert [s["messages"] for s in out["scenarios"]] == [8, 7]
     assert (pack / "ceo" / "scenario.yaml").is_file() and (pack / "cfo" / "pack.json").is_file()
-    code, out = _run(capsys, "import", "scan", str(pack), "--names", str(reg))
+    code, out = _run(capsys, "import", "scan", str(pack), "--names", str(reg), *key)
     assert (code, out["ok"], out["findings"]) == (0, True, 0)
     leak = tmp_path / "leak.txt"
     leak.write_text("Forwarded by Marta Pellowe/HOU/ECT\ncall 713-853-1234\n")
-    code, out = _run(capsys, "import", "scan", str(leak), "--names", str(reg))
+    code, out = _run(capsys, "import", "scan", str(leak), "--names", str(reg), *key)
     assert code == 1 and out["by_kind"] == {
         "enron-acronym": 1,
         "lotus-notes": 1,
@@ -108,13 +110,13 @@ def test_cli_import_scan_generate(shards, tmp_path, capsys):
     before = {p: p.read_bytes() for p in pack.rglob("*") if p.is_file()}
     _run(capsys, "generate", "leadership", "--corpus", str(corpus), "--out", str(pack), "--roles",
          "ceo,cfo", "--volume", "ceo=8,cfo=7", "--names", str(reg), "--seed", "3", "--days",
-         "6")  # fmt: skip
+         "6", *key)  # fmt: skip
     assert {p: p.read_bytes() for p in pack.rglob("*") if p.is_file()} == before
 
 
-def test_cli_errors(tmp_path, capsys, monkeypatch, shards):
+def test_cli_errors(tmp_path, capsys, monkeypatch, shards, id_key_file):
     code, out = _run(capsys, "generate", "leadership", "--corpus", str(tmp_path / "missing.jsonl"),
-                     "--names", str(tmp_path / "missing.json"))  # fmt: skip
+                     "--names", str(tmp_path / "missing.json"), "--id-key", str(id_key_file))  # fmt: skip
     assert code == 2 and out["code"] == "INVALID_REQUEST"
     for argv in (["generate", "leadership", "--corpus", "c.jsonl"],  # --names or --no-names
                  ["generate", "leadership", "--corpus", "c", "--no-names", "--days", "1"],
@@ -132,20 +134,21 @@ def test_cli_errors(tmp_path, capsys, monkeypatch, shards):
 
     monkeypatch.setattr(builtins, "__import__", no_pyarrow)
     code, out = _run(capsys, "import", "enron", "--parquet", str(shards[0]), "--out",
-                     str(tmp_path / "x.jsonl"))  # fmt: skip
+                     str(tmp_path / "x.jsonl"), "--id-key", str(id_key_file))  # fmt: skip
     assert code == 2 and out["code"] == "MISSING_DEPENDENCY" and "--extra import" in out["message"]
     monkeypatch.setattr(builtins, "__import__", real_import)
     with pytest.raises(FileNotFoundError):
         enron.read_corpus(Path(tmp_path / "nope"))
 
 
-def test_cli_generate_without_registry_warns(shards, tmp_path, capsys):
+def test_cli_generate_without_registry_warns(shards, tmp_path, capsys, id_key_file):
     corpus = tmp_path / "corpus.jsonl"
     enron.write_corpus(
         corpus, *enron.import_enron(shards, enron.ImportConfig(limit=1000, id_key=TEST_KEY))[:2]
     )
     code, out = _run(capsys, "generate", "leadership", "--corpus", str(corpus), "--out",
-                     str(tmp_path / "p"), "--roles", "coo", "--volume", "coo=3", "--no-names")  # fmt: skip
+                     str(tmp_path / "p"), "--roles", "coo", "--volume", "coo=3", "--no-names",
+                     "--id-key", str(id_key_file))  # fmt: skip
     assert code == 0 and out["scenarios"][0]["messages"] == 3
 
 
@@ -163,3 +166,31 @@ def test_cli_still_raises_unexpected_errors_for_engine_commands(monkeypatch):
     monkeypatch.setattr("mailsim.cli.load_scenario", boom)
     with pytest.raises(ValueError, match="engine bug"):
         main(["validate", "x.yaml"])
+
+
+@pytest.mark.parametrize("cmd", ["import", "generate", "scan"])
+def test_cli_refuses_a_missing_or_foreign_id_key(cmd, shards, tmp_path, capsys, id_key_file):
+    corpus = tmp_path / "corpus.jsonl"
+    argv = {
+        "import": ["import", "enron", "--parquet", str(shards[0]), "--out", str(corpus)],
+        "generate": ["generate", "leadership", "--corpus", str(corpus), "--no-names"],
+        "scan": ["import", "scan", str(tmp_path)],
+    }[cmd]
+    missing = tmp_path / "var" / "id.key"
+    code, out = _run(capsys, *argv, "--id-key", str(missing))
+    assert code == 2 and "id key not found" in out["message"]
+    assert "password manager" in out["message"]
+    assert not missing.exists() and not corpus.exists()  # nothing created, nothing written
+    foreign = tmp_path / "other.key"
+    foreign.write_text("f" * 64 + "\n", encoding="ascii")
+    code, out = _run(capsys, *argv, "--id-key", str(foreign))
+    assert code == 2 and "not the team id key" in out["message"]
+
+
+def test_cli_warns_about_a_readable_key(tmp_path, capsys, id_key_file):
+    id_key_file.chmod(0o644)
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    code = main(["import", "scan", str(empty), "--id-key", str(id_key_file)])
+    err = capsys.readouterr().err
+    assert code == 0 and "readable by other users" in err and "chmod 600" in err

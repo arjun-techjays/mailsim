@@ -1461,6 +1461,12 @@ PLACES: frozenset[str] = frozenset(
     )
 )  # fmt: skip
 
+# Public check value of the team's secret id key (`var/enron/id.key`): `enron.id_key_check(key)`,
+# a truncated HMAC of a constant. The CLI refuses any other key, because hashed ids (and the
+# deny list) are only reproducible with this one. It changes only when the key is rotated
+# (docs/leadership-inboxes.md, section "Identifier key").
+ID_KEY_CHECK = "1a88cb31e2ee55e4"
+
 # Real names that the rules cannot catch (e.g. an unusual first name the corpus also writes in
 # lower case), stored only as sha256(lower-cased token) so the repository never holds them in
 # clear text. Matching capitalised tokens are pseudonymized and flagged by the scanner.

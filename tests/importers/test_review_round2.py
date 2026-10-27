@@ -83,14 +83,26 @@ def test_import_records_list_their_hashed_ids(shards):
         assert rec["ids"] == sorted(set(rec["ids"])) and all(len(i) >= 6 for i in rec["ids"])
 
 
-def test_id_key_file_is_created_once_and_private(tmp_path):
+def test_id_key_is_read_checked_and_never_created(tmp_path):
+    # issue #10: a missing key used to be created silently, changing every hashed id
     path = tmp_path / "var" / "id.key"
-    key = enron.load_or_create_key(path)
-    assert len(key) == 64 and path.stat().st_mode & 0o777 == 0o600
-    assert enron.load_or_create_key(path) == key
+    with pytest.raises(ValueError, match="id key not found.*password manager"):
+        enron.load_key(path, expected="0" * 16)
+    assert not path.exists() and not path.parent.exists()
+    path.parent.mkdir()
     path.write_text("short\n")
     with pytest.raises(ValueError, match="too short"):
-        enron.load_or_create_key(path)
+        enron.load_key(path, expected="0" * 16)
+    key = "ab" * 32
+    path.write_text(key + "\n", encoding="ascii")
+    path.chmod(0o600)
+    check = enron.id_key_check(key.encode())
+    assert len(check) == 16 and check != enron.id_key_check(b"cd" * 32)
+    assert enron.load_key(path, expected=check) == key.encode() and enron.key_is_private(path)
+    with pytest.raises(ValueError, match="not the team id key"):
+        enron.load_key(path)  # checked against names.ID_KEY_CHECK by default
+    path.chmod(0o640)
+    assert not enron.key_is_private(path)
 
 
 def test_digit_rule_is_independent_of_the_scrubber(tmp_path):

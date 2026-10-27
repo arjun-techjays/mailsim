@@ -14,15 +14,17 @@ Bodies, subjects and parties are templates (see `pseudonymize`): no detected rea
 address or number survives. Sampling is a deterministic function of (seed, shard name, row):
 the `limit` rows with the smallest keyed hash, so the same seed and inputs give a
 byte-identical corpus (identifiers are hashed with a secret key, `ImportConfig.id_key`: the same
-key file is needed to reproduce a corpus). Raw text never leaves this process except through
-templates; the optional registry file (real names, for scanning generated output) and the key
-file must stay outside the repository (default location under ``var/``).
+key file is needed to reproduce a corpus; see `load_key`, which never creates one). Raw text
+never leaves this process except through templates; the optional registry file (real names,
+for scanning generated output) and the key file must stay outside the repository (default
+location under ``var/``).
 """
 
 from __future__ import annotations
 
 import hashlib
 import heapq
+import hmac
 import json
 import re
 from collections.abc import Iterable, Iterator
@@ -30,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from mailsim.importers import names as N
 from mailsim.importers.classify import classify
 from mailsim.importers.clean import clean_body, is_garbled, split_chain
 from mailsim.importers.pseudonymize import (
@@ -283,21 +286,42 @@ def read_corpus(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     return header, [json.loads(line) for line in lines[1:] if line.strip()]
 
 
-def load_or_create_key(path: Path) -> bytes:
-    """The secret key for hashed identifiers: read from `path`, created (32 random bytes, hex,
-    owner-only permissions) on first use. Keep it outside the repository, next to the corpus."""
-    if path.is_file():
-        key = path.read_text(encoding="ascii").strip()
-        if len(key) < 32:
-            raise ValueError(f"{path}: id key too short (expected 64 hex characters)")
-        return key.encode()
-    import secrets
+KEY_DOC = "docs/leadership-inboxes.md, section 'Identifier key'"
+_KEY_CHECK_MSG = b"mailsim id-key check v1"
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    key = secrets.token_hex(32)
-    path.write_text(key + "\n", encoding="ascii")
-    path.chmod(0o600)
-    return key.encode()
+
+def id_key_check(key: bytes) -> str:
+    """A public check value for the id key: a truncated HMAC of a constant. It reveals nothing
+    usable about the key but tells the team key from any other (`names.ID_KEY_CHECK`)."""
+    return hmac.new(key, _KEY_CHECK_MSG, hashlib.sha256).hexdigest()[:16]
+
+
+def load_key(path: Path, *, expected: str | None = None) -> bytes:
+    """The secret key for hashed identifiers and the deny list, read from `path` and checked
+    against `expected` (default `names.ID_KEY_CHECK`). Never created here: a new key would
+    silently change every hashed id and disable the deny list, so a missing or different key
+    is an error. The team key lives in the team password manager (see `KEY_DOC`)."""
+    if not path.is_file():
+        raise ValueError(
+            f"{path}: id key not found. It is the team's shared secret: restore it from the team "
+            f"password manager ({KEY_DOC}). Do not create a new one: hashed ids and the deny "
+            "list would no longer match the committed pack."
+        )
+    text = path.read_text(encoding="ascii").strip()
+    if len(text) < 32:
+        raise ValueError(f"{path}: id key too short (expected 64 hex characters)")
+    key = text.encode()
+    if id_key_check(key) != (N.ID_KEY_CHECK if expected is None else expected):
+        raise ValueError(
+            f"{path}: this is not the team id key (its check differs from names.ID_KEY_CHECK). "
+            f"Restore the team key ({KEY_DOC}); rotating it is a manual procedure."
+        )
+    return key
+
+
+def key_is_private(path: Path) -> bool:
+    """True when only the owner can read the key file."""
+    return path.stat().st_mode & 0o077 == 0
 
 
 def write_registry(path: Path, registry: Registry) -> None:
