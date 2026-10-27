@@ -83,14 +83,27 @@ def test_import_records_list_their_hashed_ids(shards):
         assert rec["ids"] == sorted(set(rec["ids"])) and all(len(i) >= 6 for i in rec["ids"])
 
 
-def test_id_key_file_is_created_once_and_private(tmp_path):
+def test_id_key_is_read_checked_and_never_created(tmp_path):
+    # issue #10: a missing key used to be created silently, changing every hashed id
     path = tmp_path / "var" / "id.key"
-    key = enron.load_or_create_key(path)
-    assert len(key) == 64 and path.stat().st_mode & 0o777 == 0o600
-    assert enron.load_or_create_key(path) == key
+    with pytest.raises(ValueError, match="id key not found.*data/enron-id.key"):
+        enron.load_key(path, expected="0" * 16)
+    assert not path.exists() and not path.parent.exists()
+    path.parent.mkdir()
     path.write_text("short\n")
     with pytest.raises(ValueError, match="too short"):
-        enron.load_or_create_key(path)
+        enron.load_key(path, expected="0" * 16)
+    key = "ab" * 32
+    path.write_text(key + "\n", encoding="ascii")
+    path.chmod(0o600)
+    check = enron.id_key_check(key.encode())
+    assert len(check) == 16 and check != enron.id_key_check(b"cd" * 32)
+    assert enron.load_key(path, expected=check) == key.encode()
+    with pytest.raises(ValueError, match="not the project.s id key"):
+        enron.load_key(path)  # checked against names.ID_KEY_CHECK by default
+    # the committed key is the default and passes the committed check
+    assert enron.id_key_check(enron.load_key()) == N.ID_KEY_CHECK
+    assert enron.load_key() == enron.load_key(enron.DEFAULT_ID_KEY)
 
 
 def test_digit_rule_is_independent_of_the_scrubber(tmp_path):

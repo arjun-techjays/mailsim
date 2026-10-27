@@ -1461,15 +1461,23 @@ PLACES: frozenset[str] = frozenset(
     )
 )  # fmt: skip
 
+# Check value of the committed id key (`importers/data/enron-id.key`): `enron.id_key_check(key)`,
+# a truncated HMAC of a constant. The CLI refuses any other key, because hashed ids (and the
+# deny list) are only reproducible with this one (docs/leadership-inboxes.md, "Identifier key").
+ID_KEY_CHECK = "1a88cb31e2ee55e4"
+
 # Real names that the rules cannot catch (e.g. an unusual first name the corpus also writes in
-# lower case), stored only as sha256(lower-cased token) so the repository never holds them in
-# clear text. Matching capitalised tokens are pseudonymized and flagged by the scanner.
+# lower case). Each entry is `pseudonymize.deny_entry(id_key, sha256(lower-cased token))` under
+# the committed id key (`pseudonymize.DenyList`); the digests are in
+# `importers/data/enron-deny-digests.txt`, never the names. The key is public, so a guessed
+# name can be confirmed: an accepted trade-off (docs/leadership-inboxes.md, "Identifier key").
+# Matching capitalised tokens are pseudonymized and flagged by the scanner.
 HASHED_DENY: frozenset[str] = frozenset(
     {
-        "d0bb22efaa420a9f274d5ae2bfb867f8138932fbcadf7137f11ff4da7e994e0e",
-        "4458e908dd9a5440ad70b4d0ee13ebe96f0d25bb263b80169b3de5a9a0b90e3d",  # a politician of the period
-        "e1ec0ed202255ee8f930fdf38613ca611d46190979222a8b3ac6fa8516ff29ec",  # a politician of the period
-        "5072f198bd5e3aabc87e7affa1895be59117fb214381e431ba85ae0e26131678",  # a politician of the period
-        "749a1a16c343bf7b315a2142e36adcda6abecf8d04019f512d6b200286d660f4",  # a politician of the period
+        "43dbc1fc5ae38a45dfa0098cfa643c6b884e78f668fc9f8974c53fdc95421708",
+        "a7c9de9ad5e03d977f7f5a2fab225953746d01620eaea083887f6d9f905b33ea",  # a politician of the period
+        "c10e72f5239cca02ed61db4c0b2b1d3ae8aeb4029fa5210e9ab4f0baa4d1f9f1",  # a politician of the period
+        "d2b9bf77af8cb2d9edf082b3db0ea3465685a75395441a2fac612759b566ea8b",  # a politician of the period
+        "a2e18240d7e939933d004da8e68ae37a4c89ea66b696c3416b28c2326df5cc1b",  # a politician of the period
     }
 )

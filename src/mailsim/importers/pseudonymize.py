@@ -13,7 +13,7 @@ Two stages, so a generator can bind the people of a message to the personas of a
    (`names.THIRD_PARTY_MAP`); URLs, phone numbers, street addresses and mixed letter-digit deal
    ids are replaced outright, and every identifier-like digit run (deal, notice and contract
    numbers, any 6+ digit run that is not money, a decimal or a date) becomes a keyed hash
-   (HMAC-SHA256 with a secret key, so hashed ids cannot be brute-forced from the public seed).
+   (HMAC-SHA256 with the committed id key, which keeps the hashes stable across imports).
    The hashed outputs of a record are listed in the record (``ids``) so the scanner can tell
    them from a digit run the scrubber missed. Templates contain no real names that the
    detectors recognised.
@@ -360,9 +360,32 @@ _MAPPED_WORDS = frozenset(
 )
 
 
-def denylisted(token: str) -> bool:
-    """True for a token whose sha256(lower case) is in `names.HASHED_DENY`."""
-    return hashlib.sha256(token.lower().encode()).hexdigest() in N.HASHED_DENY
+_DENY_TAG = b"deny\x1f"
+
+
+def deny_entry(key: bytes, digest: str) -> str:
+    """The `names.HASHED_DENY` entry for a token whose sha256(lower case) hex digest is
+    `digest`: HMAC-SHA256 under the id key. Keyed over the digest (not the token) so the list
+    is built from the committed digests alone (docs/leadership-inboxes.md, "Identifier key")."""
+    return hmac.new(key, _DENY_TAG + digest.encode(), hashlib.sha256).hexdigest()
+
+
+class DenyList:
+    """`names.HASHED_DENY` under one id key. With any key other than the committed one nothing
+    matches, which is why the CLI refuses other keys (`enron.load_key`)."""
+
+    def __init__(self, key: bytes) -> None:
+        self.key = key
+        self.entries = N.HASHED_DENY
+        self._seen: dict[str, bool] = {}  # lower-cased token -> listed (the scanner asks often)
+
+    def matches(self, token: str) -> bool:
+        low = token.lower()
+        hit = self._seen.get(low)
+        if hit is None:
+            digest = hashlib.sha256(low.encode()).hexdigest()
+            hit = self._seen[low] = deny_entry(self.key, digest) in self.entries
+        return hit
 
 
 def stable_hash(*parts: object) -> int:
@@ -542,13 +565,15 @@ class Pseudonymizer:
     processing order, which is deterministic)."""
 
     def __init__(self, registry: Registry, seed: int, id_key: bytes) -> None:
-        """`id_key` keys the hash of identifiers (deal / notice / contract numbers): the secret
-        key file (`var/enron/id.key`, see `enron.load_or_create_key`); tests pass their own."""
+        """`id_key` keys the hash of identifiers (deal / notice / contract numbers) and the deny
+        list: the committed key (`enron.DEFAULT_ID_KEY`, see `enron.load_key`); tests pass their
+        own."""
         if len(id_key) < 16:
-            raise ValueError("an id key of at least 16 bytes is required (var/enron/id.key)")
+            raise ValueError("an id key of at least 16 bytes is required (enron.DEFAULT_ID_KEY)")
         self.reg = registry
         self.seed = seed
         self.id_key = id_key
+        self.deny = DenyList(id_key)
         self.emitted: set[str] = set()  # hashed digit runs (6+ digits) written so far
         self.first_ids: dict[str, int] = {}
         self.last_ids: dict[str, int] = {}
@@ -800,7 +825,7 @@ class Pseudonymizer:
 
     def _single_token(self, tok: str, m: re.Match[str], text: str, local: set[int],
                       possessive: bool = False) -> str:  # fmt: skip
-        if denylisted(tok):
+        if self.deny.matches(tok):
             return f"{{{{q:{self._alloc(self.first_ids, tok)}:f}}}}"
         if tok in N.PROPER_ALLOW or tok in BLOCK or _never_name(tok):
             return tok
@@ -1049,9 +1074,11 @@ def refs_in(text: str) -> list[str]:
     return out
 
 
-def unknown_proper_nouns(text: str, registry: Registry) -> list[str]:
+def unknown_proper_nouns(text: str, registry: Registry, deny: DenyList | None = None
+                         ) -> list[str]:  # fmt: skip
     """Capitalised tokens left in a template that are neither ordinary corpus words, allowed
-    proper nouns nor short acronyms: candidates for undetected names (strict curation)."""
+    proper nouns nor short acronyms: candidates for undetected names (strict curation). With
+    `deny`, deny-listed tokens are always candidates."""
     bare = PLACEHOLDER.sub(" ", text)
     out = []
     for tok in re.findall(r"\b[A-Z][a-zA-Z]+\b", bare):
@@ -1064,7 +1091,8 @@ def unknown_proper_nouns(text: str, registry: Registry) -> list[str]:
         if tok.isupper() and len(tok) <= 4:
             continue
         out.append(tok)
-    out += [t for t in re.findall(r"\b[A-Z][a-zA-Z]+\b", bare) if denylisted(t)]
+    if deny is not None:
+        out += [t for t in re.findall(r"\b[A-Z][a-zA-Z]+\b", bare) if deny.matches(t)]
     # charset-mangled names ("G_nther", "Fran?ois") can never be checked against a vocabulary
     out += re.findall(r"\b[A-Z][a-z]*[_?][a-z]+\b", bare)
     return sorted(set(out))

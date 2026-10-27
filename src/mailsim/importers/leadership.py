@@ -38,7 +38,7 @@ from mailsim.importers import dates as D
 from mailsim.importers import documents as DOC
 from mailsim.importers import names as N
 from mailsim.importers.pii import Scanner
-from mailsim.importers.pseudonymize import Identity, Renderer, stable_hash
+from mailsim.importers.pseudonymize import DenyList, Identity, Renderer, stable_hash
 from mailsim.mime.build import build_mime
 from mailsim.mime.parse import ParsedAttachment
 from mailsim.scenario.loader import parse_source
@@ -453,6 +453,7 @@ class GenerateOptions:
     days: int = 10  # mail is spread over the days before the clock start
     max_thread: int = 3
     extra_names: Sequence[str] = ()  # real names to scan generated text against
+    id_key: bytes = b""  # the id key: the scan then also checks the keyed deny list
 
 
 @dataclass
@@ -509,7 +510,8 @@ class Generator:
             reserved=reserved,
         )
         self.records = records
-        self.scanner = Scanner(opts.extra_names)
+        self.scanner = Scanner(opts.extra_names,
+                               deny=DenyList(opts.id_key) if opts.id_key else None)  # fmt: skip
         self.used: set[str] = set()
         self._seen_bodies: set[str] = set()  # identical mail (e.g. a memo sent twice) is used once
         self._binding: dict[str, Persona] = {}

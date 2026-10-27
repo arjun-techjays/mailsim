@@ -21,6 +21,12 @@ ordinary versioned scenarios: one per target inbox.
 
 ## Regenerate the pack
 
+Three inputs decide the output byte for byte: the committed **identifier key**
+(`src/mailsim/importers/data/enron-id.key`, see [Identifier key](#identifier-key)), the public
+parquet shards and the command line below. The import derives `var/enron/corpus.jsonl` and
+`var/enron/registry.json` from them; both are inputs of the generator (the registry also
+steers the pseudonym choice).
+
 ```bash
 uv sync --extra import            # pyarrow (pinned) for the parquet reader
 mkdir -p var/cache/enron
@@ -37,11 +43,23 @@ uv run sim import enron --parquet var/cache/enron/0.parquet var/cache/enron/1.pa
 uv run sim generate leadership --corpus var/enron/corpus.jsonl --out scenarios/leadership \
   --seed 7 --roles ceo,cfo,cbo,director_finance --names var/enron/registry.json
 
-# 3. scan for residual PII: built-in deny lists + every real name harvested by step 1.
-#    .eml files are parsed: headers, decoded bodies and attachment text (PDF, XLSX) are scanned.
+# 3. REQUIRED GATE: scan for residual PII (built-in deny lists + every real name harvested by
+#    step 1). .eml files are parsed: headers, decoded bodies and attachment text (PDF, XLSX).
+#    It must exit 0 with 0 findings; never commit a pack that fails it.
 uv run sim import scan scenarios/leadership --names var/enron/registry.json   # exit 1 on findings
-uv run sim validate scenarios/leadership/ceo/scenario.yaml
+
+# 4. validate every scenario
+for r in ceo cfo cbo director-finance; do uv run sim validate scenarios/leadership/$r/scenario.yaml; done
+
+# 5. reproducibility: with an unchanged generator, the committed pack must come back unchanged
+git status --porcelain scenarios/leadership      # empty unless the generator itself changed
 ```
+
+All three commands use the committed key by default (`--id-key` to point elsewhere; any other
+key is refused). When only the generator changed, steps 2-5 are enough: keep `corpus.jsonl`
+and `registry.json` and do not re-import. If you do not have them, step 1 rebuilds both from
+the public dataset, but see the known issue below: a from-scratch import does not yet
+reproduce the committed pack exactly.
 
 Generator options:
 
@@ -63,13 +81,45 @@ inbox from `--roles ceo,cfo,cbo,director_finance`. Regenerate the committed pack
 the command above.
 
 `var/enron/corpus.jsonl` (templates and metadata) and `var/enron/registry.json` (the real names
-found by the import) stay in the git-ignored `var/`. **Never commit them.**
+found by the import) stay in the git-ignored `var/`. **Never commit them**, `registry.json` in
+particular: it lists real names. `sim import enron` rebuilds both from the public dataset and
+the committed key, so neither holds anything that cannot be recreated.
 
-The import also needs a **secret key** for hashed identifiers (deal, notice and contract
-numbers): `var/enron/id.key` (`--id-key`, default `id.key` next to `--out`). The first import
-creates it (32 random bytes, hex, owner-only permissions). Re-running the import reproduces
-the same corpus only with the same key file, so keep it with the corpus and **never commit
-it**. Without the key, hashed ids cannot be brute-forced from the public seed.
+**Known issue ([#19](https://github.com/arjun-techjays/mailism/issues/19)):** the committed pack
+was generated from a corpus made by an earlier importer revision. A from-scratch import today
+gives a slightly different corpus, and regenerating from it changes one pseudonym in
+`ceo/fixtures/025-i-must-agree-with-mila.eml`, so step 5 is not empty on a fresh checkout until
+#19 is fixed. The registry comes back identical.
+
+## Identifier key
+
+Deal, notice and contract numbers are replaced by keyed hashes (HMAC-SHA256), and the deny
+list of real names (`names.HASHED_DENY`) is keyed the same way. The key is committed at
+`src/mailsim/importers/data/enron-id.key`, together with the sha256 digests behind the deny
+list (`src/mailsim/importers/data/enron-deny-digests.txt`), and both ship with the package.
+
+**The key is deliberately public.** The Enron corpus is public; what protects the people in
+it is the pseudonymization, not the key. The key only has to be **stable**, so that the same
+inputs always give the same corpus and pack. Committing it makes regeneration reproducible on
+any checkout and lets CI check the deny list (`tests/importers/test_pack.py`).
+
+**Do not change it.** A different key changes every hashed id in a re-imported corpus, and so
+every fixture that shows one. The CLI never creates a key and refuses any key whose check
+value differs from `names.ID_KEY_CHECK` (exit 2).
+
+**Accepted trade-off.** Because the key is public, anyone can confirm a guessed name against
+the deny list by hashing it, and recover a hashed deal or notice number by hashing candidate
+numbers; both come from the public dataset. The deny list only names what was removed, not personal data
+that remains, so issue #9 rated this low severity, and the trade-off is accepted for
+reproducibility.
+
+**Adding a name** to the deny list: the scanner and the pseudonymizer match one capitalised
+**single token** at a time, so add one entry per token. The key bytes are the ASCII hex text
+of the key file as `enron.load_key()` returns it (`text.strip().encode()`), **not**
+`bytes.fromhex(text)`. Append the digest `hashlib.sha256(token.lower().encode()).hexdigest()`
+to `enron-deny-digests.txt` and the entry `pseudonymize.deny_entry(key, digest)` to
+`names.HASHED_DENY`; `test_deny_list_entries_are_the_keyed_digests` checks that the two
+agree. Never commit the token itself.
 
 ## Run a leadership inbox locally
 
@@ -218,8 +268,8 @@ against the CEO pack and checks that the results agree.
        Vanity toll-free numbers (`1-800-PAGEMTEL`) are public and stay as they are.
      * The scanner normalises tabs and non-breaking spaces before matching, as `clean_body`
        does.
-     * Identifiers are replaced by same-length **keyed** hashes (HMAC-SHA256 with the secret
-       key, see "Regenerate the pack"): labelled ids (`deal 478198`, `K#36621`,
+     * Identifiers are replaced by same-length **keyed** hashes (HMAC-SHA256 with the
+       committed key, see "Identifier key"): labelled ids (`deal 478198`, `K#36621`,
        `Notice 2001043`, `Gridbook#'s 464394,464390`, `PO no. 12345`), `#549048`, pass and
        conference codes, and every other run of 6+ digits that is not money (`$150000`), a
        decimal or a compact date (`20011014`). A record lists the hashed runs it contains
@@ -234,11 +284,13 @@ against the CEO pack and checks that the results agree.
        corpus' home city (`names.LANDMARKS`), a pseudonymized first name next to a known real
        surname, and real first names written in lower case where a signature goes
        (`thanks` / `brant`).
-     * `names.HASHED_DENY` lists real names that the rules cannot catch. It stores only
-       `sha256(lower-cased token)`. This is an **unsalted** hash: it keeps the names out of
-       casual reading of the repository, but anyone with a candidate list can recover them by
-       hashing. Matching capitalised tokens are pseudonymized, and the scanner flags them as
-       `denylisted-name`.
+     * `names.HASHED_DENY` lists real names that the rules cannot catch. Each entry is
+       `HMAC-SHA256(id key, "deny" + sha256(lower-cased token))` (`pseudonymize.deny_entry`).
+       The names are not in the repository; since the key is public (see "Identifier key"), a
+       guessed name can be confirmed, which is an accepted trade-off. Matching capitalised
+       tokens are pseudonymized, and the scanner flags them as `denylisted-name`. The import,
+       the generator and `sim import scan` check the list with the key they load (`--id-key`);
+       library callers without a key (`Scanner()`) skip it.
 5. **Classification** (`classify`). A transparent weighted keyword rule set is applied to the
    subject and body. It covers board, legal, finance, deals, hr, vendor, scheduling, ops,
    personal, newsletter/noise and `general`. Every record stores its scores and matched
@@ -303,6 +355,10 @@ against the CEO pack and checks that the results agree.
   * agreement negotiation by or with the executive assistant or a board member;
   * clerical requests to an executive ("please print in color"), finance and trading work for
     the head of people, and the CEO thanking a subordinate for an opportunity;
+  * company-secretarial paperwork (incumbency, secretary's or officer's certificates,
+    certificates of good standing, specimen signatures, minute book, articles of
+    incorporation, banking resolutions) written by the CEO, CFO, CBO or COO: that is
+    counsel's or the company secretary's work (`curation.CORPORATE_SECRETARIAL`);
   * internal mail forwarded to an outsider.
   After rendering, a message is also skipped when a person pseudonym sits where a place, desk
   or asset belongs ("Long Term X", "Port X", "Street, X Y, CA") or when the body opens by
@@ -349,8 +405,17 @@ against the CEO pack and checks that the results agree.
   checks that claims and files agree both ways. The kind comes from the file's own name or the
   sentence that announces it before the rest of the mail: credit watch list, presentation,
   invoice, draft agreement (clauses and signature blocks), schedule, management report,
-  contact list, spreadsheet (`.xlsx`; a list of people when the mail is about rotations or
-  staff) or memo. Titles come from a clean stub name, the noun phrase the claim names
+  contact list, spreadsheet (`.xlsx`) or memo. Spreadsheets follow their title: a **credit
+  worksheet** is about the counterparty the mail names ("for Dunmore": only a name from the
+  fictional pools counts, else a fictional firm seeded by the mail) and carries its rating,
+  two or three years of financials in USD millions with ratios computed from them, proposed
+  terms per master agreement the mail mentions (else one seeded per mail), a collateral
+  threshold matrix when the mail mentions one, and a recommendation that follows the rating;
+  a **threshold table** lists both parties' collateral thresholds by rating. Both come from one
+  credit profile per counterparty: the terms threshold is the matrix value at the
+  counterparty's own rating, the threshold table's Party B column is that matrix, and all the
+  files of one mail name the same counterparty and agreement. Otherwise a list of people when
+  the mail is about rotations or staff, or a list of trades. Titles come from a clean stub name, the noun phrase the claim names
   ("attached is the revised Precedent Agreement" -> "Precedent Agreement"), a title-like
   original subject or the kind's generic title, never a sentence fragment. Documents carry
   the sender's organisation (letterhead, footer, PDF producer): only company staff send

@@ -5,15 +5,20 @@ that grade generated data (published, run, evaluated)."""
 from __future__ import annotations
 
 import email
+import email.utils
 import json
+import re
 from email import policy
 
 import pytest
 
 from mailsim.engine.facades import AgentMailbox, Controller, EvaluatorView
 from mailsim.evaluation.engine import evaluate_run
-from mailsim.importers import leadership
+from mailsim.importers import curation as C
+from mailsim.importers import enron, leadership
+from mailsim.importers import names as N
 from mailsim.importers.pii import Scanner
+from mailsim.importers.pseudonymize import DenyList, deny_entry
 from mailsim.scenario.answer_keys import create_answer_key_version, load_answer_key
 from mailsim.scenario.loader import load_scenario
 from tests.scenarios import ROOT
@@ -50,6 +55,26 @@ def test_pack_has_no_harvested_real_names():
     names = json.loads(REGISTRY.read_text())["names"]
     findings = Scanner(names).scan_paths([PACK])
     assert not findings, f"{len(findings)} findings (kinds: {sorted({f.kind for f in findings})})"
+
+
+def test_deny_list_is_keyed_with_the_committed_key():
+    # issue #9: HASHED_DENY only matches its records under the committed key (it runs in CI).
+    # load_key fails unless this is the key behind names.ID_KEY_CHECK.
+    key = enron.load_key()
+    assert len(N.HASHED_DENY) == 5
+    assert all(re.fullmatch(r"[0-9a-f]{64}", e) for e in N.HASHED_DENY)
+    findings = Scanner(deny=DenyList(key)).scan_paths([PACK])
+    assert not findings, f"{len(findings)} findings (kinds: {sorted({f.kind for f in findings})})"
+
+
+def test_deny_list_entries_are_the_keyed_digests():
+    # issue #9: every committed entry is exactly the keyed HMAC of one of the committed sha256
+    # digests (src/mailsim/importers/data/enron-deny-digests.txt); a wrong, missing or extra
+    # entry fails here, independent of what the pack contains. Runs in CI (no local files).
+    key = enron.load_key()
+    digests = enron.deny_digests()
+    assert digests and all(re.fullmatch(r"[0-9a-f]{64}", d) for d in digests)
+    assert {deny_entry(key, d) for d in digests} == N.HASHED_DENY
 
 
 @pytest.mark.parametrize("slug", sorted(ROLES))
@@ -274,3 +299,32 @@ def test_pack_weekday_dates_are_not_in_the_past_unless_said_so(slug):
             assert _WEEKDAYS[when.weekday()] == hit.group(1), hit.group(0)  # weekdays stay right
             context = own[max(0, hit.start() - 30) : hit.end() + 20]
             assert when >= sent or past.search(context), (m["Subject"], hit.group(0))
+
+
+EXECUTIVE_EMAILS = {leadership.BY_ID[p].email for p in C.SECRETARIAL_OFF_LIMITS}
+
+
+@pytest.mark.parametrize("slug", sorted(ROLES))
+def test_pack_executives_do_no_company_secretarial_work(slug):
+    # issue #12: incumbency certificates and the like come from counsel, never the CEO
+    _, msgs = _fixtures(slug)
+    for m in msgs:
+        if email.utils.parseaddr(str(m["From"]))[1] in EXECUTIVE_EMAILS:
+            text = str(m["Subject"]) + "\n" + m.get_body(("plain",)).get_content()
+            assert not C.CORPORATE_SECRETARIAL.search(text), m["Subject"]
+
+
+def test_pack_credit_worksheets_are_specific():
+    # issue #12: each credit worksheet is about its counterparty, not a generic trade list
+    from mailsim.importers.attachments import xlsx_text
+
+    sheets = []
+    for slug in ROLES:
+        for m in _fixtures(slug)[1]:
+            for att in m.iter_attachments():
+                name = att.get_filename() or ""
+                if re.search(r"(?i)credit-worksheet", name):
+                    text = xlsx_text(att.get_payload(decode=True))
+                    assert "Counterparty" in text and "Debt / EBITDA (x)" in text, name
+                    sheets.append(text)
+    assert len(sheets) >= 3 and len(set(sheets)) == len(sheets)

@@ -145,3 +145,17 @@ def shards(tmp_path_factory) -> list[Path]:
     half = len(texts) // 2
     return [write_parquet(root / "0.parquet", texts[:half]),
             write_parquet(root / "1.parquet", texts[half:])]  # fmt: skip
+
+
+@pytest.fixture
+def id_key_file(tmp_path, monkeypatch) -> Path:
+    """A key file holding TEST_KEY, accepted as the project key for the duration of the test."""
+    from mailsim.importers import enron
+    from mailsim.importers import names as N
+
+    path = tmp_path / "keys" / "id.key"
+    path.parent.mkdir()
+    path.write_text(TEST_KEY.decode() + "\n", encoding="ascii")
+    path.chmod(0o600)
+    monkeypatch.setattr(N, "ID_KEY_CHECK", enron.id_key_check(TEST_KEY))
+    return path

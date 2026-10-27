@@ -13,16 +13,18 @@ every other line is one record::
 Bodies, subjects and parties are templates (see `pseudonymize`): no detected real name,
 address or number survives. Sampling is a deterministic function of (seed, shard name, row):
 the `limit` rows with the smallest keyed hash, so the same seed and inputs give a
-byte-identical corpus (identifiers are hashed with a secret key, `ImportConfig.id_key`: the same
-key file is needed to reproduce a corpus). Raw text never leaves this process except through
-templates; the optional registry file (real names, for scanning generated output) and the key
-file must stay outside the repository (default location under ``var/``).
+byte-identical corpus (identifiers are hashed with a keyed HMAC, `ImportConfig.id_key`: the
+committed key `DEFAULT_ID_KEY` makes a corpus reproducible; see `load_key`, which never creates
+one). Raw text never leaves this process except through templates; the optional registry file
+(real names, for scanning generated output) stays outside the repository (default location
+under ``var/``).
 """
 
 from __future__ import annotations
 
 import hashlib
 import heapq
+import hmac
 import json
 import re
 from collections.abc import Iterable, Iterator
@@ -30,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from mailsim.importers import names as N
 from mailsim.importers.classify import classify
 from mailsim.importers.clean import clean_body, is_garbled, split_chain
 from mailsim.importers.pseudonymize import (
@@ -104,7 +107,7 @@ class ImportConfig:
     min_chars: int = 40
     max_chars: int = 20_000
     harvest_all: bool = True  # build the name registry from every row, not only the sample
-    id_key: bytes = b""  # secret key for hashed identifiers: required (the CLI reads id.key)
+    id_key: bytes = b""  # key for hashed identifiers: required (the CLI loads DEFAULT_ID_KEY)
 
 
 @dataclass
@@ -211,7 +214,7 @@ def build_record(raw: str, pseudo: Pseudonymizer, cfg: ImportConfig, stats: Impo
         "topic": result.topic,
         "scores": result.scores,
         "keywords": result.keywords,
-        "unknown_proper": len(unknown_proper_nouns(text, pseudo.reg)),
+        "unknown_proper": len(unknown_proper_nouns(text, pseudo.reg, pseudo.deny)),
         "unknown_orgs": len(unknown_organisations(text, pseudo.reg)),
         "leftover_headers": any(LEFTOVER.search(b) for b in bodies),
         "ids": sorted(pseudo.emitted),
@@ -283,21 +286,48 @@ def read_corpus(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     return header, [json.loads(line) for line in lines[1:] if line.strip()]
 
 
-def load_or_create_key(path: Path) -> bytes:
-    """The secret key for hashed identifiers: read from `path`, created (32 random bytes, hex,
-    owner-only permissions) on first use. Keep it outside the repository, next to the corpus."""
-    if path.is_file():
-        key = path.read_text(encoding="ascii").strip()
-        if len(key) < 32:
-            raise ValueError(f"{path}: id key too short (expected 64 hex characters)")
-        return key.encode()
-    import secrets
+KEY_DOC = "docs/leadership-inboxes.md, section 'Identifier key'"
+_KEY_CHECK_MSG = b"mailsim id-key check v1"
+DATA_DIR = Path(__file__).resolve().parent / "data"
+# The identifier key is committed on purpose: the Enron corpus is public and pseudonymization is
+# what protects people; the key only has to be stable so generation is reproducible.
+DEFAULT_ID_KEY = DATA_DIR / "enron-id.key"
+# sha256(lower-cased token) digests behind `names.HASHED_DENY` (see `pseudonymize.deny_entry`)
+DENY_DIGESTS = DATA_DIR / "enron-deny-digests.txt"
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    key = secrets.token_hex(32)
-    path.write_text(key + "\n", encoding="ascii")
-    path.chmod(0o600)
-    return key.encode()
+
+def id_key_check(key: bytes) -> str:
+    """A short check value for the id key: a truncated HMAC of a constant
+    (`names.ID_KEY_CHECK` holds the committed key's)."""
+    return hmac.new(key, _KEY_CHECK_MSG, hashlib.sha256).hexdigest()[:16]
+
+
+def load_key(path: Path = DEFAULT_ID_KEY, *, expected: str | None = None) -> bytes:
+    """The key for hashed identifiers and the deny list, read from `path` (default: the
+    committed `DEFAULT_ID_KEY`) and checked against `expected` (default `names.ID_KEY_CHECK`).
+    Never created here: a different key would silently change every hashed id and disable the
+    deny list, so a missing or different key is an error."""
+    if not path.is_file():
+        raise ValueError(
+            f"{path}: id key not found. The project's key is committed at {DEFAULT_ID_KEY} "
+            f"({KEY_DOC}). Do not create a new one: hashed ids and the deny list would no longer "
+            "match the committed pack."
+        )
+    text = path.read_text(encoding="ascii").strip()
+    if len(text) < 32:
+        raise ValueError(f"{path}: id key too short (expected 64 hex characters)")
+    key = text.encode()
+    if id_key_check(key) != (N.ID_KEY_CHECK if expected is None else expected):
+        raise ValueError(
+            f"{path}: this is not the project's id key (its check differs from "
+            f"names.ID_KEY_CHECK); use {DEFAULT_ID_KEY} ({KEY_DOC})."
+        )
+    return key
+
+
+def deny_digests(path: Path = DENY_DIGESTS) -> list[str]:
+    """The committed sha256 digests behind `names.HASHED_DENY`, one per line."""
+    return path.read_text(encoding="ascii").split()
 
 
 def write_registry(path: Path, registry: Registry) -> None:

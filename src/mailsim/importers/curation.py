@@ -717,6 +717,16 @@ DEFERENCE = re.compile(
 # clerical work nobody asks the chief executive to do
 CLERICAL = re.compile(r"(?i)please print|print in colou?r|make (?:\d+ )?copies|fax (?:it|this|them)|"
                       r"book (?:a|the) (?:room|flight|car)")  # fmt: skip
+# company-secretarial paperwork: prepared, certified and circulated by counsel or the company
+# secretary, never by the chief executive or another business executive
+CORPORATE_SECRETARIAL = re.compile(
+    r"\bincumbency\b|\bsecretary'?s certificate|\bofficers?'? certificates?|"
+    r"certificates? of good standing|good standing certificates?|"
+    r"specimen signatures?|\bminute books?\b|articles of (?:incorporation|organi[sz]ation)|"
+    r"banking resolutions?|unanimous written consent|corporate seal",
+    re.IGNORECASE,
+)
+SECRETARIAL_OFF_LIMITS = ("ceo", "cfo", "cbo", "coo")
 # trading and treasury work that the head of people does not review
 TRADING_FINANCE = re.compile(r"(?i)letter of credit|\blc\b|\bisda\b|\bswaps?\b|\bhedge|"
                              r"collateral|counterpart(?:y|ies)|\bmtm\b|curtailment")  # fmt: skip
@@ -785,6 +795,8 @@ def _voice_reason(group: str, text: str, group_hint: str, sender_id: str,
         return "deference-from-ceo"
     if any(t in EXECUTIVES for t in to_ids) and CLERICAL.search(text):
         return "clerical-request-to-executive"
+    if sender_id in SECRETARIAL_OFF_LIMITS and CORPORATE_SECRETARIAL.search(text):
+        return "secretarial-work-by-executive"
     if ("director_hr" in to_ids or sender_id == "director_hr") and TRADING_FINANCE.search(text):
         return "finance-for-hr"
     own_title = {"board_chair": r"\bthe chairman\b", "ceo": r"\bthe ceo\b",

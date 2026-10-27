@@ -57,7 +57,7 @@ from mailsim.importers.pseudonymize import (
     STREET,
     UK_POSTCODE,
     ZIP_HQ,
-    denylisted,
+    DenyList,
     is_phone,
 )
 
@@ -272,7 +272,10 @@ def _kind(exc: UnsafeAttachment) -> str:
 
 
 class Scanner:
-    def __init__(self, extra_names: Iterable[str] = ()) -> None:
+    def __init__(self, extra_names: Iterable[str] = (), *, deny: DenyList | None = None) -> None:
+        """`deny`: the keyed `names.HASHED_DENY` (committed id key). Without it the scanner cannot
+        check the deny list; the CLI and the generator always pass it."""
+        self.deny = deny
         pairs = set()
         for name in [*N.KNOWN_PEOPLE, *extra_names]:
             parts = name.lower().split()
@@ -354,7 +357,7 @@ class Scanner:
         for name in self._names(line):
             hit("real-name", name)
         for tok in re.findall(r"\b[A-Z][a-zA-Z]+\b", line):
-            if denylisted(tok):
+            if self.deny is not None and self.deny.matches(tok):
                 hit("denylisted-name", tok)
         for tok in re.findall(r"\b[A-Za-z][a-z]+\b", line):
             if tok.lower() in self.surnames:

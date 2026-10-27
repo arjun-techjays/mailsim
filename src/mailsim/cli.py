@@ -35,6 +35,11 @@ def _emit(obj: Any, stream: Any = None) -> None:
     print(json.dumps(obj, indent=2, sort_keys=True, default=str), file=stream or sys.stdout)
 
 
+_ID_KEY_HELP = ("key file for hashed identifiers and the deny list (default: the committed "
+                "src/mailsim/importers/data/enron-id.key); never created, a different key is "
+                "refused: see docs/leadership-inboxes.md")  # fmt: skip
+
+
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="sim", description="Email agent testing simulator (Phase 1)")
     p.add_argument("--blob-dir", default=os.environ.get("MAILSIM_BLOB_DIR", "var/blobs"))
@@ -73,12 +78,11 @@ def _parser() -> argparse.ArgumentParser:
     en.add_argument("--keep-quotes", action="store_true", help="keep '>' quoted lines")
     en.add_argument("--sample-harvest", action="store_true",
                     help="harvest names from the sample only (faster, weaker)")  # fmt: skip
-    en.add_argument("--id-key", type=Path, default=None,
-                    help="secret key file for hashed identifiers (default: id.key next to --out; "
-                         "created on first use; keep out of git)")  # fmt: skip
+    en.add_argument("--id-key", type=Path, default=None, help=_ID_KEY_HELP)
     sc = isub.add_parser("scan", help="scan files/directories for residual real PII")
     sc.add_argument("paths", type=Path, nargs="+")
     sc.add_argument("--names", type=Path, default=None, help="registry JSON from import enron")
+    sc.add_argument("--id-key", type=Path, default=None, help=_ID_KEY_HELP)
 
     gen = sub.add_parser("generate", help="generate scenarios (no database needed)")
     gsub = gen.add_subparsers(dest="generate_cmd", required=True)
@@ -91,6 +95,7 @@ def _parser() -> argparse.ArgumentParser:
     ld.add_argument("--start-at", default="2026-10-16T08:00:00Z", help="virtual clock start")
     ld.add_argument("--days", type=_at_least_two, default=10,
                     help="days of mail before the clock start (>= 2)")  # fmt: skip
+    ld.add_argument("--id-key", type=Path, default=None, help=_ID_KEY_HELP)
     names = ld.add_mutually_exclusive_group(required=True)
     names.add_argument("--names", type=Path, help="registry JSON from import enron (required for "
                        "the PII guarantee: every rendered message is scanned against it)")  # fmt: skip
@@ -305,17 +310,27 @@ def _names(path: Path | None) -> list[str]:
     return [str(n) for n in data.get("names", [])]
 
 
+def _load_key(path: Path | None) -> bytes:
+    """The id key (`enron.load_key`: the committed key unless `--id-key` names another file;
+    never created, a missing or different key is an error)."""
+    from mailsim.importers import enron
+
+    return enron.load_key(path or enron.DEFAULT_ID_KEY)
+
+
 def _import(args: argparse.Namespace) -> int:
     from mailsim.importers import enron
     from mailsim.importers.pii import Scanner
+    from mailsim.importers.pseudonymize import DenyList
 
     if args.import_cmd == "scan":
-        findings = Scanner(_names(args.names)).scan_paths(args.paths)
+        deny = DenyList(_load_key(args.id_key))
+        findings = Scanner(_names(args.names), deny=deny).scan_paths(args.paths)
         _emit({"ok": not findings, "findings": len(findings),
                "by_kind": _count(f.kind for f in findings),
                "examples": [str(f) for f in findings[:50]]})  # fmt: skip
         return 0 if not findings else 1
-    key = enron.load_or_create_key(args.id_key or args.out.with_name("id.key"))
+    key = _load_key(args.id_key)
     cfg = enron.ImportConfig(limit=args.limit, seed=args.seed, strip_quotes=not args.keep_quotes,
                              harvest_all=not args.sample_harvest, id_key=key)  # fmt: skip
     try:
@@ -342,6 +357,7 @@ def _generate(args: argparse.Namespace) -> int:
 
     from mailsim.importers import enron, leadership
 
+    key = _load_key(args.id_key)
     if args.no_names:
         print("WARNING: --no-names: generated text is scanned against the built-in name lists "
               "only, not the registry of real names harvested by `sim import enron`. Do not "
@@ -354,7 +370,7 @@ def _generate(args: argparse.Namespace) -> int:
     start = datetime.strptime(args.start_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
     opts = leadership.GenerateOptions(
         seed=args.seed, roles=[r.strip() for r in args.roles.split(",") if r.strip()],
-        volume=volume, start_at=start, days=args.days, extra_names=_names(args.names),
+        volume=volume, start_at=start, days=args.days, extra_names=_names(args.names), id_key=key,
     )  # fmt: skip
     scenarios = leadership.generate(header, records, opts)
     paths = leadership.write_scenarios(args.out, scenarios)
