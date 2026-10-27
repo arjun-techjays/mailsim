@@ -98,9 +98,11 @@ note holds the key and nothing else. The same item carries `registry.json` as an
 digests behind `names.HASHED_DENY` (one per line), which are needed to re-key the deny list
 and which `tests/importers/test_pack.py` checks the committed entries against.
 
-**Restore** with the Bitwarden CLI. The script writes each file to a temporary name and moves
-it into place only when `bw` succeeded and the result is not empty, and it refuses to touch an
-existing file, so a locked vault or a missing item can never destroy a key you already have:
+**Restore** with the Bitwarden CLI. The script refuses to run when any of the three files
+already exists (even an empty one), writes each to a temporary name, and moves them into place
+only when `bw` succeeded and every result is non-empty, so a locked vault or a missing item can
+never destroy or blank a key you already have. It ends with a non-zero status when nothing was
+restored (without closing an interactive shell), after locking the vault:
 
 ```bash
 bw login --check || bw login
@@ -109,7 +111,10 @@ mkdir -p var/enron
 (
   set -eu; set -o pipefail; umask 077; cd var/enron
   for f in id.key registry.json deny-digests.txt; do
-    if [ -s "$f" ]; then echo "var/enron/$f exists: move it away first" >&2; exit 1; fi
+    if [ -e "$f" ]; then
+      echo "var/enron/$f already exists (possibly empty): inspect it, move or remove it, then rerun" >&2
+      exit 1
+    fi
   done
   trap 'rm -f id.key.tmp registry.json.tmp deny-digests.txt.tmp' EXIT
   item="mailsim / enron id.key"
@@ -123,8 +128,13 @@ print(next(f["value"] for f in json.load(sys.stdin)["fields"] if f["name"] == "d
     [ -s "$f.tmp" ] || { echo "empty $f from bw: nothing restored" >&2; exit 1; }
   done
   for f in id.key registry.json deny-digests.txt; do mv -n "$f.tmp" "$f"; done
+  for f in id.key registry.json deny-digests.txt; do
+    [ -s "$f" ] || { echo "var/enron/$f was not restored" >&2; exit 1; }
+  done
 )
-bw lock && unset BW_SESSION
+restore_status=$?
+bw lock; unset BW_SESSION
+[ "$restore_status" -eq 0 ] || { echo "restore failed (status $restore_status)" >&2; false; }
 ```
 
 `var/enron/deny-digests.txt` is git-ignored like the rest of `var/`.
