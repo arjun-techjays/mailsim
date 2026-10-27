@@ -720,7 +720,8 @@ CLERICAL = re.compile(r"(?i)please print|print in colou?r|make (?:\d+ )?copies|f
 # company-secretarial paperwork: prepared, certified and circulated by counsel or the company
 # secretary, never by the chief executive or another business executive
 CORPORATE_SECRETARIAL = re.compile(
-    r"\bincumbency\b|\bsecretary'?s certificate|\bofficers?'? certificates?|good standing|"
+    r"\bincumbency\b|\bsecretary'?s certificate|\bofficers?'? certificates?|"
+    r"certificates? of good standing|good standing certificates?|"
     r"specimen signatures?|\bminute books?\b|articles of (?:incorporation|organi[sz]ation)|"
     r"banking resolutions?|unanimous written consent|corporate seal",
     re.IGNORECASE,

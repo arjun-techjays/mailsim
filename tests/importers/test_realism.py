@@ -674,13 +674,67 @@ def test_credit_worksheets_name_each_agreement_and_differ_by_counterparty():
         recommendations.add(cells["Recommendation"][0].split(":")[0].split(" ")[0])
         supports.add(cells["Credit support"][0])
         limit = cells["Unsecured credit limit (USD mm)"][0]
-        assert (limit == 0.0) == cells["Recommendation"][0].startswith("Decline")
+        declined = cells["Recommendation"][0].startswith("Decline")
+        assert (limit == 0.0) == declined
+        assert ("Independent amount (USD mm)" in cells) == declined
+        for key in ("Revenue", "Tangible net worth", "Cash"):  # no flat year-on-year figures
+            assert len(set(cells[key])) == len(cells[key]), (key, cells[key])
     assert len(shapes) >= 4 and len(values) >= 60  # rows and figures vary with the counterparty
     assert recommendations == {"Approve", "Decline"} and len(supports) == 3
 
 
+@pytest.mark.parametrize(
+    ("body", "named"),
+    [
+        ("Here is the credit worksheet for Dunmore.", "Dunmore"),
+        ("The credit worksheet for Dunmore's ISDA is attached.", "Dunmore"),
+        (
+            "Attached: the credit worksheet for Eastmere Power Inc., as agreed.",
+            "Eastmere Power Inc.",
+        ),
+        ("Attached is the credit worksheet for Monday's meeting.", None),
+        ("The credit worksheet for Q3 is attached.", None),
+        ("The credit worksheet for Rohan to sign is attached.", None),
+        ("The credit worksheet for ISDA purposes is attached.", None),
+    ],
+)
+def test_credit_counterparty_is_a_fictional_name_or_seeded(body, named):
+    ctx = _credit_ctx("Credit worksheet", body)
+    party = DOC._credit_party(ctx)
+    if named:
+        assert party == named
+    else:  # anything else in that position falls back to a fictional firm seeded by the mail
+        assert party == DOC._org(7, DOC._mail_key(ctx), 0) and party.split()[0] in N.FAKE_ORG_NAMES
+    assert Scanner().scan_text(party) == []
+
+
+def test_credit_files_of_one_mail_agree():
+    # issue #12 review: the worksheet and the threshold table of one mail share counterparty,
+    # agreement and thresholds; the terms threshold is the matrix value at the party's rating
+    seen_notches = set()
+    for i in range(40):
+        body = "Credit Worksheet and Threshold table; the collateral threshold matrix is updated."
+        ws = [DOC._credit_worksheet(_credit_ctx(f"Credit pair {i}", body, key=f"m{i}:0"), "CW")]
+        tt = DOC._threshold_table(_credit_ctx(f"Credit pair {i}", body, key=f"m{i}:1"), "TT")
+        cells, table = _cells(ws[0]), _cells(tt)
+        rating = cells["Senior unsecured rating"][0]
+        seen_notches.add(rating)
+        assert table["Party B"] == cells["Counterparty"] and table["Party B rating"] == [rating]
+        agreement = next(str(r[0]) for r in ws[0] if r and str(r[0]).startswith("Proposed terms"))
+        assert agreement == f"Proposed terms: {table['Agreement'][0]}"
+        matrix = {str(r[0]): r[1] for r in ws[0] if r and r[0] in DOC._RATINGS}
+        assert cells["Collateral threshold (USD mm)"] == [matrix[rating]]
+        for r in tt:
+            if r and r[0] in DOC._RATINGS:  # Party B column == the worksheet's matrix
+                assert r[2] == matrix[r[0]]
+        assert (
+            cells["Collateral threshold (USD mm)"][0] <= cells["Unsecured credit limit (USD mm)"][0]
+            or rating not in DOC._RATINGS[: DOC._INVESTMENT_GRADE]
+        )
+    assert len(seen_notches) >= 4
+
+
 def test_threshold_table_falls_with_the_rating():
-    one_way = two_way = False
     for i in range(12):
         ctx = _credit_ctx(f"Threshold table {i}", "Rohan - Credit Worksheet and Threshold table.",
                           key=f"t{i}")  # fmt: skip
@@ -689,18 +743,12 @@ def test_threshold_table_falls_with_the_rating():
         a = [r[1] for r in ladder]
         b = [r[2] for r in ladder]
         assert a == sorted(a, reverse=True) and a[0] > 0 and b == sorted(b, reverse=True)
+        assert b[0] > 0 and len(ladder) == DOC._INVESTMENT_GRADE
         assert _cells(rows)["Below BBB- / Baa3 or unrated"][:2] == [0.0, 0.0]
         assert _cells(rows)["Party A"] == [N.COMPANY_LONG]
-        independent = _cells(rows)["Independent amount (USD mm)"][0]
-        one_way |= set(b) == {0.0} and independent > 0
-        two_way |= b[0] > 0 and independent == 0.0
-    assert one_way and two_way
     doc = DOC.build("spreadsheet", ctx, filename_title="Threshold Table")
     assert doc.filename == "Threshold-Table.xlsx"
     assert Scanner().scan_text(extract_text(doc.data, doc.filename)) == []
-    # both files of one mail are about the same counterparty
-    worksheet = _cells(DOC._credit_worksheet(ctx, "Credit Worksheet"))["Counterparty"]
-    assert _cells(rows)["Party B"] == worksheet
 
 
 def test_other_spreadsheets_keep_their_layout():
@@ -717,6 +765,9 @@ def test_company_secretarial_work_is_not_done_by_executives():
     for form in ("the secretary's certificate", "specimen signatures", "the minute book",
                  "articles of incorporation", "the banking resolution"):  # fmt: skip
         assert C.CORPORATE_SECRETARIAL.search(f"Please send {form}.")
+    assert C.CORPORATE_SECRETARIAL.search("Attached is the certificate of good standing.")
+    # an account in good standing, a resolution of an issue: not secretarial paperwork
+    assert C.role_reason("exec", "The account remains in good standing.", sender_id="cfo") is None
     # a resolution of an issue, or a board resolution in general, is not secretarial paperwork
     assert (
         C.role_reason("exec", "We need a resolution of the pricing issue.", sender_id="ceo") is None
