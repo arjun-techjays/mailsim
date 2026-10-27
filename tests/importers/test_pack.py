@@ -6,14 +6,17 @@ from __future__ import annotations
 
 import email
 import json
+import re
 from email import policy
 
 import pytest
 
 from mailsim.engine.facades import AgentMailbox, Controller, EvaluatorView
 from mailsim.evaluation.engine import evaluate_run
-from mailsim.importers import leadership
+from mailsim.importers import enron, leadership
+from mailsim.importers import names as N
 from mailsim.importers.pii import Scanner
+from mailsim.importers.pseudonymize import DenyList
 from mailsim.scenario.answer_keys import create_answer_key_version, load_answer_key
 from mailsim.scenario.loader import load_scenario
 from tests.scenarios import ROOT
@@ -49,6 +52,20 @@ REGISTRY = ROOT / "var" / "enron" / "registry.json"
 def test_pack_has_no_harvested_real_names():
     names = json.loads(REGISTRY.read_text())["names"]
     findings = Scanner(names).scan_paths([PACK])
+    assert not findings, f"{len(findings)} findings (kinds: {sorted({f.kind for f in findings})})"
+
+
+ID_KEY = ROOT / "var" / "enron" / "id.key"
+
+
+@pytest.mark.skipif(not ID_KEY.is_file(), reason="no local team id key (var/enron/id.key)")
+def test_deny_list_is_keyed_with_the_team_key():
+    # issue #9: HASHED_DENY only matches its records under the team key. load_key fails unless
+    # this is the key behind names.ID_KEY_CHECK, the key the entries were derived with.
+    key = enron.load_key(ID_KEY)
+    assert len(N.HASHED_DENY) == 5
+    assert all(re.fullmatch(r"[0-9a-f]{64}", e) for e in N.HASHED_DENY)
+    findings = Scanner(deny=DenyList(key)).scan_paths([PACK])
     assert not findings, f"{len(findings)} findings (kinds: {sorted({f.kind for f in findings})})"
 
 

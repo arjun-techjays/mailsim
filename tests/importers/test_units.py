@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 
 from mailsim.importers import names as N
@@ -10,9 +11,11 @@ from mailsim.importers.clean import clean_body, is_garbled, split_chain
 from mailsim.importers.pii import Scanner
 from mailsim.importers.pseudonymize import (
     PLACEHOLDER,
+    DenyList,
     Harvester,
     Pseudonymizer,
     Renderer,
+    deny_entry,
     fake_identity,
     refs_in,
     unknown_proper_nouns,
@@ -282,17 +285,25 @@ def test_postal_details_are_scrubbed():
 
 
 def test_hashed_denylist(monkeypatch):
-    # a made-up name, present only as its sha256
-    monkeypatch.setattr(
-        N,
-        "HASHED_DENY",
-        N.HASHED_DENY | {"43c05774aa2ee4b626c7b4989a16312e987898c1ce6a9dfa31a2baf07b6a3d29"},
-    )
+    # a made-up name, listed only as an HMAC (under the test key) of its sha256 (issue #9)
+    digest = hashlib.sha256(b"quorvexa").hexdigest()
+    assert digest == "43c05774aa2ee4b626c7b4989a16312e987898c1ce6a9dfa31a2baf07b6a3d29"
+    entry = deny_entry(TEST_KEY, digest)
+    assert entry != digest and entry != deny_entry(b"another-key-of-enough-length!", digest)
+    monkeypatch.setattr(N, "HASHED_DENY", N.HASHED_DENY | {entry})
     p = _pseudo(LOTUS_CHAIN)
     t = p.apply("I am asking Quorvexa to send it.").text
     assert "Quorvexa" not in t and "{{q:" in t
-    assert [f.kind for f in Scanner().scan_text("asking Quorvexa today")] == ["denylisted-name"]
-    assert "Quorvexa" in unknown_proper_nouns("asking Quorvexa", p.reg)
+    deny = DenyList(TEST_KEY)
+    found = Scanner(deny=deny).scan_text("asking QUORVEXA and Quorvexa today")
+    assert [f.kind for f in found] == ["denylisted-name", "denylisted-name"]
+    assert "Quorvexa" in unknown_proper_nouns("asking Quorvexa", p.reg, deny)
+    # the plain sha256 is no longer a match, and without the key nothing matches
+    monkeypatch.setattr(N, "HASHED_DENY", frozenset({digest}))
+    assert not DenyList(TEST_KEY).matches("Quorvexa")
+    monkeypatch.setattr(N, "HASHED_DENY", frozenset({entry}))
+    assert not DenyList(b"another-key-of-enough-length!").matches("Quorvexa")
+    assert Scanner().scan_text("asking Quorvexa today") == []  # no key: deny list not checked
 
 
 def test_registered_surname_after_a_first_name_is_replaced_even_if_allowed():

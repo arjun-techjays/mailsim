@@ -96,7 +96,8 @@ corpus changes and so does every fixture that shows one.
 **Where it is kept.** A Secure Note item named `mailsim / enron id.key` in the team's
 [Bitwarden](https://bitwarden.com) organisation (open source; the free tier is enough). The
 note holds the key and nothing else. The same item carries `registry.json` as an attachment
-(real names: same handling as the key). Restore it with the Bitwarden CLI:
+(real names: same handling as the key) and, in a custom field `deny digests`, the sha256
+digests behind `names.HASHED_DENY` (one per line), which are needed to re-key the deny list. Restore it with the Bitwarden CLI:
 
 ```bash
 bw login && export BW_SESSION=$(bw unlock --raw)
@@ -114,8 +115,11 @@ warning.
 
 **Rotation** (only if the key leaks) is manual: generate a new key
 (`python -c 'import secrets;print(secrets.token_hex(32))' > var/enron/id.key`, `chmod 600`),
-put `enron.id_key_check(key)` into `names.ID_KEY_CHECK`, re-import, regenerate and scan the
-pack, then replace the Bitwarden note. Every fixture with a hashed id changes.
+put `enron.id_key_check(key)` into `names.ID_KEY_CHECK`, replace every `names.HASHED_DENY`
+entry with `pseudonymize.deny_entry(key, digest)` for the digests kept in the Bitwarden item,
+re-import, regenerate and scan the pack, then replace the Bitwarden note. **Adding a name** to
+the deny list works the same way: `deny_entry(key, sha256(name.lower()))`; add its digest to
+the Bitwarden item too. Every fixture with a hashed id changes.
 
 ## Run a leadership inbox locally
 
@@ -280,11 +284,13 @@ against the CEO pack and checks that the results agree.
        corpus' home city (`names.LANDMARKS`), a pseudonymized first name next to a known real
        surname, and real first names written in lower case where a signature goes
        (`thanks` / `brant`).
-     * `names.HASHED_DENY` lists real names that the rules cannot catch. It stores only
-       `sha256(lower-cased token)`. This is an **unsalted** hash: it keeps the names out of
-       casual reading of the repository, but anyone with a candidate list can recover them by
-       hashing. Matching capitalised tokens are pseudonymized, and the scanner flags them as
-       `denylisted-name`.
+     * `names.HASHED_DENY` lists real names that the rules cannot catch. Each entry is
+       `HMAC-SHA256(id key, "deny" + sha256(lower-cased token))` (`pseudonymize.deny_entry`), so
+       neither the names nor a guess at them can be checked without the team's id key.
+       Matching capitalised tokens are pseudonymized, and the scanner flags them as
+       `denylisted-name`. The import, the generator and `sim import scan` check the list with
+       the key they load (`--id-key`); library callers without a key (`Scanner()`) skip it.
+       Earlier revisions committed the plain sha256 digests, which stay in git history.
 5. **Classification** (`classify`). A transparent weighted keyword rule set is applied to the
    subject and body. It covers board, legal, finance, deals, hr, vendor, scheduling, ops,
    personal, newsletter/noise and `general`. Every record stores its scores and matched

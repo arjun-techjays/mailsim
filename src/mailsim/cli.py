@@ -327,10 +327,11 @@ def _load_key(path: Path) -> bytes:
 def _import(args: argparse.Namespace) -> int:
     from mailsim.importers import enron
     from mailsim.importers.pii import Scanner
+    from mailsim.importers.pseudonymize import DenyList
 
     if args.import_cmd == "scan":
-        _load_key(args.id_key)
-        findings = Scanner(_names(args.names)).scan_paths(args.paths)
+        deny = DenyList(_load_key(args.id_key))
+        findings = Scanner(_names(args.names), deny=deny).scan_paths(args.paths)
         _emit({"ok": not findings, "findings": len(findings),
                "by_kind": _count(f.kind for f in findings),
                "examples": [str(f) for f in findings[:50]]})  # fmt: skip
@@ -362,7 +363,7 @@ def _generate(args: argparse.Namespace) -> int:
 
     from mailsim.importers import enron, leadership
 
-    _load_key(args.id_key)
+    key = _load_key(args.id_key)
     if args.no_names:
         print("WARNING: --no-names: generated text is scanned against the built-in name lists "
               "only, not the registry of real names harvested by `sim import enron`. Do not "
@@ -375,7 +376,7 @@ def _generate(args: argparse.Namespace) -> int:
     start = datetime.strptime(args.start_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
     opts = leadership.GenerateOptions(
         seed=args.seed, roles=[r.strip() for r in args.roles.split(",") if r.strip()],
-        volume=volume, start_at=start, days=args.days, extra_names=_names(args.names),
+        volume=volume, start_at=start, days=args.days, extra_names=_names(args.names), id_key=key,
     )  # fmt: skip
     scenarios = leadership.generate(header, records, opts)
     paths = leadership.write_scenarios(args.out, scenarios)

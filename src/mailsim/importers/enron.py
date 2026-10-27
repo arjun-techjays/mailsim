@@ -214,7 +214,7 @@ def build_record(raw: str, pseudo: Pseudonymizer, cfg: ImportConfig, stats: Impo
         "topic": result.topic,
         "scores": result.scores,
         "keywords": result.keywords,
-        "unknown_proper": len(unknown_proper_nouns(text, pseudo.reg)),
+        "unknown_proper": len(unknown_proper_nouns(text, pseudo.reg, pseudo.deny)),
         "unknown_orgs": len(unknown_organisations(text, pseudo.reg)),
         "leftover_headers": any(LEFTOVER.search(b) for b in bodies),
         "ids": sorted(pseudo.emitted),
