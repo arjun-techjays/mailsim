@@ -1003,3 +1003,66 @@ class ImapSmtpDriver(NeutralDriver):
 
 
 DRIVERS.append(ImapSmtpDriver)
+
+
+# ---- Issue #5: replies whose recipients the client chooses -----------------------------------
+# Grading counts `operation: reply` only when the reply reached the replied message's sender
+# (From / Reply-To), so the contract needs replies addressed to anyone (e.g. to self). Kept as
+# module functions keyed by driver name, so the drivers above stay untouched. REST and MCP have
+# no way to address a reply (their reply always goes to the sender) and offer neither.
+REPLY_RECIPIENTS = "reply_recipients"  # one reply operation, recipients chosen by the client
+DRAFT_REPLY_RECIPIENTS = "draft_reply_recipients"  # a reply draft, re-addressed, then sent
+REPLY_ADDRESSING: dict[str, frozenset[str]] = {
+    "neutral": frozenset({REPLY_RECIPIENTS, DRAFT_REPLY_RECIPIENTS}),
+    "gmail": frozenset({REPLY_RECIPIENTS, DRAFT_REPLY_RECIPIENTS}),  # messages.send / drafts
+    "graph": frozenset({REPLY_RECIPIENTS, DRAFT_REPLY_RECIPIENTS}),  # /reply / createReply+send
+    "imap_smtp": frozenset({REPLY_RECIPIENTS}),  # SMTP with In-Reply-To
+}
+
+
+def _re(subject: str) -> str:
+    return subject if subject.lower().startswith("re:") else f"Re: {subject}"
+
+
+def _gmail_reply_raw(d: GmailDriver, ref: str, to: list[str], text: str) -> dict[str, Any]:
+    orig = d._call("GET", f"/messages/{ref}", params={"format": "metadata"})
+    h = {x["name"].lower(): x["value"] for x in orig["payload"]["headers"]}
+    refs = " ".join(filter(None, [h.get("references"), h["message-id"]]))
+    headers = {"To": ", ".join(to), "In-Reply-To": h["message-id"], "References": refs,
+               "Subject": _re(h.get("subject", ""))}  # fmt: skip
+    return {"raw": d._raw(headers, text), "threadId": orig["threadId"]}
+
+
+def reply_to(d: NeutralDriver, ref: str, to: list[str], text: str) -> None:
+    """Reply to `ref` addressed to `to` (not necessarily its sender), the interface's way."""
+    if isinstance(d, GmailDriver):
+        d._call("POST", "/messages/send", json=_gmail_reply_raw(d, ref, to, text))
+    elif isinstance(d, GraphDriver):
+        rcpts = [{"emailAddress": {"address": a}} for a in to]
+        d._call("POST", f"/messages/{ref}/reply",
+                json={"comment": text, "message": {"toRecipients": rcpts}})  # fmt: skip
+    elif isinstance(d, ImapSmtpDriver):
+        orig = d.get(ref)
+        d._submit(to, _re(orig.subject), text, **{"In-Reply-To": orig.message_id_header,
+                                                  "References": orig.message_id_header})  # fmt: skip
+    else:
+        assert type(d) is NeutralDriver, d.name
+        d.mb.reply(ref, text=text, to=to)
+
+
+def draft_reply_to(d: NeutralDriver, ref: str, to: list[str], text: str) -> None:
+    """A reply draft of `ref` addressed to `to`, then sent (the engine sends it as a reply)."""
+    if isinstance(d, GmailDriver):
+        draft = d._call("POST", "/drafts", json={"message": _gmail_reply_raw(d, ref, to, text)})
+        d._call("POST", "/drafts/send", json={"id": draft["id"]})
+    elif isinstance(d, GraphDriver):
+        draft = d._call("POST", f"/messages/{ref}/createReply", json={"comment": text})
+        rcpts = [{"emailAddress": {"address": a}} for a in to]
+        patched = d._call("PATCH", f"/messages/{draft['id']}", json={"toRecipients": rcpts})
+        d._call("POST", f"/messages/{patched['id']}/send")
+    else:
+        assert type(d) is NeutralDriver, d.name
+        orig = d.mb.get_message(ref)
+        did = d.mb.create_draft(to=to, subject=_re(orig.subject), text=text,
+                                reply_to=ref)["message_id"]  # fmt: skip
+        d.mb.send_draft(str(did))
