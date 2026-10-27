@@ -318,3 +318,31 @@ def test_a_refused_write_does_not_open_the_exemption(env, tmp_path):
     with use_agent_request(), use_connection_test():
         env.engine.list_folders(env.scope, run, fm)  # a probe's read is not a write either
         assert not is_read_back()
+
+
+def test_insert_applies_flags_and_labels_in_one_write_or_none(env, tmp_path):
+    from mailsim.domain.errors import InvalidRequest, PermissionDenied
+
+    run = env.run(_limited(tmp_path, max_labels_per_message=2))
+    fm = env.mbx(run, "finance_manager")
+    raw = (b"From: vendor@example.test\r\nTo: finance@example.test\r\nSubject: in\r\n"
+           b"Message-ID: <ins@example.test>\r\n\r\nbody\r\n")  # fmt: skip
+    count = len(env.engine.list_messages(env.scope, run, fm, actor=CONTROLLER))
+    for kw, exc in ((dict(flags=["BOGUS"]), InvalidRequest), (dict(labels=[" "]), InvalidRequest),
+                    (dict(flags=["DRAFT"]), PermissionDenied),
+                    (dict(labels=["a", "b", "c"]), SimulationLimitExceeded)):  # fmt: skip
+        with pytest.raises(exc):
+            env.engine.insert_message(env.scope, run, fm, raw, **kw)
+    assert len(env.engine.list_messages(env.scope, run, fm, actor=CONTROLLER)) == count
+    mid = env.engine.insert_message(env.scope, run, fm, raw, flags=["SEEN", "FLAGGED"],
+                                    labels=["a", "b", "a"])["message_id"]  # fmt: skip
+    msg = env.engine.get_message(env.scope, run, fm, mid, actor=CONTROLLER)
+    assert {"SEEN", "FLAGGED"} <= set(msg.flags) and {"a", "b"} <= set(msg.labels)
+    inserts = [a for a in env.engine.actions(env.scope, run) if a["operation"] == "insert"]
+    assert [a["outcome"] for a in inserts] == ["INVALID_REQUEST", "INVALID_REQUEST",
+                                               "PERMISSION_DENIED", "SIMULATION_LIMIT_EXCEEDED",
+                                               "ok"]  # fmt: skip
+    assert inserts[-1]["input"] == {"bytes": len(raw), "folder": "inbox",
+                                    "flags": ["FLAGGED", "SEEN"], "labels": ["a", "b"]}  # fmt: skip
+    assert _counters(env, run)["actions"] == 5  # one budget unit per insert, refusals included
+    env.engine.insert_message(env.scope, run, fm, raw, labels=["x", "y", "z"], actor=CONTROLLER)
