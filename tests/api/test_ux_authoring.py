@@ -811,3 +811,20 @@ def test_scripted_persona_on_key_and_unquoted_checks_default_on(api):
         doc = yaml.safe_load(key_src)
         doc["answer_key"]["checks_default"] = {"true": True, "false": False}.get(value, value)
         assert AnswerKeyDoc.model_validate(doc).answer_key.checks_default == expected
+
+
+def test_duplicate_message_ids_are_refused_at_validate_and_publish(api):
+    """QA D-1: the same message twice in one mailbox (copy under a trailing-hyphen name)."""
+    payload = scenario_payload()
+    doc = yaml.safe_load(payload["source"])
+    doc["scenario"]["mailboxes"][0]["initial_messages"].append({"fixture": "fixtures/copy-.eml"})
+    payload["source"] = yaml.safe_dump(doc, sort_keys=False)
+    payload["fixtures"]["fixtures/copy-.eml"] = payload["fixtures"]["fixtures/invoice-001.eml"]
+    path = "scenario.mailboxes.0.initial_messages.2.fixture"
+    r = api.call("POST", "/v1/scenario-drafts/validate", json=payload, expect=200).json()
+    assert not r["ok"] and [e["path"] for e in r["errors"]] == [path]
+    assert "duplicate Message-ID <invoice-001@example.test>" in r["errors"][0]["message"]
+    assert "fixtures/invoice-001.eml" in r["errors"][0]["message"]
+    r = api.call("POST", "/v1/scenarios", json=payload, expect=400).json()
+    assert r["error"]["details"]["issues"][0]["path"] == path
+    assert api.call("GET", "/v1/scenarios", expect=200).json() == []

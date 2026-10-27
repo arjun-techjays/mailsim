@@ -48,6 +48,9 @@ export function ScenariosPage() {
         <p>
           <Link className="button primary" to="/scenarios/new">
             New scenario
+          </Link>{' '}
+          <Link className="button" to="/scenarios/import">
+            Import scenario pack
           </Link>
         </p>
       </ShowFor>

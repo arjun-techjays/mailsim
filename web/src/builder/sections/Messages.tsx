@@ -17,6 +17,7 @@ import {
   safeFileName,
   uniqueFixturePath,
 } from '../files';
+import { baseName, planUploads } from '../matching';
 import { personaLabel, referencedFixtures, slugId, type MailboxForm, type PersonaForm } from '../model';
 import { fieldId } from '../paths';
 import { fromIsoInput } from '../time';
@@ -77,14 +78,22 @@ function MessageItem({ mailboxIndex, index, path, owner }: { mailboxIndex: numbe
           </dd>
         </dl>
       ) : (
-        <p className="muted">{size === null ? 'File missing: upload it again or remove this message.' : 'Reading message…'}</p>
+        <p className="muted">
+          {size === null ? (
+            <>
+              File missing: upload <code>{baseName(path)}</code> (the name must match exactly) or remove this message.
+            </>
+          ) : (
+            'Reading message…'
+          )}
+        </p>
       )}
       {issues.length > 0 && (
         <p className="field-error" data-testid="inline-error">
           {issues.join('; ')}
         </p>
       )}
-      <button type="button" onClick={() => removeMessage(owner, path)}>
+      <button type="button" onClick={() => removeMessage(owner, index)}>
         Remove message {index + 1}: “{info?.subject || path}”
       </button>
     </li>
@@ -172,7 +181,7 @@ function ComposeForm({ owner, onClose }: { owner: string; onClose: () => void })
       in_reply_to: inReplyTo,
       references: parent && inReplyTo ? [...(parent.references ?? (parent.in_reply_to ? [parent.in_reply_to] : [])), inReplyTo] : [],
       attachments: attachments.map(({ filename, content_type, content_b64 }) => ({ filename, content_type, content_b64 })),
-      fixture_path: uniqueFixturePath(`${ownerPersona?.id || 'message'}-${slugId(subject) || 'message'}.eml`, Object.keys(draft.fixtures)),
+      fixture_path: uniqueFixturePath(safeFileName(`${ownerPersona?.id || 'message'}-${slugId(subject) || 'message'}.eml`), Object.keys(draft.fixtures)),
     };
     setBusy(true);
     try {
@@ -300,41 +309,117 @@ function ComposeForm({ owner, onClose }: { owner: string; onClose: () => void })
   );
 }
 
+interface UploadReport {
+  filled: string[];
+  added: string[];
+  skipped: { name: string; reason: string }[];
+}
+
+/** Content of the always-mounted upload live region. */
+function UploadSummary({ report }: { report: UploadReport }) {
+  const { filled, added, skipped } = report;
+  return (
+    <>
+      {filled.length > 0 && <p>Filled {filled.length} message file(s) the scenario lists.</p>}
+      {added.length > 0 && <p>Added {added.length} new message(s): {added.join(', ')}.</p>}
+      {skipped.length > 0 && (
+        <>
+          <p>Not added ({skipped.length}):</p>
+          <ul>
+            {skipped.map((s, i) => (
+              <li key={`${i}:${s.name}`}>
+                {s.name}: {s.reason}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </>
+  );
+}
+
+/** React keys for a mailbox's message list: the path, plus its occurrence number when listed twice. */
+function messageKeys(paths: readonly string[]): string[] {
+  const seen = new Map<string, number>();
+  return paths.map((p) => {
+    const n = (seen.get(p) ?? 0) + 1;
+    seen.set(p, n);
+    return n === 1 ? p : `${p}#${n}`;
+  });
+}
+
 function MailboxMessages({ mailboxIndex }: { mailboxIndex: number }) {
-  const { api, draft, addFixture } = useBuilder();
+  const { api, draft, addFixture, fillFixture } = useBuilder();
   const mailbox = draft.form.mailboxes[mailboxIndex] as MailboxForm;
   const persona = draft.form.personas.find((p) => p.uid === mailbox.owner);
   const [composing, setComposing] = useState(false);
   const [uploadError, setUploadError] = useState<unknown>(null);
+  const [report, setReport] = useState<UploadReport | null>(null);
+  /** Uploads that match no message the scenario lists: added only on request. */
+  const [held, setHeld] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const inputId = useId();
   const who = persona ? personaLabel(persona) : mailbox.owner;
 
-  const onUpload = async (e: ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files as FileList);
-    e.target.value = '';
+  const ingest = async (files: File[], addUnmatched: boolean) => {
     setUploadError(null);
     setBusy(true);
+    const referenced = referencedFixtures(draft.form);
+    const present = new Set(Object.keys(draft.fixtures));
+    const plan = planUploads(files, referenced, present);
+    // While the scenario still lists files that are missing, an upload that matches none of them
+    // is most likely a typo or a stray file: hold it until the user says to add it.
+    const waiting = referenced.some((p) => !present.has(p));
+    const toAdd = addUnmatched || !waiting ? plan.unmatched : [];
+    const out: UploadReport = { filled: [], added: [], skipped: [...plan.skipped] };
+    const ids = new Map<string, string>();
+    for (const p of mailbox.messages) {
+      const mid = draft.info[p]?.message_id;
+      if (mid) ids.set(mid, p);
+    }
     const taken = Object.keys(draft.fixtures);
-    let total = fixturesBytes(draft.fixtures, referencedFixtures(draft.form));
+    let total = fixturesBytes(draft.fixtures, referenced);
+    const read = async (file: File) => {
+      if (file.size > MAX_FILE_BYTES) throw new Error(`${file.name} is larger than ${formatBytes(MAX_FILE_BYTES)}.`);
+      if (total + file.size > DRAFT_FIXTURE_BUDGET_BYTES) {
+        throw new Error(`${file.name} would take the scenario's message files over ${formatBytes(DRAFT_FIXTURE_BUDGET_BYTES)}.`);
+      }
+      total += file.size;
+      const b64 = await fileToBase64(file);
+      return { b64, summary: await api.builder.inspectEml(b64) };
+    };
     try {
-      for (const file of files) {
-        if (file.size > MAX_FILE_BYTES) throw new Error(`${file.name} is larger than ${formatBytes(MAX_FILE_BYTES)}.`);
-        if (total + file.size > DRAFT_FIXTURE_BUDGET_BYTES) {
-          throw new Error(`${file.name} would take the scenario's message files over ${formatBytes(DRAFT_FIXTURE_BUDGET_BYTES)}.`);
+      for (const { path, file } of plan.fills) {
+        const { b64, summary } = await read(file);
+        fillFixture(path, b64, { ...summary, source: 'uploaded' });
+        out.filled.push(path);
+      }
+      for (const file of toAdd) {
+        const { b64, summary } = await read(file);
+        const twin = summary.message_id ? ids.get(summary.message_id) : undefined;
+        if (twin) {
+          out.skipped.push({ name: file.name, reason: `same Message-ID ${summary.message_id} as ${twin}, already in this mailbox` });
+          continue;
         }
-        total += file.size;
-        const b64 = await fileToBase64(file);
-        const summary = await api.builder.inspectEml(b64);
         const path = uniqueFixturePath(file.name, taken);
         taken.push(path);
+        if (summary.message_id) ids.set(summary.message_id, path);
         addFixture(path, b64, { ...summary, source: 'uploaded' }, mailbox.owner);
+        out.added.push(path);
       }
+      setHeld(toAdd.length === plan.unmatched.length ? [] : plan.unmatched);
     } catch (err) {
       setUploadError(err);
     } finally {
       setBusy(false);
+      setReport(out);
     }
+  };
+
+  const onUpload = (e: ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files as FileList);
+    e.target.value = '';
+    void ingest(files, false);
   };
 
   return (
@@ -344,8 +429,8 @@ function MailboxMessages({ mailboxIndex }: { mailboxIndex: number }) {
         <p className="muted">Empty: the mailbox starts with no messages.</p>
       ) : (
         <ol className="b-messages">
-          {mailbox.messages.map((path, j) => (
-            <MessageItem key={path} mailboxIndex={mailboxIndex} index={j} path={path} owner={mailbox.owner} />
+          {messageKeys(mailbox.messages).map((key, j) => (
+            <MessageItem key={key} mailboxIndex={mailboxIndex} index={j} path={mailbox.messages[j] as string} owner={mailbox.owner} />
           ))}
         </ol>
       )}
@@ -365,7 +450,26 @@ function MailboxMessages({ mailboxIndex }: { mailboxIndex: number }) {
             disabled={busy}
             onChange={(e) => void onUpload(e)}
           />
-          {busy && <span role="status">Reading files…</span>}
+        </div>
+      )}
+      <div role="status" className="b-upload-report" data-testid="upload-report">
+        {busy ? <p>Reading files…</p> : report && <UploadSummary report={report} />}
+      </div>
+      {held.length > 0 && (
+        <div className="notice" role="note" data-testid="unmatched-uploads">
+          <p>
+            {held.length === 1 ? '1 file does' : `${held.length} files do`} not match any message the scenario lists:{' '}
+            {held.map((f) => f.name).join(', ')}. Check the names (they must match exactly), or add{' '}
+            {held.length === 1 ? 'it' : 'them'} to this mailbox as new messages.
+          </p>
+          <div className="row">
+            <button type="button" disabled={busy} onClick={() => void ingest(held, true)}>
+              Add {held.length === 1 ? 'it' : `these ${held.length}`} as new messages
+            </button>
+            <button type="button" onClick={() => setHeld([])}>
+              Discard
+            </button>
+          </div>
         </div>
       )}
       {uploadError !== null && <ErrorDisplay error={uploadError} title="Could not add the .eml file" />}

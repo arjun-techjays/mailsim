@@ -295,6 +295,38 @@ def agent_visible_texts(body: ScenarioBody, fixtures: list[bytes] | None = None)
     return texts
 
 
+def duplicate_message_issues(body: ScenarioBody, message_ids: dict[str, str | None]) -> list[Issue]:
+    """One mailbox must not start with the same message twice: a fixture listed twice, or two
+    fixtures with the same Message-ID header (mail clients and IMAP sync treat those as one
+    message). `message_ids` maps each readable fixture to its Message-ID (None: the engine
+    generates a fresh one). The same message in SEVERAL mailboxes is normal (one copy each).
+    Scheduled events and persona replies carry no Message-ID in the document (the engine
+    generates unique ones at run time), so only initial messages can collide statically."""
+    out: list[Issue] = []
+    for i, mb in enumerate(body.mailboxes):
+        seen_paths: dict[str, int] = {}
+        seen_ids: dict[str, tuple[int, str]] = {}
+        for j, im in enumerate(mb.initial_messages):
+            path = f"scenario.mailboxes[{i}].initial_messages[{j}].fixture"
+            if im.fixture in seen_paths:
+                out.append(Issue(path, f"fixture {im.fixture} is listed more than once in the "
+                                       f"mailbox of {mb.owner!r} (also initial_messages."
+                                       f"{seen_paths[im.fixture]})"))  # fmt: skip
+                continue
+            seen_paths[im.fixture] = j
+            mid = message_ids.get(im.fixture)
+            if mid is None:
+                continue
+            if mid in seen_ids:
+                k, other = seen_ids[mid]
+                out.append(Issue(path, f"duplicate Message-ID {mid[:200]} in the mailbox of "
+                                       f"{mb.owner!r}: fixture {im.fixture} has the same "
+                                       f"Message-ID as {other} (initial_messages.{k})"))  # fmt: skip
+                continue
+            seen_ids[mid] = (j, im.fixture)
+    return out
+
+
 def validate_scenario(
     data: object,
     base_dir: Path | None = None,
@@ -306,6 +338,7 @@ def validate_scenario(
     if report.doc is None:
         return report
     fixture_check: Callable[[str], str | None] | None = None
+    message_ids: dict[str, str | None] = {}  # valid fixture -> its Message-ID header
     if base_dir is not None:
         directory = base_dir
 
@@ -324,11 +357,13 @@ def validate_scenario(
                 return f"fixture {rel} is not a valid message: {exc.message}"
             if parsed.from_ is None:
                 return f"fixture {rel} has no From header"
+            message_ids[rel] = parsed.message_id
             return None
 
     sem = validate_semantics(report.doc.scenario, fixture_check)
     sem.errors[:0] = validate_authoring(report.doc.scenario)
     if base_dir is not None:
+        sem.errors.extend(duplicate_message_issues(report.doc.scenario, message_ids))
         raws = []
         for mb in report.doc.scenario.mailboxes:
             for im in mb.initial_messages:

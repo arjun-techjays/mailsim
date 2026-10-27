@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { expectAccessible, KEYS } from '../fixtures';
+import { answerKeyYaml, eml, scenarioYaml, TRICKY, zipPack } from '../packs';
 
 // Mock API in local no-auth mode (VITE_MOCK_LOCAL_NO_AUTH=1), mirroring `serve --local-no-auth`:
 // the server prints a dashboard link carrying a launch token in the URL fragment.
@@ -60,5 +61,21 @@ test.describe('local no-auth mode', () => {
     await page.goto('/runs');
     await page.reload();
     await expect(page.getByTestId('session-role')).toHaveText('operator (local no-auth)');
+  });
+
+  test('the operator imports a scenario pack (.zip) with its answer key', async ({ page }) => {
+    const id = 'e2e.noauth-pack';
+    const zip = zipPack('pack', {
+      'scenario.yaml': scenarioYaml(id, TRICKY),
+      'answer_key.yaml': answerKeyYaml(id),
+      ...Object.fromEntries(TRICKY.map((p, i) => [p, eml(`n${i}`, `Operator ${i}`)])),
+    });
+    await page.goto(LAUNCH);
+    await expect(page.getByTestId('session-role')).toHaveText('operator (local no-auth)');
+    await page.goto('/scenarios/import');
+    await page.getByLabel('Choose a .zip file').setInputFiles({ name: 'pack.zip', mimeType: 'application/zip', buffer: zip });
+    await expect(page.getByTestId('pack-check')).toContainText(`Message files${TRICKY.length}`);
+    await page.getByRole('button', { name: 'Publish scenario and answer key' }).click();
+    await expect(page.getByTestId('pack-published')).toContainText('Answer key version 1 is published');
   });
 });

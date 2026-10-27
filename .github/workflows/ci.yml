@@ -1,8 +1,10 @@
 name: ci
 on: [push, pull_request]
+permissions:
+  contents: read
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16
@@ -11,8 +13,8 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U mailsim" --health-interval 2s --health-timeout 3s --health-retries 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
       - run: uv sync
       - run: uv run ruff check .
       - run: uv run ruff format --check .
@@ -22,12 +24,12 @@ jobs:
       - run: uv run alembic upgrade head && uv run alembic check
         env: {MAILSIM_DATABASE_URL: "postgresql+psycopg://mailsim:mailsim@localhost:54329/mailsim"}
   web:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run: {working-directory: web}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
         with: {node-version: "22", cache: npm, cache-dependency-path: web/package-lock.json}
       - run: npm ci
       - run: npm run lint

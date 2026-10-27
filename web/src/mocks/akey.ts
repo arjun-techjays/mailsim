@@ -228,6 +228,9 @@ export function createAkeyHandlers(db: MockDb, h: AkeyHelpers): HttpHandler[] {
       const { doc, error } = parseDraft((await request.json()) as Doc);
       if (error) return ok({ ok: false, errors: [error], warnings: [], document: null });
       const { errors, warnings } = validateAnswerKeyDoc(doc, compatible(doc, s.versions));
+      // like the server: a key may only name scenario versions that are stored
+      const unknown = compatible(doc, s.versions).filter((v) => !s.versions.includes(v));
+      if (unknown.length > 0) errors.push(issue('answer_key.scenario_versions', `unknown scenario versions [${unknown.join(', ')}]`));
       return ok({ ok: errors.length === 0, errors, warnings, document: isObj(doc) ? doc : null });
     }),
     http.get('*/v1/scenarios/:key/answer-keys/:version/document', ({ request, params }) => {

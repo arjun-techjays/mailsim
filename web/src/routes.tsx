@@ -19,6 +19,7 @@ import { HomePage } from './pages/HomePage';
 // ---- builder (UX-F1)
 import { ScenarioBuilderPage } from './builder/ScenarioBuilderPage';
 // ---- end builder (UX-F1)
+import { ImportPackPage } from './pack/ImportPackPage';
 // ---- answer keys & mailbox browser (UX-F2)
 import { AnswerKeyEditorPage } from './answerkey/AnswerKeyEditorPage';
 
@@ -33,6 +34,7 @@ export const routes: RouteObject[] = [
       { path: 'scenarios', element: guarded(<ScenariosPage />) },
       // ---- builder (UX-F1)
       { path: 'scenarios/new', element: guarded(<ScenarioBuilderPage mode="new" />) },
+      { path: 'scenarios/import', element: guarded(<ImportPackPage />) },
       { path: 'scenarios/:key/edit', element: guarded(<ScenarioBuilderPage mode="edit" />) },
       { path: 'scenarios/:key/clone', element: guarded(<ScenarioBuilderPage mode="clone" />) },
       // ---- end builder (UX-F1)

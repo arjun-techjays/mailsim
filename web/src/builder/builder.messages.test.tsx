@@ -10,6 +10,10 @@ import { templateDraft } from './template';
 afterEach(() => server.events.removeAllListeners());
 vi.setConfig({ testTimeout: 30_000 });
 
+/** The upload status/report of the Finance Manager mailbox (each mailbox has its own). */
+const financeReport = (s: ReturnType<typeof within>) =>
+  within(s.getByRole('region', { name: /^Mailbox of Finance Manager/ })).getByTestId('upload-report');
+
 const EML = ['From: Ann <ann@outside.test>', 'To: finance@example.test', 'Subject: Hello there', 'Message-ID: <hello@outside.test>', '', 'Hi!', ''].join('\r\n');
 
 describe('initial messages', () => {
@@ -114,7 +118,7 @@ describe('initial messages', () => {
     await user.click(form.getByRole('button', { name: 'Cancel' }));
 
     const eml = (i: number) => {
-      const f = new File([EML], `m${i}.eml`);
+      const f = new File([EML.replace('<hello@', `<m${i}@`)], `m${i}.eml`);
       Object.defineProperty(f, 'size', { value: Math.floor(4.9 * 1024 * 1024) });
       return f;
     };
@@ -155,13 +159,22 @@ describe('initial messages', () => {
     const { user } = await openNew(true);
     const s = await goSection(user, 'Initial messages');
     const input = s.getByLabelText('Upload .eml files for Finance Manager <finance@example.test>');
-    await user.upload(input, [new File([EML], 'Hello There.eml', { type: 'message/rfc822' }), new File([EML], 'invoice-001.eml')]);
+    await user.upload(input, [
+      new File([EML], 'Hello There.eml', { type: 'message/rfc822' }),
+      new File([EML], 'invoice-001.eml'), // the template already has this file: never a second copy
+      new File([EML], 'Hello-again-.eml'), // same Message-ID as the first: refused
+      new File([EML.replace('<hello@', '<other@')], 'Plain_name-.eml'), // plain names are kept exactly
+    ]);
     await waitFor(() => expect(s.getAllByTestId('initial-message')).toHaveLength(3));
     const items = s.getAllByTestId('initial-message');
     expect(items[1]).toHaveTextContent('Hello there');
     expect(items[1]).toHaveTextContent('uploaded .eml');
     expect(items[1]).toHaveTextContent('fixtures/hello-there.eml');
-    expect(items[2]).toHaveTextContent('fixtures/invoice-001-2.eml');
+    expect(items[2]).toHaveTextContent('fixtures/Plain_name-.eml');
+    const report = financeReport(s);
+    await waitFor(() => expect(report).toHaveTextContent('Added 2 new message(s): fixtures/hello-there.eml, fixtures/Plain_name-.eml.'));
+    expect(report).toHaveTextContent('invoice-001.eml: already in the scenario as fixtures/invoice-001.eml');
+    expect(report).toHaveTextContent('Hello-again-.eml: same Message-ID <hello@outside.test> as fixtures/hello-there.eml, already in this mailbox');
 
     await user.upload(input, new File(['not an email'], 'junk.eml'));
     expect(await s.findByText(/not a valid message/)).toBeInTheDocument();
@@ -185,7 +198,7 @@ describe('initial messages', () => {
     const { user } = renderApp('/scenarios/new', sessionFor('controller'));
     await screen.findByTestId('builder-notice');
     const s = await goSection(user, 'Initial messages');
-    expect(s.getByText('File missing: upload it again or remove this message.')).toBeInTheDocument();
+    expect(s.getByText(/File missing: upload/)).toHaveTextContent('File missing: upload missing.eml (the name must match exactly) or remove this message.');
     expect(s.getByText('Reading message…')).toBeInTheDocument();
     expect(s.getAllByText('(no subject)').length).toBeGreaterThan(0);
     expect(await s.findByText('fixture not found: fixtures/missing.eml', {}, SLOW)).toBeInTheDocument();
@@ -202,5 +215,58 @@ describe('initial messages', () => {
     expect(s.getAllByTestId('initial-message')).toHaveLength(3);
     await user.click(s.getByRole('button', { name: 'Remove message 1: “fixtures/missing.eml”' }));
     expect(s.getAllByTestId('initial-message')).toHaveLength(2);
+  });
+
+  it('fills the files a pasted scenario lists by exact name, never adding a second copy (QA D-1)', async () => {
+    const mail = (id: string) => EML.replace('<hello@outside.test>', `<${id}@outside.test>`);
+    const draft = templateDraft();
+    const [finance, vendor] = draft.form.mailboxes as [(typeof draft.form.mailboxes)[number], (typeof draft.form.mailboxes)[number]];
+    finance.messages.push('fixtures/003-deal-.eml', 'fixtures/004-fw.eml');
+    vendor.messages.push('fixtures/004-fw.eml', 'fixtures/a/x.eml', 'fixtures/b/x.eml');
+    saveDraft(draftStorageKey('new', ''), draft, 'b');
+    const { user } = renderApp('/scenarios/new', sessionFor('controller'));
+    await screen.findByTestId('builder-notice');
+    const s = await goSection(user, 'Initial messages');
+    expect(s.getAllByText(/File missing/)).toHaveLength(5);
+    const input = s.getByLabelText('Upload .eml files for Finance Manager <finance@example.test>');
+    await user.upload(input, [
+      new File([mail('d3')], '003-deal-.eml'), // trailing hyphen: matched exactly
+      new File([mail('d4')], '004-fw.eml'), // listed in two mailboxes: one file fills both
+      new File([mail('d4b')], '004-fw.eml'), // the same name again in one upload
+      new File([mail('x')], 'x.eml'), // two references end in x.eml: ambiguous
+      new File([mail('inv')], 'invoice-001.eml'), // already there
+      new File([mail('stray')], 'stray.eml'), // matches nothing: held
+    ]);
+    const report = financeReport(s);
+    await waitFor(() => expect(report).toHaveTextContent('Filled 2 message file(s) the scenario lists.'));
+    expect(report).toHaveTextContent('004-fw.eml: uploaded twice for fixtures/004-fw.eml');
+    expect(report).toHaveTextContent('x.eml: matches several messages (fixtures/a/x.eml, fixtures/b/x.eml)');
+    expect(report).toHaveTextContent('invoice-001.eml: already in the scenario as fixtures/invoice-001.eml');
+    expect(s.getAllByTestId('initial-message')).toHaveLength(6); // nothing was added
+    expect(s.getAllByText(/File missing/)).toHaveLength(2);
+    const held = s.getByTestId('unmatched-uploads');
+    expect(held).toHaveTextContent('1 file does not match any message the scenario lists: stray.eml.');
+    await user.click(within(held).getByRole('button', { name: 'Discard' }));
+    expect(s.queryByTestId('unmatched-uploads')).toBeNull();
+
+    // a folder upload matches by path inside the folder; extra files are held, then added on request
+    const inFolder = (body: string, rel: string) => {
+      const f = new File([body], rel.slice(rel.lastIndexOf('/') + 1));
+      Object.defineProperty(f, 'webkitRelativePath', { value: rel });
+      return f;
+    };
+    await user.upload(input, [inFolder(mail('ax'), 'pack/fixtures/a/x.eml'), inFolder(mail('n1'), 'pack/fixtures/new-1.eml'), inFolder(mail('n2'), 'pack/fixtures/new-2-.eml')]);
+    await waitFor(() => expect(s.getAllByText(/File missing/)).toHaveLength(1));
+    const two = s.getByTestId('unmatched-uploads');
+    expect(two).toHaveTextContent('2 files do not match any message the scenario lists: new-1.eml, new-2-.eml.');
+    await user.click(within(two).getByRole('button', { name: 'Add these 2 as new messages' }));
+    await waitFor(() => expect(s.getAllByTestId('initial-message')).toHaveLength(8));
+    await waitFor(() => expect(financeReport(s)).toHaveTextContent('Added 2 new message(s): fixtures/new-1.eml, fixtures/new-2-.eml.'));
+    expect(s.queryByTestId('unmatched-uploads')).toBeNull();
+    // a single held file
+    await user.upload(input, new File([mail('n3')], 'new-3.eml'));
+    const one = await s.findByTestId('unmatched-uploads');
+    await user.click(within(one).getByRole('button', { name: 'Add it as new messages' }));
+    await waitFor(() => expect(s.getAllByTestId('initial-message')).toHaveLength(9));
   });
 });

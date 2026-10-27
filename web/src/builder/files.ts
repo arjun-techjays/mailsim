@@ -14,13 +14,17 @@ export function textToBase64(text: string): string {
   return bytesToBase64(new TextEncoder().encode(text));
 }
 
-export function fileToBase64(file: Blob): Promise<string> {
+export function fileBytes(file: Blob): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(bytesToBase64(new Uint8Array(reader.result as ArrayBuffer)));
+    reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer));
     reader.onerror = () => reject(new Error('Could not read the file.'));
     reader.readAsArrayBuffer(file);
   });
+}
+
+export async function fileToBase64(file: Blob): Promise<string> {
+  return bytesToBase64(await fileBytes(file));
 }
 
 /** Decoded size of a base64 string, in bytes. */
@@ -64,18 +68,20 @@ export function safeFileName(name: string): string {
   return ext ? `${slug}.${ext}` : slug;
 }
 
-/** `fixtures/<name>`, made unique against `taken` (`-2`, `-3`, ... before the extension). */
+const PLAIN_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,150}$/;
+
+/**
+ * `fixtures/<name>`, made unique against `taken` (`-2`, `-3`, ... before the extension). A plain
+ * name (letters, digits, `.`, `_`, `-`) is kept EXACTLY (`003-deal-.eml` keeps its trailing
+ * hyphen, so it still matches a scenario that lists it); anything else becomes a slug.
+ */
 export function uniqueFixturePath(name: string, taken: readonly string[]): string {
-  const safe = safeFileName(name);
+  const safe = PLAIN_NAME.test(name) ? name : safeFileName(name);
   const dot = safe.lastIndexOf('.');
   const stem = dot > 0 ? safe.slice(0, dot) : safe;
   const ext = dot > 0 ? safe.slice(dot) : '';
   let path = `fixtures/${safe}`;
-  let n = 2;
-  while (taken.includes(path)) {
-    path = `fixtures/${stem}-${n}${ext}`;
-    n += 1;
-  }
+  for (let n = 2; taken.includes(path); n += 1) path = `fixtures/${stem}-${n}${ext}`;
   return path;
 }
 

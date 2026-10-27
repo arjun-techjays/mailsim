@@ -1,5 +1,6 @@
 import { clearDraft, DRAFT_BUDGET_CHARS, draftStorageKey, loadDraft, saveDraft, type Draft } from './draft';
 import { ApiError } from '../api/client';
+import { baseName, planUploads } from './matching';
 import { base64Size, bytesToBase64, contentHash, fileToBase64, fixturesBytes, formatBytes, safeFileName, textToBase64, uniqueFixturePath } from './files';
 import { blankForm } from './model';
 import { fieldId, findTarget, indexIssues, normalizePath, publishIssues, sectionFor } from './paths';
@@ -78,6 +79,10 @@ describe('files', () => {
     expect(uniqueFixturePath('a.eml', [])).toBe('fixtures/a.eml');
     expect(uniqueFixturePath('a.eml', ['fixtures/a.eml', 'fixtures/a-2.eml'])).toBe('fixtures/a-3.eml');
     expect(uniqueFixturePath('noext', ['fixtures/noext'])).toBe('fixtures/noext-2');
+    // plain names are kept exactly (QA D-1: a trailing hyphen must survive), others are slugged
+    expect(uniqueFixturePath('003-Deal-.eml', [])).toBe('fixtures/003-Deal-.eml');
+    expect(uniqueFixturePath('003-deal-.eml', ['fixtures/003-deal-.eml'])).toBe('fixtures/003-deal--2.eml');
+    expect(uniqueFixturePath('Hello There.eml', [])).toBe('fixtures/hello-there.eml');
     expect(fixturesBytes({ a: 'YWJj', b: 'YQ==' }, ['a', 'a', 'b', 'missing'])).toBe(4);
     expect(contentHash('abc')).toBe(contentHash('abc'));
     expect(contentHash('A'.repeat(1000) + 'x' + 'A'.repeat(1000))).not.toBe(contentHash('A'.repeat(1000) + 'y' + 'A'.repeat(1000)));
@@ -144,5 +149,29 @@ describe('draft storage', () => {
     });
     expect(saveDraft(key, draft({ 'b.eml': 'Qg==' }), 'b')).toEqual({ fixturesKept: false });
     expect(sessionStorage.getItem(key + ':fixtures')).toBeNull();
+  });
+});
+
+describe('planUploads', () => {
+  const refs = ['fixtures/a-.eml', 'fixtures/a-.eml', 'fixtures/b.eml', 'mail/b.eml', 'fixtures/c.eml'];
+  it('matches by folder path first, then by exact file name, and never renames', () => {
+    const inFolder = { name: 'b.eml', webkitRelativePath: 'pack/mail/b.eml' };
+    const plan = planUploads([{ name: 'a-.eml' }, { name: 'a.eml' }, inFolder, { name: 'b.eml' }, { name: 'c.eml', webkitRelativePath: '' }], refs, new Set(['fixtures/c.eml']));
+    expect(plan.fills).toEqual([
+      { path: 'fixtures/a-.eml', file: { name: 'a-.eml' } },
+      { path: 'mail/b.eml', file: inFolder },
+    ]);
+    expect(plan.unmatched).toEqual([{ name: 'a.eml' }]);
+    expect(plan.skipped).toEqual([
+      { name: 'b.eml', reason: 'matches several messages (fixtures/b.eml, mail/b.eml): upload the folder to match by path' },
+      { name: 'c.eml', reason: 'already in the scenario as fixtures/c.eml' },
+    ]);
+  });
+  it('treats a reference already filled as taken and reports a repeated upload', () => {
+    const plan = planUploads([{ name: 'b.eml' }, { name: 'a-.eml' }, { name: 'a-.eml' }], refs, new Set(['mail/b.eml']));
+    expect(plan.fills.map((f) => f.path)).toEqual(['fixtures/b.eml', 'fixtures/a-.eml']);
+    expect(plan.skipped).toEqual([{ name: 'a-.eml', reason: 'uploaded twice for fixtures/a-.eml' }]);
+    expect(baseName('x/y/z.eml')).toBe('z.eml');
+    expect(baseName('z.eml')).toBe('z.eml');
   });
 });

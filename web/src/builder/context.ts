@@ -15,8 +15,10 @@ export interface BuilderValue {
   /** Mutates a copy of the form. */
   updateForm: (fn: (f: ScenarioForm) => void) => void;
   addFixture: (path: string, b64: string, info: FixtureInfo, owner: string) => void;
-  /** Removes an initial message from a mailbox (and its file when nothing else uses it). */
-  removeMessage: (owner: string, path: string) => void;
+  /** Supplies the file of a fixture path the form already lists (adds no message). */
+  fillFixture: (path: string, b64: string, info: FixtureInfo) => void;
+  /** Removes initial message `index` of a mailbox (and its file when nothing else uses it). */
+  removeMessage: (owner: string, index: number) => void;
   setInfo: (path: string, info: FixtureInfo) => void;
 }
 
