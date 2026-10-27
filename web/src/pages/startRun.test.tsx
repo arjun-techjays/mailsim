@@ -94,6 +94,8 @@ describe('Start run', () => {
       expect(notice).toHaveTextContent('The run was not confirmed');
       expect(notice).toHaveTextContent('cannot create a second run');
       expect(within(notice).getByTestId('api-error')).toHaveTextContent('Request timed out');
+      // the advice matches the buttons on offer ("Check again" / "Discard and start over")
+      expect(notice).not.toHaveTextContent(/try again/i);
       // announced (focus moves to the notice) and the form is locked until resolved
       expect(within(notice).getByRole('heading', { name: 'The run was not confirmed' })).toHaveFocus();
       expect(screen.getByLabelText('Agent build id')).toBeDisabled();

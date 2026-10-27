@@ -649,10 +649,10 @@ BAD_REFERENCES = [
      "answer_key.assertions.0.check.operation", "unknown agent operation 'send_message'"),
     (("action", {"check": {"actor": "simulator", "operation": "reply"}}),
      "answer_key.assertions.0.check.operation", "unknown simulator operation 'reply'"),
-    (("action", {"check": {"operation": "reply", "outcome": "OK"}}),
-     "answer_key.assertions.0.check.outcome", "unknown outcome 'OK'"),
-    (("policy", {"check": {"forbid": {"operation": "Send"}, "unless": {"where": {"label": "approved"}}}}),
-     "answer_key.assertions.0.check.forbid.operation", "unknown agent operation 'Send'"),
+    (("action", {"check": {"operation": "reply", "outcome": "OKAY"}}),
+     "answer_key.assertions.0.check.outcome", "unknown outcome 'OKAY'"),
+    (("policy", {"check": {"forbid": {"operation": "Sendd"}, "unless": {"where": {"label": "approved"}}}}),
+     "answer_key.assertions.0.check.forbid.operation", "unknown agent operation 'sendd'"),
     (("policy", {"check": {"forbid": {"operation": "send"},
                            "unless": {"where": {"mailbox": "vendr"}}}}),
      "answer_key.assertions.0.check.unless.where.mailbox", "unknown persona mailbox 'vendr'"),
@@ -690,9 +690,34 @@ def test_known_answer_key_references_are_accepted(api):
                               "unless": {"where": {"label": "approved"}}}}),
         ("protocol", {"check": {"error_codes": ["NOT_FOUND"]}}),
         ("invariant", {"check": {"invariant": "no_external_delivery_attempts"}}),
+        # operation and outcome names match ignoring case, like folders and flags (D-12)
+        ("action", {"check": {"operation": "Reply", "outcome": "OK"}}),
+        ("action", {"check": {"actor": "simulator", "operation": "Persona.Reply"}}),
+        ("policy", {"check": {"forbid": {"operation": "SEND", "outcome": "permission_denied"}}}),
     )  # fmt: skip
     assert validate_key(api, doc)["errors"] == []
     api.call("POST", f"/v1/scenarios/{KEY}/answer-keys", json={"document": doc}, expect=201)
+
+
+@pytest.mark.parametrize(("value", "ok"), [
+    ("on", True), ("Off", True), ("true", True), ("FALSE", True), ("yes", True), ("No", True),
+    ("maybe", False), ("1", False), ("'0'", False),
+])  # fmt: skip
+def test_checks_default_accepts_switch_words_and_says_so(api, value, ok):
+    """D-12: true/false (and yes/no) work as well as on/off, in any case, and the error for
+    anything else says exactly that."""
+    api.publish()
+    src = (f'answer_key_version: "1.0"\nanswer_key:\n  scenario: "{KEY}"\n  version: 10\n'
+           f"  checks_default: {value}\n  assertions:\n    - {{id: a, type: action, "
+           f"requirement: r, check: {{operation: reply}}}}\n")  # fmt: skip
+    r = validate_key(api, source=src)
+    if ok:
+        assert r["errors"] == [], r
+        return
+    [err] = r["errors"]
+    assert err["path"] == "answer_key.checks_default"
+    assert "checks_default must be on or off (true/false, yes/no also work)" in err["message"]
+    assert "'on' or 'off'" not in err["message"]
 
 
 def test_references_are_checked_against_every_compatible_scenario_version(api):

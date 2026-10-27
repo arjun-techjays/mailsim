@@ -19,6 +19,7 @@ from mailsim.evaluation.contract import AssertionOutcome, Efficiency, Evaluation
 from mailsim.evaluation.registry import EvaluationContext
 from mailsim.evaluation.rules import accuracy, category_metrics, decide_verdict, resolve_checks
 from mailsim.scenario.answer_key import AnswerAssertion, AnswerKeyDoc
+from mailsim.scenario.schema import UNGATED_AGENT_OPERATIONS
 
 MAX_READ_ATTEMPTS = 5
 
@@ -90,7 +91,9 @@ def _int(value: Any) -> int:
 def _efficiency(ctx: EvaluationContext) -> tuple[Efficiency, list[str]]:
     idx = index(ctx)
     window = idx.events_in(idx.last_seq)
-    agent = [o for o in idx.occurrences_in(idx.last_seq) if o.actor == AGENT]
+    # a client's copy of a sent message filed into Sent (`sent_copy`) is not the agent's work
+    agent = [o for o in idx.occurrences_in(idx.last_seq)
+             if o.actor == AGENT and o.operation not in UNGATED_AGENT_OPERATIONS]  # fmt: skip
     replies = sum(
         1 for e in window
         if e["type"] == "message.sent" and e["actor"] == AGENT

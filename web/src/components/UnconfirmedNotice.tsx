@@ -64,7 +64,8 @@ export function UnconfirmedNotice({
           </div>
         </div>
       )}
-      {!running && <ErrorDisplay error={error} title="Details" />}
+      {/* the generic timeout advice ("Try again") would contradict the buttons above */}
+      {!running && <ErrorDisplay error={error} title="Details" hint={null} />}
     </section>
   );
 }

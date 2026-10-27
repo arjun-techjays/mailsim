@@ -18,6 +18,16 @@ export function interfaceLabel(iface: string | null | undefined): string {
   return INTERFACE_LABELS[iface] ?? iface;
 }
 
+/**
+ * Recorded actor -> label. `connection_test`: a key check made from the Connect page (an
+ * operator read through the agent's interface), never one of the agent's own actions.
+ */
+const ACTOR_LABELS: Record<string, string> = { connection_test: 'connection test' };
+
+export function actorLabel(actor: string): string {
+  return ACTOR_LABELS[actor] ?? actor;
+}
+
 function short(v: unknown, max = 40): string {
   const s = typeof v === 'string' ? v : JSON.stringify(v);
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;

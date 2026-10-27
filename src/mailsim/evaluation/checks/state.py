@@ -32,7 +32,8 @@ class StatePlugin:
             return missing
         idx = index(ctx)
         sel = select_messages(point.state(ctx), check.where, agent_mailbox_id=ctx.agent_mailbox_id,
-                              agent_created=idx.agent_created, sent_ids=idx.sent_ids)  # fmt: skip
+                              agent_created=idx.agent_created, sent_ids=idx.sent_ids,
+                              answered=idx.answered_at(point.cutoff))  # fmt: skip
         matched = count_ok(check.count, len(sel.messages))
         why = (f"{len(sel.messages)} message(s) match at {point.describe()}; "
                f"expected count {count_dict(check.count)}")  # fmt: skip

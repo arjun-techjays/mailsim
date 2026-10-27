@@ -23,6 +23,7 @@ import type {
   InjectRequest,
   InjectResult,
   MailboxOut,
+  HealthOut,
   MeOut,
   MessagePage,
   ParsedDocument,
@@ -86,7 +87,7 @@ export function createApi(cfg: ApiConfig) {
   const run = (id: string) => `/v1/runs/${seg(id)}`;
 
   return {
-    health: () => get<Record<string, string>>('/v1/health'),
+    health: () => get<HealthOut>('/v1/health'),
     /** Caller identity (older servers without it answer 404/501; callers fall back). */
     me: () => get<MeOut>('/v1/me'),
     /** Runs of the caller's project, newest first. */

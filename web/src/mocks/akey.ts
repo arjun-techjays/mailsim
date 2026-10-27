@@ -111,8 +111,8 @@ export function validateAnswerKeyDoc(doc: unknown, versions: number[]): { errors
     return { errors, warnings };
   }
   if (typeof body.version !== 'number' || body.version < 1) errors.push(issue('answer_key.version', 'Input should be greater than or equal to 1'));
-  if (body.checks_default !== undefined && !['on', 'off'].includes(String(body.checks_default))) {
-    errors.push(issue('answer_key.checks_default', "Input should be 'on' or 'off'"));
+  if (body.checks_default !== undefined && !['on', 'off', 'true', 'false', 'yes', 'no'].includes(String(body.checks_default).trim().toLowerCase())) {
+    errors.push(issue('answer_key.checks_default', 'Value error, checks_default must be on or off (true/false, yes/no also work)'));
   }
   const assertions = Array.isArray(body.assertions) ? body.assertions : [];
   if (assertions.length === 0) warnings.push(issue('answer_key.assertions', 'the answer key has no assertions'));
@@ -173,12 +173,12 @@ export function validateAnswerKeyDoc(doc: unknown, versions: number[]): { errors
         });
       }
       countErrors(check.count, `${c}.count`, errors);
-      // Reference checks at deep paths (QA-A3): unknown folders and operations.
+      // Reference checks at deep paths (QA-A3): unknown folders and operations (any case, like the server).
       const where = isObj(check.where) ? check.where : null;
-      if (where && typeof where.folder === 'string' && !KNOWN_FOLDERS.includes(where.folder)) {
+      if (where && typeof where.folder === 'string' && !KNOWN_FOLDERS.includes(where.folder.toLowerCase())) {
         errors.push(issue(`${c}.where.folder`, `unknown folder ${JSON.stringify(where.folder)}; use one of ${KNOWN_FOLDERS.join(', ')}`));
       }
-      if (isObj(check.forbid) && typeof check.forbid.operation === 'string' && check.forbid.operation && !AUTHORING_META.agent_operations.includes(check.forbid.operation)) {
+      if (isObj(check.forbid) && typeof check.forbid.operation === 'string' && check.forbid.operation && !AUTHORING_META.graded_operations.includes(check.forbid.operation.trim().toLowerCase())) {
         errors.push(issue(`${c}.forbid.operation`, `unknown operation ${JSON.stringify(check.forbid.operation)}`));
       }
     }

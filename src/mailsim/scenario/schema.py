@@ -22,6 +22,11 @@ AGENT_OPERATIONS = (
     "read", "search", "reply", "send", "forward", "insert", "move", "copy", "label", "flag",
     "draft", "delete",
 )  # fmt: skip
+# Recorded agent operations a scenario can't permit or prohibit and that cost no budget:
+# `sent_copy` = an IMAP client filing its copy of an SMTP send into Sent (stores nothing).
+UNGATED_AGENT_OPERATIONS = ("sent_copy",)
+# What answer-key action checks may name for the agent.
+GRADED_AGENT_OPERATIONS = (*AGENT_OPERATIONS, *UNGATED_AGENT_OPERATIONS)
 TRIGGER_ACTIONS = {
     "send_reply": "reply",
     "reply": "reply",

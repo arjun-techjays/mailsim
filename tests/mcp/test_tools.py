@@ -107,6 +107,17 @@ def test_agent_writes_and_external_delivery_policy(world):
     assert err(a, "manage_labels", {"message_id": first["id"]})["code"] == "INVALID_REQUEST"
     missing = err(a, "manage_labels", {"message_id": first["id"], "folder": "nowhere"})
     assert missing["code"] == "NOT_FOUND"
+    # QA D-5: system labels and the DRAFT flag are not agent-writable (no partial write)
+    forged = err(a, "manage_labels", {"message_id": first["id"], "folder": "inbox",
+                                      "add_labels": ["SENT"]})  # fmt: skip
+    assert forged["code"] == "INVALID_REQUEST" and "system labels" in forged["message"]
+    drafted = err(a, "manage_labels", {"message_id": first["id"], "folder": "inbox",
+                                       "add_flags": ["DRAFT"]})  # fmt: skip
+    assert drafted["code"] == "PERMISSION_DENIED"  # refused before the move
+    assert ok(a, "get_message", {"message_id": first["id"]})["folder"] == "Archive"
+    outcomes = [(x["operation"], x["outcome"]) for x in
+                world.engine.actions(world.env.scope, world.run) if x["actor"] == "agent"]  # fmt: skip
+    assert ("label", "INVALID_REQUEST") in outcomes and ("flag", "PERMISSION_DENIED") in outcomes
     assert ok(a, "delete_message", {"message_id": first["id"]}) == {"deleted": first["id"]}
     actions = world.engine.actions(world.env.scope, world.run)
     assert {("agent", "send"), ("agent", "reply"), ("agent", "delete")} <= {
@@ -413,7 +424,8 @@ def test_a_failing_credential_check_never_leaks_its_cause(world, caplog):
     ("get_message", {"message_id": "m" * 257}),
     ("send_message", {"to": ["a@example.test"] * 501}),
     ("search_messages", {"query": "q" * 1025}),
-    ("manage_labels", {"message_id": "m", "add_labels": ["x" * 257]}),
+    ("manage_labels", {"message_id": "m", "add_labels": ["x" * 226]}),
+    ("manage_labels", {"message_id": "m", "remove_labels": ["x"] * 51}),
     ("reply_to_message", {"message_id": "m", "text": "x" * (t.MAX_BODY_CHARS + 1)}),
 ])  # fmt: skip
 def test_argument_bounds(world, tool, args):

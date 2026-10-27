@@ -85,8 +85,10 @@ mailbox-tools instruction. Controller and evaluator sessions keep the `mailsim` 
 the operator instructions.
 
 `manage_labels` applies its changes as separate audited writes, in this order: move, labels,
-flags. It resolves the folder (`NOT_FOUND`) before the first write. If a later step fails, the
-earlier ones remain, the same as `PATCH /v1/mailboxes/{id}/messages/{mid}`.
+flags. It resolves the folder (`NOT_FOUND`) and refuses system label names (`SENT`, `DRAFT`,
+`INBOX`, `UNREAD`, ... in any case: `INVALID_REQUEST`) before the first write. The `DRAFT` flag
+cannot be added to mail that is not a draft nor removed from a draft (`PERMISSION_DENIED`). If a
+later step fails, the earlier ones remain, the same as `PATCH /v1/mailboxes/{id}/messages/{mid}`.
 
 ### Simulation control (spec 8.2): controller role
 

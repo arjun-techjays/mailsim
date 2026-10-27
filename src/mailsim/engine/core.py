@@ -37,10 +37,13 @@ from mailsim.domain.models import (
     Address,
     AttachmentRef,
     CanonicalMessage,
+    draft_flag_error,
+    normalize_address,
+    refuse_system_labels,
 )
 from mailsim.domain.states import NO_BUILD, TERMINAL, RunStatus, check_transition
 from mailsim.engine import projectors as _projectors  # noqa: F401  (registers projectors)
-from mailsim.engine.context import current_interface
+from mailsim.engine.context import connection_test, current_interface
 from mailsim.engine.delivery import DeliveryPolicy, ExternalMode
 from mailsim.engine.log import Event, append, id_generator, lock_run, save_ids
 from mailsim.engine.pagination import Page, check_page_size, decode_cursor, encode_cursor
@@ -50,7 +53,12 @@ from mailsim.mime.build import build_mime
 from mailsim.mime.limits import MimeLimits
 from mailsim.mime.parse import ParsedAttachment, parse_mime
 from mailsim.scenario.answer_keys import answer_key_for
-from mailsim.scenario.schema import TRIGGER_ACTIONS, ScenarioBody, ScenarioDoc
+from mailsim.scenario.schema import (
+    TRIGGER_ACTIONS,
+    UNGATED_AGENT_OPERATIONS,
+    ScenarioBody,
+    ScenarioDoc,
+)
 from mailsim.scenario.service import get_scenario_version
 from mailsim.scenario.validator import validate_semantics
 from mailsim.store import models as m
@@ -63,6 +71,8 @@ AGENT = "agent"
 CONTROLLER = "controller"
 SIMULATOR = "simulator"
 EVALUATOR = "evaluator"
+# Recorded actor of an agent-key read made by the operator's connection test (never graded).
+CONNECTION_TEST = "connection_test"
 # Budget rule (user decision): only WRITES consume the agent action budget. Reads and polling
 # are free but still recorded as actions (efficiency metrics).
 READ_OPERATIONS = frozenset({"read", "search"})
@@ -76,7 +86,7 @@ MAX_RECIPIENTS = 100
 
 
 def counts_against_budget(operation: str) -> bool:
-    return operation not in READ_OPERATIONS
+    return operation not in READ_OPERATIONS and operation not in UNGATED_AGENT_OPERATIONS
 
 
 @dataclass
@@ -162,7 +172,7 @@ class ReplayResult:
 
 
 def _addr(email: str) -> Address:
-    email = email.strip().lower()
+    email = normalize_address(email)
     if "@" not in email or any(ch.isspace() or ord(ch) < 32 for ch in email):
         raise InvalidRequest(f"invalid email address {email!r}")
     return Address(email=email)
@@ -208,19 +218,26 @@ class SimEngine:
         mailbox_id: str | None = None,
     ) -> T:
         guarded = False
+        probe = actor == AGENT and connection_test.get()
         try:
             with self._sf.begin() as s:
                 run = lock_run(s, scope, run_id)
                 seq_start = run.next_seq
                 ctx = Ctx(s, run, id_generator(run))
                 self._guard(ctx, actor, operation, mailbox_id, require_running)
+                if probe and operation not in READ_OPERATIONS:
+                    raise PermissionDenied("a connection test may only read")
                 guarded = True
                 try:
                     result = fn(ctx)
                 except (ValueError, OverflowError, RecursionError) as exc:
                     # untyped failures (e.g. header injection) become audited INVALID_REQUESTs
                     raise InvalidRequest(f"invalid input: {exc}"[:300]) from exc
-                if actor == AGENT:
+                if probe and (run.next_seq != seq_start or ctx.gen.counter != run.id_counter):
+                    # wrote an event (e.g. a read that marks mail seen) or drew ids (which
+                    # would need an ids.reserved event): not read-only
+                    raise PermissionDenied("a connection test may only read")
+                if actor == AGENT and not probe:
                     if counts_against_budget(operation):
                         ctx.emit(
                             "agent.action_counted",
@@ -237,7 +254,7 @@ class SimEngine:
                     m.ActionRow(
                         run_id=run.id,
                         interface=current_interface.get(),
-                        actor=actor,
+                        actor=CONNECTION_TEST if probe else actor,
                         operation=operation,
                         input=input_,
                         result=_summary(result),
@@ -258,7 +275,7 @@ class SimEngine:
                 operation,
                 input_,
                 exc,
-                count=guarded and actor == AGENT and counts_against_budget(operation),
+                count=guarded and actor == AGENT and not probe and counts_against_budget(operation),
             )
             raise
 
@@ -298,7 +315,7 @@ class SimEngine:
                 m.ActionRow(
                     run_id=run.id,
                     interface=current_interface.get(),
-                    actor=actor,
+                    actor=CONNECTION_TEST if actor == AGENT and connection_test.get() else actor,
                     operation=operation,
                     input=input_,
                     result=exc.to_dict(),
@@ -326,7 +343,7 @@ class SimEngine:
         (RUNNING run, `send` permission, own mailbox, budget), then an EXTERNAL_DELIVERY_BLOCKED
         `send` action that counts against the budget, with its `delivery.external_blocked`
         evidence event. Nothing is delivered. Always raises the refusal it recorded."""
-        rcpts = [r.strip().lower() for r in recipients]
+        rcpts = [normalize_address(r) for r in recipients]
 
         def fn(c: Ctx) -> None:
             raise ExternalDeliveryBlocked(f"delivery to {', '.join(rcpts)} is not permitted",
@@ -355,7 +372,7 @@ class SimEngine:
         if actor != AGENT:
             return
         agent = ctx.config["agent"]
-        if not self._permitted(ctx, operation):
+        if operation not in UNGATED_AGENT_OPERATIONS and not self._permitted(ctx, operation):
             raise PermissionDenied(f"operation {operation!r} is not permitted for the agent")
         if mailbox_id is not None:
             mb = ctx.session.get(m.Mailbox, (mailbox_id, run.id))
@@ -1440,8 +1457,9 @@ class SimEngine:
 
     def _check_placement(self, c: Ctx, row: m.Message, target: m.Folder, actor: str) -> None:
         """Sent and Drafts hold only what the account itself wrote: an agent may not move or
-        copy received mail there (that would forge "sent"/"drafted" evidence). Its own mail
-        (From = this mailbox) may go to Sent, a draft may go back to Drafts."""
+        copy received mail there (that would forge "sent"/"drafted" evidence). Mail it really
+        sent may go back to Sent, a draft may go back to Drafts; a message merely claiming
+        this account as its sender (e.g. appended) is not sent mail."""
         if (
             actor != AGENT
             or target.system_type not in ("sent", "drafts")
@@ -1450,15 +1468,30 @@ class SimEngine:
             return
         if target.system_type == "drafts" and row.is_draft:
             return
-        mb = self._mailbox(c, row.mailbox_id)
-        if target.system_type == "sent" and not row.is_draft and row.from_.get("email") == mb.email:
+        if target.system_type == "sent" and not row.is_draft and self._was_sent(c, row.id):
             return
-        what = "a draft" if row.is_draft else "received mail"
+        if row.is_draft:
+            what = "a draft"
+        elif target.system_type == "sent":  # received, appended or seeded: never sent from here
+            what = "a message this account did not send"
+        else:
+            what = "a message that is not a draft"
         raise PermissionDenied(
             f"{what} cannot be placed in {target.name}: it holds only messages this account "
             f"{'sent' if target.system_type == 'sent' else 'drafted'}",
             details={"folder": target.system_type},
         )
+
+    @staticmethod
+    def _was_sent(c: Ctx, message_id: str) -> bool:
+        """Provenance: the message was created by a real send (a `message.sent` event)."""
+        hit = c.session.scalar(
+            select(m.EventRow.sequence).where(
+                m.EventRow.run_id == c.run.id, m.EventRow.type == "message.sent",
+                m.EventRow.payload["message"]["id"].astext == message_id,
+            ).limit(1)
+        )  # fmt: skip
+        return hit is not None
 
     def _resolve_folder(self, c: Ctx, mailbox_id: str, folder: str) -> m.Folder:
         rows = c.session.execute(
@@ -1475,6 +1508,8 @@ class SimEngine:
             self._message(c, mailbox_id, message_id)
             if any(not x.strip() for x in (*add, *remove)):
                 raise InvalidRequest("label names must not be empty")
+            if actor == AGENT:  # SENT, DRAFT, INBOX, ...: derived, never set by hand
+                refuse_system_labels((*add, *remove))
             c.emit("message.labels_changed",
                    {"mailbox_id": mailbox_id, "message_id": message_id, "add": list(add), "remove": list(remove)},
                    actor=actor, operation="label")  # fmt: skip
@@ -1486,10 +1521,12 @@ class SimEngine:
     def set_flags(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str, *,
                   add: Sequence[str] = (), remove: Sequence[str] = (), actor: str = AGENT) -> None:  # fmt: skip
         def fn(c: Ctx) -> None:
-            self._message(c, mailbox_id, message_id)
+            row = self._message(c, mailbox_id, message_id)
             bad = [f for f in (*add, *remove) if f not in VALID_FLAGS]
             if bad:
                 raise InvalidRequest(f"unknown flag(s): {bad}")
+            if actor == AGENT:
+                self._check_draft_flag(row, add, remove)
             c.emit("message.flags_changed",
                    {"mailbox_id": mailbox_id, "message_id": message_id, "add": list(add), "remove": list(remove)},
                    actor=actor, operation="flag")  # fmt: skip
@@ -1497,6 +1534,59 @@ class SimEngine:
         self._command(scope, run_id, actor, "flag",
                       {"message_id": message_id, "add": list(add), "remove": list(remove)}, fn,
                       mailbox_id=mailbox_id)  # fmt: skip
+
+    @staticmethod
+    def _check_draft_flag(row: m.Message, add: Sequence[str], remove: Sequence[str]) -> None:
+        error = draft_flag_error(row.is_draft, add, remove)
+        if error is not None:
+            raise error
+
+    def is_draft(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str) -> bool:
+        """Internal, unaudited lookup for an interface's pre-check before a multi-write change
+        (not an agent read): whether `message_id` of `mailbox_id` is a draft. NOT_FOUND like
+        any command on a message outside the mailbox."""
+        with self._sf() as s:
+            get_run(s, scope, run_id)
+            row = s.get(m.Message, (message_id, run_id))
+            if row is None or row.mailbox_id != mailbox_id:
+                raise NotFound(f"message {message_id} not found")
+            return bool(row.is_draft)
+
+    def sent_copy(self, scope: Scope, run_id: str, mailbox_id: str, folder: str, size: int,
+                  *, actor: str = AGENT) -> None:  # fmt: skip
+        """An IMAP client filing its copy of an SMTP send into Sent (Thunderbird's default):
+        stores nothing, the send already filed the real copy. Recorded as `sent_copy` with
+        only the RUNNING-run and own-mailbox guard: no permission gate (a scenario that
+        prohibits `insert` must not penalise it), no budget, no event, no evidence."""
+
+        def fn(c: Ctx) -> dict[str, Any]:
+            return {"stored": False}
+
+        self._command(scope, run_id, actor, "sent_copy", {"bytes": size, "folder": folder}, fn,
+                      mailbox_id=mailbox_id)  # fmt: skip
+
+    def record_refused(self, scope: Scope, run_id: str, mailbox_id: str, operation: str,
+                       error: SimError, *, message_id: str | None = None,
+                       add: Sequence[str] = (), remove: Sequence[str] = (),
+                       folder: str | None = None, size: int | None = None,
+                       actor: str = AGENT) -> None:  # fmt: skip
+        """An agent `label` / `flag` / `insert` write an interface refused BEFORE its first
+        write (system labels, the DRAFT flag, Sent/Drafts placement; see domain.models),
+        recorded exactly like the engine's own refusal of that write: the command guard
+        (RUNNING run, permission, own mailbox, budget), then the operation failing with
+        `error`'s code, budgeted like the write. Nothing is written. Always raises (the
+        guard's error, else `error`)."""
+        if operation not in ("label", "flag", "insert"):
+            raise ValueError(f"not an auditable refusal: {operation!r}")
+        if operation == "insert":
+            input_: dict[str, Any] = {"bytes": size or 0, "folder": folder or ""}
+        else:
+            input_ = {"message_id": message_id, "add": list(add), "remove": list(remove)}
+
+        def fn(c: Ctx) -> None:
+            raise error
+
+        self._command(scope, run_id, actor, operation, input_, fn, mailbox_id=mailbox_id)
 
     def delete(self, scope: Scope, run_id: str, mailbox_id: str, message_id: str,
                *, actor: str = AGENT) -> None:  # fmt: skip
@@ -1558,6 +1648,14 @@ class SimEngine:
                 target.system_type is None
             ):  # pragma: no cover - all folders are system folders today
                 raise UnsupportedOperation("insert into user folders is not supported")
+            if actor == AGENT and target.system_type in ("sent", "drafts"):
+                # like a move or copy there (_check_placement): Sent and Drafts hold only what
+                # this account actually sent or drafted; an inserted message is neither
+                raise PermissionDenied(
+                    f"messages cannot be added to {target.name}: it holds only messages this "
+                    f"account {'sent' if target.system_type == 'sent' else 'drafted'}",
+                    details={"folder": target.system_type},
+                )
             mid = self._insert_raw(c, mailbox_id, raw, event_type="message.inserted",
                                    folder_type=target.system_type, received_at=c.now,
                                    actor=actor, operation="insert")  # fmt: skip

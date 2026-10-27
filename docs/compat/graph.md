@@ -108,10 +108,13 @@ other value clears it). Other extended properties are not supported.
   The mailbox's own address (for `/me`, `/users/{upn}`, send-as checks and reply-all) comes from
   `AgentMailbox.mailbox_info()` and is recorded as an agent read.
 - `PATCH /messages/{id}`: `isRead`, `flag.flagStatus` (`complete` clears the flag),
-  `categories` (replaces the set), the replied marker above, and, on drafts only, `subject`,
+  `categories` (replaces the set; a new category named like a system label, e.g. `Sent`,
+  `Draft`, `Inbox` or `Unread` in any case, answers `400 ErrorInvalidRequest` before anything is
+  written), the replied marker above, and, on drafts only, `subject`,
   `body` and the recipient lists. Changes are applied as separate engine writes in the order
   content, flags, categories; if a later one fails the earlier ones stay applied (GET to see the
-  state). Content changes on a non-draft answer `400 ErrorInvalidRequest`. A content change
+  state). Content changes on a non-draft answer `400 ErrorInvalidRequest`; `isDraft` is
+  read-only (ignored). A content change
   keeps the draft's flags (`isRead`, `flag`, replied marker) and categories unless the same PATCH
   changes them. Carrying them over is done with extra `flag` / `label` operations after the
   `draft` update, so under a policy that allows `draft` but not `flag`/`label` the PATCH can

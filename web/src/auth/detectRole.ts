@@ -1,6 +1,6 @@
 import { buildUrl, defaultTimeoutMs, isApiError, LOCAL_TOKEN_HEADER, type ApiConfig } from '../api/client';
 import { createApi } from '../api/endpoints';
-import type { MeOut, Role } from '../api/types';
+import type { HealthOut, MeOut, Role } from '../api/types';
 import { isLoopback } from './baseUrl';
 
 /** Scenario key that cannot exist; used only to learn whether answer keys are readable. */
@@ -47,24 +47,27 @@ export type LocalMode = 'operator' | 'needs-link' | 'off';
 /**
  * Local no-auth mode (`serve --local-no-auth`). The server prints a dashboard link carrying a
  * launch token in the URL fragment; with it, `GET /v1/me` (no key) answers
- * `{role: "operator", local_no_auth: true}`. Without it the server answers 401 with
- * `X-Mailsim-Local-No-Auth: 1`, so the Connect page can explain where the link is. Only a
- * loopback API origin is probed (the server refuses the mode anywhere else).
+ * `{role: "operator", local_no_auth: true}` (a stale token: 401 with
+ * `X-Mailsim-Local-No-Auth: 1`). Without a token the public `GET /v1/health` says whether the
+ * mode is on (`local_no_auth`), so the Connect page can explain where the link is without a
+ * failing request (no 401 in the console before anyone connects). Only a loopback API origin is
+ * probed (the server refuses the mode anywhere else).
  */
 export async function detectLocalNoAuth(baseUrl: string, localToken?: string): Promise<LocalMode> {
   if (!isLoopback(baseUrl)) return 'off';
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (localToken) headers[LOCAL_TOKEN_HEADER] = localToken;
   try {
-    const res = await fetch(buildUrl(baseUrl, '/v1/me'), {
+    const res = await fetch(buildUrl(baseUrl, localToken ? '/v1/me' : '/v1/health'), {
       headers,
       credentials: 'omit',
       referrerPolicy: 'no-referrer',
       signal: AbortSignal.timeout(defaultTimeoutMs()),
     });
     if (res.ok) {
-      const me = (await res.json()) as Partial<MeOut>;
-      return me.role === 'operator' && me.local_no_auth === true ? 'operator' : 'off';
+      const body = (await res.json()) as Partial<MeOut & HealthOut>;
+      if (!localToken) return body.local_no_auth === true ? 'needs-link' : 'off';
+      return body.role === 'operator' && body.local_no_auth === true ? 'operator' : 'off';
     }
     return res.status === 401 && res.headers.get(LOCAL_MODE_HEADER) === '1' ? 'needs-link' : 'off';
   } catch {

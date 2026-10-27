@@ -24,10 +24,16 @@ from datetime import UTC, date, datetime
 from typing import Any
 
 from mailsim.api.agent_errors import agent_view
-from mailsim.domain.errors import SimError
-from mailsim.domain.models import CanonicalMessage
+from mailsim.domain.errors import SimError, UnsupportedOperation
+from mailsim.domain.models import (
+    CanonicalMessage,
+    draft_flag_error,
+    is_system_label,
+    system_label_error,
+)
 from mailsim.engine.context import use_interface
 from mailsim.mime.build import build_mime
+from mailsim.mime.parse import parse_mime
 from mailsim.protocols import imapmime
 from mailsim.protocols.auth import AgentSession, Authenticator, AuthFailed
 from mailsim.protocols.imapwire import (
@@ -842,6 +848,15 @@ class ImapSession:
                 keywords.add(flag)
         by_uid = self._sync(out, expunges=uid_mode)
         targets = self._targets(args[0], uid_mode, by_uid)
+        # refused (and recorded) before any write: a keyword "Sent" is no system flag, and
+        # \Draft marks real drafts only (FLAGS without it keeps a draft's)
+        first = targets[0][1].id if targets else None
+        self._mb.check_labels(first, add=sorted(keywords) if op != "-FLAGS" else (),
+                              remove=sorted(keywords) if op == "-FLAGS" else ())  # fmt: skip
+        if "DRAFT" in system:
+            for _, msg in targets:
+                self._mb.check_draft_flag(msg, add=() if op == "-FLAGS" else ("DRAFT",),
+                                          remove=("DRAFT",) if op == "-FLAGS" else ())  # fmt: skip
         wanted = {k.lower() for k in keywords}
         for _seq, msg in targets:
             cur_sys, cur_kw = set(msg.flags), set(user_labels(msg))
@@ -854,7 +869,10 @@ class ImapSession:
                 rm_k = {k for k in cur_kw if k.lower() in wanted}
             else:
                 add_s, rm_s = system - cur_sys, (cur_sys & set(ENGINE_TO_IMAP)) - system
-                rm_k = {k for k in cur_kw if is_keyword(k) and k.lower() not in wanted}
+                rm_s.discard("DRAFT")  # a draft stays a draft (checked above)
+                # stored system-named labels (seeded mail) are no keywords: left alone
+                rm_k = {k for k in cur_kw if is_keyword(k) and k.lower() not in wanted
+                        and not is_system_label(k)}  # fmt: skip
             if add_s or rm_s:
                 self._mb.set_flags(msg.id, add=sorted(add_s), remove=sorted(rm_s))
             if add_k or rm_k:
@@ -962,9 +980,71 @@ class ImapSession:
         dest = self._folder(astring(args[0]))
         if dest is None:
             return "NO [TRYCREATE] NOT_FOUND: no such mailbox"
-        new_id = str(self._mb.insert_message(args[-1], folder=str(dest["name"]))["message_id"])
+        raw: bytes = args[-1]
+        if dest.get("system_type") == "sent":
+            return self._append_sent(dest, raw)
+        if dest.get("system_type") == "drafts" and self._own_draft(raw):
+            return self._append_draft(dest, raw, system, keywords, out)
+        # checked (and recorded) before anything is stored: \Draft marks real drafts only, and
+        # system names are no keywords; Sent/Drafts placement is refused by the engine
+        error = system_label_error(keywords) or (
+            draft_flag_error(False, system, ()) if dest.get("system_type") != "drafts" else None
+        )
+        if error is not None:
+            self._mb.record_refused("insert", error, folder=str(dest["name"]), size=len(raw))
+        new_id = str(self._mb.insert_message(raw, folder=str(dest["name"]))["message_id"])
         if system:
             self._mb.set_flags(new_id, add=sorted(set(system)))
+        if keywords:
+            self._mb.modify_labels(new_id, add=sorted(set(keywords)))
+        if self.selected is not None and self.selected.engine_folder == str(dest["name"]):
+            self._sync(out, expunges=False)
+        uids = self._new_uids(dest, [new_id])
+        return f"OK [APPENDUID {dest['uid_validity']} {uids[0]}] APPEND completed"
+
+    def _append_sent(self, dest: dict[str, Any], raw: bytes) -> str:
+        """APPEND to Sent (a client filing its copy after an SMTP send): OK, but nothing new
+        is stored. The submission already filed the real sent copy; an appended one would be
+        evidence of nothing. The matching sent message's UID is reported when the Message-ID
+        names one. Recorded as `sent_copy` (not an insert: no permission gate, no budget)."""
+        self._mb.sent_copy(str(dest["name"]), len(raw))
+        try:
+            header = parse_mime(raw).message_id
+        except (SimError, ValueError):
+            header = None  # nothing is stored either way
+        if header:
+            for m in self._mb.find_by_message_id(header):
+                if m.folder == dest["name"] and m.imap_uid is not None:
+                    return f"OK [APPENDUID {dest['uid_validity']} {m.imap_uid}] APPEND completed"
+        return "OK APPEND completed"
+
+    def _own_draft(self, raw: bytes) -> bool:
+        parsed = parse_mime(raw)
+        sender = parsed.from_.email.casefold() if parsed.from_ is not None else ""
+        assert self.agent is not None
+        return sender == self.agent.address.casefold()
+
+    def _append_draft(self, dest: dict[str, Any], raw: bytes, system: list[str],
+                      keywords: list[str], out: list[bytes]) -> str:  # fmt: skip
+        """APPEND to Drafts of a message from this mailbox (a client saving a draft): a REAL
+        draft, made through the engine's draft path (the `draft` operation), so it is graded
+        as one and can be sent later. Its MIME is rebuilt from the parsed parts."""
+        parsed = parse_mime(raw)
+        if parsed.attachments:
+            raise UnsupportedOperation("drafts with attachments cannot be saved over IMAP")
+        error = system_label_error(keywords)
+        if error is not None:
+            self._mb.record_refused("insert", error, folder=str(dest["name"]), size=len(raw))
+        draft = self._mb.create_draft(
+            to=[a.email for a in parsed.to], cc=[a.email for a in parsed.cc],
+            bcc=[a.email for a in parsed.bcc], subject=parsed.subject,
+            text=parsed.body_text or "", html=parsed.body_html,
+            in_reply_to=parsed.in_reply_to, references=parsed.references or None,
+        )  # fmt: skip
+        new_id = str(draft["message_id"])
+        extra = sorted(set(system) - {"DRAFT", "SEEN"})
+        if extra:
+            self._mb.set_flags(new_id, add=extra)
         if keywords:
             self._mb.modify_labels(new_id, add=sorted(set(keywords)))
         if self.selected is not None and self.selected.engine_folder == str(dest["name"]):

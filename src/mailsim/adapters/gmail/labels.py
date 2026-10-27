@@ -21,7 +21,8 @@ import threading
 from typing import Any
 
 from mailsim.domain.errors import InvalidRequest, NotFound
-from mailsim.domain.models import SYSTEM_FOLDERS, CanonicalMessage
+from mailsim.domain.models import MAX_LABEL_CHARS, SYSTEM_FOLDERS, CanonicalMessage, is_system_label
+from mailsim.domain.models import SYSTEM_LABELS as DOMAIN_SYSTEM_LABELS
 
 USER_PREFIX = "Label_"
 FOLDER_LABEL = {"inbox": "INBOX", "sent": "SENT", "drafts": "DRAFT", "trash": "TRASH"}
@@ -34,7 +35,9 @@ SYSTEM_LABELS = ("INBOX", "SENT", "DRAFT", "TRASH", "UNREAD", "STARRED", "ANSWER
 # list filter on them matches nothing (there is no spam folder, no categories, no importance).
 UNMODELLED_LABELS = frozenset({"SPAM", "IMPORTANT", "CHAT", "CATEGORY_PERSONAL", "CATEGORY_SOCIAL",
                                "CATEGORY_PROMOTIONS", "CATEGORY_UPDATES", "CATEGORY_FORUMS"})  # fmt: skip
-RESERVED_NAMES = frozenset(n.casefold() for n in (*SYSTEM_LABELS, *UNMODELLED_LABELS, "DRAFTS"))
+# Names no user label may carry: the domain's system labels (one list for every interface, so
+# what labels.create refuses is exactly what the engine refuses) plus Gmail's unmodelled ones.
+RESERVED_NAMES = DOMAIN_SYSTEM_LABELS | frozenset(n.casefold() for n in UNMODELLED_LABELS)
 _FOLDER_TYPES = {name.lower(): st for name, st in SYSTEM_FOLDERS}
 
 
@@ -61,7 +64,11 @@ def check_label_id(label_id: str) -> str:
     if label_id in UNMODELLED_LABELS or label_id.startswith("CATEGORY_"):
         return "unmodelled"
     if is_user_label_id(label_id):
-        user_label_name(label_id)
+        if is_system_label(user_label_name(label_id)):
+            # labels.create refuses every system name (RESERVED_NAMES includes the domain
+            # list), so an id encoding one names no label: SENT, DRAFT, ARCHIVE, ... are never
+            # user labels
+            raise NotFound(f"Invalid label: {label_id}")
         return "user"
     raise NotFound(f"Invalid label: {label_id}")
 
@@ -102,8 +109,8 @@ def check_user_label_name(name: object) -> str:
         raise InvalidRequest("Invalid label name: a non-empty name is required")
     if name.strip().casefold() in RESERVED_NAMES:
         raise InvalidRequest(f"Invalid label name: {name!r} is reserved for a system label")
-    if len(name) > 225:
-        raise InvalidRequest("Invalid label name: at most 225 characters")
+    if len(name) > MAX_LABEL_CHARS:
+        raise InvalidRequest(f"Invalid label name: at most {MAX_LABEL_CHARS} characters")
     return name.strip()
 
 

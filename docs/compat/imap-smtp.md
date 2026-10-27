@@ -56,7 +56,8 @@ Local no-auth mode (`serve --local-no-auth`) never applies to the listeners: the
 an agent key. Actions that come through the listeners are recorded with `interface` `imap` or
 `smtp` (`GET /v1/runs/{id}/activity`). The dashboard's connection test
 (`POST /v1/runs/{id}/connection-tests`) checks a key through the same LOGIN/AUTH code path
-without opening a connection.
+without opening a connection; that check is listed in the activity with the actor
+`connection_test`, not as an agent action.
 
 The listeners take an engine object (this package may not import `mailsim.engine.core`), so the
 composition root starts them:
@@ -99,9 +100,11 @@ Thunderbird: *Account Settings -> Add Mail Account -> Configure manually*. IMAP 
 `127.0.0.1`, port `1143`, connection security *None* (or *STARTTLS* with `--tls`; accept the
 self-signed certificate), authentication *Normal password*. SMTP server `127.0.0.1`, port
 `1587`, same security, *Normal password*. Username = mailbox address, password = agent key.
-Untick *Place a copy in: Sent* (Copies & Folders): the simulator already files every SMTP
-submission in `Sent`, so Thunderbird's own APPEND would create a duplicate (and spend an
-`insert` action).
+Thunderbird's defaults work: every SMTP submission is already filed in `Sent`, so its *Place
+a copy in: Sent* APPEND answers OK without storing a second copy, and a draft it saves to
+`Drafts` (APPEND with your address as `From`) becomes a real draft (see APPEND below). Drafts
+with attachments can't be saved this way (`NO [CANNOT]`), and client headers such as
+`X-Mozilla-Draft-Info` are not kept (the draft is rebuilt from its parts).
 
 ## IMAP profile
 
@@ -173,9 +176,9 @@ read-write `SELECT` marks the message seen through `AgentMailbox.mark_seen` (rec
 | `\Answered`   | `ANSWERED`  | also set by the engine when the agent replies               |
 | `\Flagged`    | `FLAGGED`   |                                                              |
 | `\Deleted`    | `DELETED`   | removed by `EXPUNGE`/`CLOSE`/`UID EXPUNGE` (engine `delete`) |
-| `\Draft`      | `DRAFT`     |                                                              |
+| `\Draft`      | `DRAFT`     | marks real drafts only: `+FLAGS`/`FLAGS` with it on a non-draft and `-FLAGS` on a draft answer `NO [NOPERM]`; `FLAGS` without it keeps a draft's |
 | `\Recent`     | -           | never set; ignored in STORE                                  |
-| keyword `foo` | user label `foo` | case-insensitive; labels that are not IMAP atoms are not shown |
+| keyword `foo` | user label `foo` | case-insensitive; labels that are not IMAP atoms are not shown; system label names (`Sent`, `Draft`, `Inbox`, ...) answer `NO [CANNOT]` |
 
 STORE with several kinds of change issues one `flag` and/or one `label` engine write per message
 (only when something changes). `.SILENT` suppresses the FETCH echo. `UID EXPUNGE` removes
@@ -185,8 +188,27 @@ each listed `\Deleted` message with its own engine `delete` (one action per mess
 **Objects.** `EMAILID` is the engine message id (unchanged by MOVE; COPY creates a new id),
 `THREADID` the engine thread id, `MAILBOXID` the engine folder id.
 
-**APPEND** stores the literal verbatim via `insert_message` (Gmail `insert` semantics: no
-delivery), then applies the given flags/keywords; answers `[APPENDUID]`.
+**APPEND** to `INBOX`, `Trash` or `Archive` stores the literal verbatim via `insert_message`
+(Gmail `insert` semantics: no delivery), then applies the given flags/keywords; answers
+`[APPENDUID]`. An appended message is never sent mail: it can't be moved or copied into `Sent`.
+`\Draft` in the flags or a keyword spelling a system label is refused before anything is
+stored (`NO [NOPERM]` / `NO [CANNOT]`) and recorded as a refused `insert`.
+`Sent` and `Drafts` hold only what this account sent or drafted:
+
+- **APPEND to `Sent`** (a client filing its copy after an SMTP send) answers OK and stores
+  nothing: the submission already filed the real sent copy. It is recorded as its own
+  operation, `sent_copy` (not an `insert`): it needs a RUNNING run and the agent's own mailbox,
+  but no permission (a scenario that prohibits `insert` doesn't penalise it), costs no budget,
+  is left out of the efficiency counts and is never evidence of anything. Answer keys may name
+  it in action checks (`operation: sent_copy`). When the appended message's
+  `Message-ID` is one of the sent messages there, `[APPENDUID]` reports its UID; otherwise a
+  plain `OK` (SMTP assigns its own `Message-ID`, so a client's copy usually doesn't match).
+- **APPEND to `Drafts`** with this mailbox's address as `From` (a client saving a draft)
+  creates a **real draft** through the engine's draft path (the `draft` operation and
+  permission): it is graded as the agent's draft and can be sent later from any interface.
+  Its MIME is rebuilt from the parsed recipients, subject, text/HTML body and threading
+  headers (not stored verbatim); attachments are refused (`NO [CANNOT]`); `\Flagged` and
+  keywords are applied, `\Draft`/`\Seen` are implied. Any other `From` answers `NO [NOPERM]`.
 
 **COPY/MOVE** use engine `copy`/`move` and answer `COPYUID`; a missing destination answers
 `NO [TRYCREATE]`.
@@ -245,7 +267,7 @@ Unexpected failures answer `451 4.3.0 internal error`; details are only logged.
   headers are replaced; the assigned `Message-ID` is returned in the `250` DATA reply.
 - **No attachments over SMTP** (`554 5.6.1 attachments are not accepted on this submission
   path`): the agent send operations
-  carry text/HTML only. APPEND accepts any MIME.
+  carry text/HTML only. APPEND to `INBOX`/`Trash`/`Archive` accepts any MIME.
 - **Replies whose headers resolve to nothing** cost two actions (`draft` + `send`).
 - **APPEND date-time** is accepted and ignored (internal date = virtual clock).
 - **Folders are fixed**; no user folders, no hierarchy.

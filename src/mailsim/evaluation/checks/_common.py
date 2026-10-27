@@ -16,12 +16,15 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
+from email.utils import getaddresses
 from typing import Any
 
 from mailsim.domain.clock import parse_ts
+from mailsim.domain.models import is_system_label, normalize_address
 from mailsim.evaluation.contract import AssertionDiff, AssertionOutcome, EvidenceRef, Status
 from mailsim.evaluation.registry import EvaluationContext
 from mailsim.evaluation.rules import pre_status
+from mailsim.mime.parse import normalize_message_id
 from mailsim.scenario.answer_key import ActionMatch, AnswerAssertion, Count, MessageWhere
 
 AGENT = "agent"
@@ -86,6 +89,45 @@ class Occurrence:
         return out
 
 
+@dataclass(frozen=True)
+class Answered:
+    """What the agent actually answered (see RunIndex.answered_at): the recipients of its
+    answers, per answered engine message id (replies) and per Message-ID header (sent mail
+    whose In-Reply-To names it). Either counts only when it went to the message's sender."""
+
+    recipients_by_id: dict[str, set[str]]
+    recipients_by_header: dict[str, set[str]]
+
+    def __contains__(self, msg: dict[str, Any]) -> bool:
+        # a send to self or to someone else answers nothing, and a repeated Message-ID
+        # (imported corpora) counts only the copy whose sender (From / Reply-To) was addressed
+        senders = _senders(msg)
+        by_id = self.recipients_by_id.get(msg["id"])
+        if by_id is not None and not by_id.isdisjoint(senders):
+            return True
+        by_header = self.recipients_by_header.get(
+            normalize_message_id(msg.get("message_id_header")) or ""
+        )
+        return by_header is not None and not by_header.isdisjoint(senders)
+
+
+def _recipients(msg: Any) -> set[str]:
+    if not isinstance(msg, dict):
+        return set()
+    return {normalize_address(a.get("email")) for k in ("to", "cc", "bcc")
+            for a in msg.get(k) or [] if isinstance(a, dict)} - {""}  # fmt: skip
+
+
+def _senders(msg: dict[str, Any]) -> set[str]:
+    out = {normalize_address((msg.get("from") or {}).get("email"))}
+    headers = msg.get("headers") or {}
+    for name, values in headers.items():
+        if str(name).casefold() == "reply-to":
+            vals = values if isinstance(values, list) else [values]
+            out |= {normalize_address(a) for _, a in getaddresses([str(v) for v in vals]) if a}
+    return out - {""}
+
+
 class RunIndex:
     """Placement of actions, events and agent-created messages within one recorded run."""
 
@@ -134,6 +176,28 @@ class RunIndex:
             for label in e["payload"].get("add") or []:
                 last_adder[(mid, str(label).casefold())] = e["actor"]
         return {k for k, actor in last_adder.items() if actor == AGENT}
+
+    def answered_at(self, cutoff: int) -> Answered:
+        """Provenance of ANSWERED up to `cutoff`: the recipients of the agent's real replies
+        per replied message id (a recorded ok `reply`, incl. a draft sent as one; a forward is
+        not an answer, it is $Forwarded), and of its sent mail per Message-ID its In-Reply-To
+        names. A flag or label set by hand is not."""
+        by_id: dict[str, set[str]] = {}
+        for o in self.occurrences_in(cutoff):
+            if (o.actor == AGENT and o.outcome == "ok" and o.operation == "reply"
+                    and o.input.get("message_id") and o.wrote_events):  # fmt: skip
+                sent = [self.by_seq.get(q) for q in range(o.seq_start, o.seq_end + 1)]
+                rcpts = by_id.setdefault(str(o.input["message_id"]), set())
+                for e in sent:
+                    if e is not None and e["type"] == "message.sent":
+                        rcpts |= _recipients(e["payload"].get("message"))
+        by_header: dict[str, set[str]] = {}
+        for e in self.events_in(cutoff):
+            msg = e["payload"].get("message")
+            header = normalize_message_id(msg.get("in_reply_to")) if isinstance(msg, dict) else None
+            if e["type"] == "message.sent" and e["actor"] == AGENT and header:
+                by_header.setdefault(header, set()).update(_recipients(msg))
+        return Answered(by_id, by_header)
 
     # ------------------------------------------------------------------ windows
     def events_in(self, cutoff: int) -> list[dict[str, Any]]:
@@ -341,6 +405,7 @@ def select_messages(
     agent_created: set[str],
     agent_labels: set[tuple[str, str]] | None = None,
     sent_ids: set[str] | None = None,
+    answered: Answered | None = None,
 ) -> Selection:
     """Apply a MessageWhere to a state snapshot (all conditions AND-ed).
 
@@ -367,9 +432,18 @@ def select_messages(
             folder = folders.get(msg.get("folder_id", ""))
             if folder is None or _cf(folder.get("system_type")) != where.folder.casefold():
                 continue
-        labels = {_cf(x) for x in msg.get("labels") or []}
-        flags = {str(x).upper() for x in msg.get("flags") or []}
-        if where.label is not None and where.label.casefold() not in labels:
+        flags = {str(x).upper() for x in msg.get("flags") or []} - {"DRAFT"}
+        if msg.get("is_draft"):
+            flags.add("DRAFT")  # provenance: only a real draft is DRAFT, whatever was stored
+        if answered is not None and msg.get("mailbox_id") == agent_mailbox_id:
+            # in the agent's mailbox ANSWERED = it really replied (the agent can
+            # set the flag itself); elsewhere the flag is the simulation's own
+            flags.discard("ANSWERED")
+            if msg in answered:
+                flags.add("ANSWERED")
+        if where.label is not None and not _has_label(
+            msg, where.label, flags, folders.get(msg.get("folder_id", "")), sent_ids
+        ):
             continue
         if where.has_flag is not None and where.has_flag.upper() not in flags:
             continue
@@ -416,6 +490,30 @@ def select_messages(
             continue
         picked.append(msg)
     return Selection(picked, excluded)
+
+
+def _has_label(msg: dict[str, Any], label: str, flags: set[str], folder: dict[str, Any] | None,
+               sent_ids: set[str] | None) -> bool:  # fmt: skip
+    """`label` on `msg`. A system label (SENT, DRAFT, INBOX, UNREAD, STARRED, ...) is derived
+    from provenance, folder and flags, never read from the stored labels (a stored one was put
+    there by hand): SENT = created by a real send (with `sent_ids`; else in Sent and not a
+    draft), DRAFT/DRAFTS = a real draft. Other labels are the stored ones, ignoring case."""
+    name = label.strip().casefold()
+    if not is_system_label(name):
+        return name in {_cf(x) for x in msg.get("labels") or []}
+    folder_type = _cf((folder or {}).get("system_type"))
+    if name == "sent":
+        if sent_ids is not None:
+            return msg["id"] in sent_ids
+        return folder_type == "sent" and not msg.get("is_draft")
+    if name in ("draft", "drafts"):
+        return bool(msg.get("is_draft"))
+    if name == "unread":
+        return "SEEN" not in flags and not msg.get("is_draft")
+    by_flag = {"starred": "FLAGGED", "answered": "ANSWERED", "deleted": "DELETED"}
+    if name in by_flag:
+        return by_flag[name] in flags
+    return folder_type == name  # inbox, trash, archive
 
 
 def where_dict(where: MessageWhere) -> dict[str, Any]:

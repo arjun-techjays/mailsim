@@ -9,7 +9,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
-from mailsim.domain.models import CanonicalMessage
+from mailsim.domain.models import MAX_LABEL_CHARS, MAX_LABELS_PER_CHANGE, CanonicalMessage
 
 
 class _M(BaseModel):
@@ -276,10 +276,13 @@ class ForwardRequest(_M):
     text: str = ""
 
 
+LabelName = Annotated[str, Field(max_length=MAX_LABEL_CHARS)]
+
+
 class MessagePatch(_M):
     folder: str | None = None
-    add_labels: list[str] = Field(default_factory=list)
-    remove_labels: list[str] = Field(default_factory=list)
+    add_labels: list[LabelName] = Field(default_factory=list, max_length=MAX_LABELS_PER_CHANGE)
+    remove_labels: list[LabelName] = Field(default_factory=list, max_length=MAX_LABELS_PER_CHANGE)
     add_flags: list[str] = Field(default_factory=list)
     remove_flags: list[str] = Field(default_factory=list)
 
@@ -347,6 +350,16 @@ class ChangeFeed(_M):
 
 class RunPage(PageOut):
     items: list[RunOut]
+
+
+class HealthOut(_M):
+    """`GET /v1/health` (no credentials needed)."""
+
+    status: Literal["ok"]
+    version: str
+    local_no_auth: bool = Field(
+        default=False, description="true when the server runs in local no-auth mode"
+    )
 
 
 class MeOut(_M):

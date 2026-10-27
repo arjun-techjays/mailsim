@@ -4,6 +4,7 @@ import { useApi } from '../auth/session';
 import { ErrorDisplay } from '../components/ErrorDisplay';
 import { JsonBlock } from '../components/JsonBlock';
 import { Empty, Loading } from '../components/Status';
+import { actorLabel } from './activity';
 import { runKeys } from './keys';
 
 /**
@@ -65,7 +66,7 @@ export function ActionsTable({ runId, highlight }: { runId: string; highlight: s
                   data-testid={hl ? 'highlighted-action' : undefined}
                 >
                   <th scope="row">{a.id ?? i + 1}</th>
-                  <td>{a.actor}</td>
+                  <td>{actorLabel(a.actor)}</td>
                   <td>{a.operation}</td>
                   <td>{a.outcome}</td>
                   <td>{a.virtual_time ?? '—'}</td>

@@ -8,7 +8,7 @@ import { SessionProvider } from '../auth/SessionProvider';
 import { makeQueryClient } from '../queryClient';
 import { mockDb, server } from '../test/server';
 import { renderApp, sessionFor } from '../test/utils';
-import { interfaceLabel, outcomeKind, summarizeInput } from './activity';
+import { actorLabel, interfaceLabel, outcomeKind, summarizeInput } from './activity';
 import { ActivityPanel } from './ActivityPanel';
 
 const fail = (status: number, code = 'INTERNAL') =>
@@ -130,6 +130,16 @@ describe('Activity panel', () => {
     expect(screen.getByTestId('activity-status')).toHaveTextContent('Live: checking for new activity every 3 s.');
     await user.selectOptions(screen.getByLabelText('Show'), 'agent');
     expect(within(screen.getByTestId('activity-table')).getAllByRole('row')).toHaveLength(5);
+  });
+
+  it('labels connection tests from the Connect page apart from the agent', async () => {
+    push(5, 'read', { interface: 'gmail', actor: 'connection_test' });
+    const user = renderPanel(demo().run);
+    const table = await screen.findByTestId('activity-table');
+    expect(within(table).getAllByRole('row')[1]).toHaveTextContent('connection test');
+    expect(screen.getByText(/listed as “connection test”/)).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText('Show'), 'connection test only');
+    expect(within(screen.getByTestId('activity-table')).getAllByRole('row')).toHaveLength(2);
   });
 
   it('polls while running, announces new rows politely (rate-limited), pauses and resumes', async () => {
@@ -301,6 +311,8 @@ describe('Activity panel resilience', () => {
 
 describe('activity helpers', () => {
   it('labels interfaces and summarises inputs', () => {
+    expect(actorLabel('connection_test')).toBe('connection test');
+    expect(actorLabel('agent')).toBe('agent');
     expect(interfaceLabel(undefined)).toBe('Unknown');
     expect(interfaceLabel('graph')).toBe('Microsoft Graph');
     expect(interfaceLabel('carrier-pigeon')).toBe('carrier-pigeon');

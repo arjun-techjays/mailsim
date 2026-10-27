@@ -44,6 +44,7 @@ from mailsim.auth.principal import Principal, Role
 from mailsim.domain.clock import iso
 from mailsim.domain.errors import InvalidRequest, SimError
 from mailsim.domain.models import SYSTEM_FOLDERS, VALID_FLAGS
+from mailsim.engine.context import use_connection_test
 from mailsim.llm.config import LLMConfig
 from mailsim.scenario import answer_key as ak
 from mailsim.scenario import answer_keys as keys_service
@@ -144,6 +145,7 @@ def _authoring_meta() -> u.AuthoringMeta:  # static per process: built once
         answer_key_schema=ak.AnswerKeyDoc.model_json_schema(by_alias=True),
         schema_versions=list(scenario_schema.SUPPORTED_SCHEMA_VERSIONS),
         agent_operations=list(scenario_schema.AGENT_OPERATIONS),
+        graded_operations=list(scenario_schema.GRADED_AGENT_OPERATIONS),
         trigger_types=list(TRIGGER_TYPES),
         trigger_actions=list(scenario_schema.TRIGGER_ACTIONS),
         external_delivery_modes=list(EXTERNAL_DELIVERY_MODES),
@@ -487,7 +489,8 @@ def _probe(interface: str, mailbox_id: str,
         return ("GET", "/graph/v1.0/me/mailFolders", "$top=1", auth, b"",
                 lambda b: ("mail folders readable", {"folders_returned": _count(b, "value")}))  # fmt: skip
     # a real agent tool call (not just tools/list), so the probe reaches the engine like the
-    # other interfaces: refused for a run that is not running, and recorded in the activity
+    # other interfaces: refused for a run that is not running, and listed in the activity (as a
+    # connection test)
     rpc = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                       "params": {"name": "list_folders", "arguments": {}}}).encode()  # fmt: skip
     headers = {**auth, "content-type": "application/json",
@@ -576,8 +579,11 @@ async def connection_test(
     the caller's project). A key that is not a live agent key of this run is not tried at all:
     ok=false with `details.reason` invalid_key (error_code UNAUTHENTICATED: unknown, revoked,
     expired), not_agent_key or other_run (PERMISSION_DENIED; which run is never said). A probe
-    that is made is recorded in the run's activity like any agent call of that interface. The request body
-    (and so the key) is never logged, and the key never appears in the result.
+    that is made is a read-only operator check: it is listed in the run's activity with the
+    actor `connection_test` (and the interface it went through), never as an `agent` action, so
+    it is not graded, not counted in the agent's actions or efficiency, and arms no trigger. Only
+    this route can mark a call that way (server-side, in process). The request body (and so the
+    key) is never logged, and the key never appears in the result.
 
     `error_code` when `ok` is false:
     - REST, MCP (HTTP): the /v1 envelope code (UNAUTHENTICATED, RUN_NOT_ACTIVE,
@@ -591,7 +597,8 @@ async def connection_test(
     - IMAP/SMTP listener not running: LISTENER_DOWN
     - gmail / graph / mcp_http not mounted: null (summary "... is not served by this server")
     - unexpected failure: INTERNAL"""
-    result = await _connection_test(request, run_id, body, principal)
+    with use_connection_test():  # the probe's engine calls: actor connection_test, read-only
+        result = await _connection_test(request, run_id, body, principal)
     key = body.api_key.strip()
     for name in ("summary", "error_message"):  # defence in depth: never echo the key
         value = getattr(result, name)

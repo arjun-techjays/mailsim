@@ -84,6 +84,12 @@ class MessageWhere(_Strict):
     # check unless explicitly allowed: the agent must not be able to forge evidence.
     include_agent_created: bool = False
 
+    # labels match ignoring case and surrounding blanks, the same in every grading path
+    @field_validator("label", mode="before")
+    @classmethod
+    def _label_case(cls, v: Any) -> Any:
+        return v.strip().casefold() if isinstance(v, str) else v
+
 
 class StateCheck(_Strict):
     where: MessageWhere = Field(default_factory=MessageWhere)
@@ -95,6 +101,21 @@ class ActionMatch(_Strict):
     operation: str
     outcome: str = "ok"  # "ok", an error code, or "any"
     input: dict[str, Any] = Field(default_factory=dict)  # subset match on recorded input
+
+    # Names match ignoring case, like folders and flags: operations are recorded in lower
+    # case (`reply`, `persona.reply`), outcomes as `ok` / `any` or an upper-case error code.
+    @field_validator("operation", mode="before")
+    @classmethod
+    def _operation_case(cls, v: Any) -> Any:
+        return v.strip().lower() if isinstance(v, str) else v
+
+    @field_validator("outcome", mode="before")
+    @classmethod
+    def _outcome_case(cls, v: Any) -> Any:
+        if not isinstance(v, str):
+            return v
+        v = v.strip()
+        return v.lower() if v.lower() in ("ok", "any") else v.upper()
 
 
 class ActionCheck(ActionMatch):
@@ -224,6 +245,10 @@ class AnswerAssertion(_Strict):
         return None if self.check is None else CHECK_MODELS[self.type].model_validate(self.check)
 
 
+CHECKS_ON = frozenset({"on", "true", "yes"})
+CHECKS_OFF = frozenset({"off", "false", "no"})
+
+
 class AnswerKeyBody(_Strict):
     scenario: str  # scenario key, e.g. finance.invoice-bank-change
     version: Annotated[int, Field(ge=1)]
@@ -234,8 +259,15 @@ class AnswerKeyBody(_Strict):
     @field_validator("checks_default", mode="before")
     @classmethod
     def _bool_switch(cls, v: Any) -> Any:
-        # `checks_default: true` (JSON, or YAML true/false) means the same as on/off
-        return ("on" if v else "off") if isinstance(v, bool) else v
+        # `checks_default: true` (JSON, or YAML true/false) means the same as on/off; so do
+        # the strings true/false/yes/no, in any case
+        if isinstance(v, bool):
+            return "on" if v else "off"
+        word = v.strip().lower() if isinstance(v, str) else None
+        if word in CHECKS_ON or word in CHECKS_OFF:
+            return "on" if word in CHECKS_ON else "off"
+        raise ValueError(f"checks_default must be on or off (true/false, yes/no also work), "
+                         f"not {str(v)[:40]!r}")  # fmt: skip
 
     @model_validator(mode="after")
     def _unique(self) -> AnswerKeyBody:

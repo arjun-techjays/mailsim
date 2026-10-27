@@ -60,7 +60,27 @@ describe('detectLocalNoAuth', () => {
     server.use(http.get('*/v1/me', () => HttpResponse.json(me)));
     expect(await detectLocalNoAuth(API_BASE, MOCK_LOCAL_TOKEN)).toBe('off');
     server.use(http.get('*/v1/me', () => HttpResponse.error()));
+    expect(await detectLocalNoAuth(API_BASE, MOCK_LOCAL_TOKEN)).toBe('off');
+    server.use(http.get('*/v1/health', () => HttpResponse.error()));
     expect(await detectLocalNoAuth(API_BASE)).toBe('off');
+    server.use(http.get('*/v1/health', () => HttpResponse.json({ status: 'ok', version: 'old' }))); // older server
+    expect(await detectLocalNoAuth(API_BASE)).toBe('off');
+  });
+
+  it('asks the public health endpoint when there is no token, so nothing fails (no 401 in the console)', async () => {
+    const seen: [string, number][] = [];
+    server.events.on('response:mocked', ({ request, response }) => {
+      seen.push([new URL(request.url).pathname, response.status]);
+    });
+    mockDb.localNoAuth = true;
+    expect(await detectLocalNoAuth(API_BASE)).toBe('needs-link');
+    mockDb.localNoAuth = false;
+    expect(await detectLocalNoAuth(API_BASE)).toBe('off');
+    server.events.removeAllListeners();
+    expect(seen).toEqual([
+      ['/v1/health', 200],
+      ['/v1/health', 200],
+    ]);
   });
 });
 

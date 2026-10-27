@@ -116,9 +116,11 @@ All paths are under `/gmail/v1/users/{userId}`; media uploads under
 ### insert / import
 
 Places a message without sending it (never delivered to anyone). `labelIds` decide the result:
-folder by precedence `TRASH` > `INBOX` > `SENT`, otherwise archived; without `UNREAD` the message
+folder by precedence `TRASH` > `INBOX`, otherwise archived; without `UNREAD` the message
 is read; `STARRED`/`ANSWERED`/`DELETED` set flags; user labels are applied. Each of those after the
-insert itself is a separate write. `DRAFT` is refused (use drafts); `internalDateSource` is
+insert itself is a separate write. `DRAFT` is refused (400, use drafts) and, unlike Gmail, so is
+`SENT` (403 `PERMISSION_DENIED`): Sent holds only mail this account actually sent, so an inserted
+message can't stand in for a sent one. `internalDateSource` is
 ignored (the `Date` header is used, else the virtual clock). The raw message needs a `From`.
 
 ## Identifiers
@@ -151,7 +153,11 @@ fixed state, no duplicates or gaps.
 
 `modify` semantics: adding `INBOX`/`SENT`/`TRASH` moves the message there (two of them at
 once is 400); removing the current folder label archives it (removing `TRASH` restores it to
-where it was trashed from); `DRAFT` cannot be added or removed (400). Changes that are already
+where it was trashed from); `DRAFT` cannot be added or removed (400); adding `SENT` to mail this
+account did not send is 403. A `Label_...` id that spells a system label name (`SENT`, `DRAFT`,
+`INBOX`, `ARCHIVE`, `UNREAD`, ...) is refused like `DRAFT` (400, before any write, recorded as a
+refused `label`; in `insert`, a refused `insert`); elsewhere (list filters, `labels.get`) such
+an id names no label (404). Changes that are already
 in effect cost nothing (also `trash` of a trashed and `untrash` of a non-trashed message). Otherwise the writes are, in order: folder move, user labels, flags,
 each a separate budgeted write; if a later write fails the earlier ones stay applied.
 
@@ -172,7 +178,8 @@ settings live in an **adapter-side registry**:
 Renaming or deleting a label rewrites it on every message carrying it (one `label` write per
 message). This is **not atomic**: if a write fails (budget, run ended), the messages already
 rewritten keep the change and the error is returned; repeat the call to finish. Names are
-unique case-insensitively (409 on conflict); system names are reserved.
+unique case-insensitively (409 on conflict); system names are reserved (Gmail's, any case,
+and `DRAFTS`/`ARCHIVE`: the same list every interface refuses as labels).
 
 ## Search (`q`)
 

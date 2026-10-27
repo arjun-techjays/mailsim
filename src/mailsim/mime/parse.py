@@ -73,6 +73,16 @@ def _msgids(value: str | None) -> list[str]:
     return _MSGID.findall(value or "")
 
 
+def normalize_message_id(value: str | None) -> str | None:
+    """A Message-ID header value in its compared form: the first `<id>` in it, or the bare
+    id wrapped in angle brackets; None when it names none."""
+    ids = _msgids(value)
+    if ids:
+        return ids[0]
+    bare = (value or "").strip().strip("<>").strip()
+    return f"<{bare}>" if bare and not any(ch.isspace() for ch in bare) else None
+
+
 def _decode_text(part: Message) -> str:
     assert isinstance(part, EmailMessage)
     try:

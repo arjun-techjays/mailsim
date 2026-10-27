@@ -285,10 +285,20 @@ describe('scenario builder page', () => {
     await waitValid();
     expect(screen.queryByText('title taken', { selector: '[data-testid="inline-error"]' })).toBeNull();
 
-    // Save while validating
+    // Save while validating: the validation request is held until the test releases it, so the
+    // "validating" state does not depend on the debounce racing a slow runner
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    server.use(
+      http.post('*/v1/scenario-drafts/validate', async () => {
+        await held; // then fall through to the default handler
+      }),
+    );
     await user.type(screen.getByLabelText(/^Title/), '?');
     await user.click(screen.getByRole('button', { name: 'Save and publish' }));
     expect(screen.getByText('Still checking the scenario: try again in a moment.')).toHaveAttribute('role', 'alert');
+    expect(screen.getByTestId('validation-status')).toHaveTextContent('Validating…');
+    release();
     await waitValid();
     // Save when the validator is down
     server.use(http.post('*/v1/scenario-drafts/validate', () => fail(500, 'INTERNAL', 'down')));

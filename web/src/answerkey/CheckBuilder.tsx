@@ -343,7 +343,7 @@ function Node(p: NodeProps) {
         value={value}
         onChange={setStr}
         empty="Choose an operation"
-        options={meta.agent_operations.map((o) => ({ value: o, label: o }))}
+        options={(meta.graded_operations ?? meta.agent_operations).map((o) => ({ value: o, label: o }))}
       />
     );
   } else if (kind === 'string' && p.name === 'outcome') {

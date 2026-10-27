@@ -96,6 +96,16 @@ describe("ErrorDisplay", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Network error");
   });
 
+  it("lets the caller replace or drop the generic hint", () => {
+    const timeout = new ApiError({ kind: "timeout", code: "TIMEOUT", message: "slow" });
+    const { rerender } = render(<ErrorDisplay error={timeout} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Try again.");
+    rerender(<ErrorDisplay error={timeout} hint={null} />);
+    expect(screen.getByRole("alert")).not.toHaveTextContent("Try again");
+    rerender(<ErrorDisplay error={timeout} hint="Use the button below." />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Use the button below.");
+  });
+
   it("renders unknown errors", () => {
     const { rerender } = render(<ErrorDisplay error={new Error("boom")} />);
     expect(screen.getByRole("alert")).toHaveTextContent("Something went wrong");
