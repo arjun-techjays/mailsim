@@ -38,3 +38,72 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run e2e
+  # Real-stack Playwright (web/e2e/real/*, no MSW) against the API in local no-auth mode: the
+  # scenario-pack import spec (and the local-no-auth + health checks) run on every PR. Specs that
+  # need controller/evaluator/agent keys skip themselves here.
+  e2e-real:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env: {POSTGRES_USER: mailsim, POSTGRES_PASSWORD: mailsim, POSTGRES_DB: mailsim}
+        ports: ["54329:5432"]
+        options: >-
+          --health-cmd "pg_isready -U mailsim" --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      MAILSIM_DATABASE_URL: "postgresql+psycopg://mailsim:mailsim@localhost:54329/mailsim"
+      API_PORT: "18011"
+      E2E_PORT: "5175"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with: {node-version: "22", cache: npm, cache-dependency-path: web/package-lock.json}
+      - run: uv sync
+      - run: uv run alembic upgrade head
+      - name: Start the API (local no-auth, loopback, isolated ports)
+        env:
+          PYTHONUNBUFFERED: "1"
+          MAILSIM_BLOB_DIR: ${{ runner.temp }}/blobs
+          MAILSIM_DASHBOARD_URL: http://127.0.0.1:${{ env.E2E_PORT }}
+        run: |
+          nohup uv run python -m mailsim.serve serve --host 127.0.0.1 --port "$API_PORT" \
+            --local-no-auth --imap-port 11143 --smtp-port 11587 > "$RUNNER_TEMP/api.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/api.pid"
+      - name: Wait for the API and capture the launch token
+        run: |
+          pid=$(cat "$RUNNER_TEMP/api.pid")
+          for _ in $(seq 1 60); do
+            if ! kill -0 "$pid" 2>/dev/null; then echo "::error::API exited during startup"; cat "$RUNNER_TEMP/api.log"; exit 1; fi
+            curl -fsS "http://127.0.0.1:$API_PORT/v1/health" >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS "http://127.0.0.1:$API_PORT/v1/health" >/dev/null || { echo "::error::API not ready after 60s"; exit 1; }
+          token=$(grep -o 'local_token=[A-Za-z0-9_-]*' "$RUNNER_TEMP/api.log" | head -n 1 | cut -d= -f2)
+          # without the token every real-stack spec skips and the job would pass vacuously
+          [ -n "$token" ] || { echo "::error::no local_token in the API output"; exit 1; }
+          echo "::add-mask::$token"
+          echo "MAILSIM_LOCAL_TOKEN=$token" >> "$GITHUB_ENV"
+          echo "MAILSIM_API_URL=http://127.0.0.1:$API_PORT" >> "$GITHUB_ENV"
+      - run: npm ci
+        working-directory: web
+      - run: npx playwright install --with-deps chromium
+        working-directory: web
+      - run: npm run e2e:real
+        working-directory: web
+      - name: Redact the launch token from the API log
+        if: failure()
+        run: |
+          mkdir -p "$RUNNER_TEMP/e2e-real"
+          sed "s/${MAILSIM_LOCAL_TOKEN:-__no_token__}/[REDACTED]/g" "$RUNNER_TEMP/api.log" > "$RUNNER_TEMP/e2e-real/api.log"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        if: failure()
+        with:
+          name: e2e-real-report
+          path: |
+            web/playwright-report/
+            web/test-results/
+            ${{ runner.temp }}/e2e-real/api.log
+          if-no-files-found: ignore
+          retention-days: 7
