@@ -1,3 +1,5 @@
+from datetime import UTC
+
 import pytest
 
 from mailsim.domain.errors import (
@@ -112,7 +114,8 @@ def test_inject_and_virtual_time_and_scheduled_events(env):
     )
     assert (
         env.engine.get_message(env.scope, run, fm, res["message_id"], actor=CONTROLLER)
-        .received_at.isoformat()
+        .received_at.astimezone(UTC)  # read back in the session's TimeZone (issue #6)
+        .isoformat()
         .startswith("2026-10-15T09:00:00")
     )
     raw = env.engine.inject(
@@ -142,7 +145,7 @@ def test_inject_and_virtual_time_and_scheduled_events(env):
         for m in inbox(env, run)
         if m.subject == "Re: Invoice INV-001" and m.from_.email == "vendor@example.test"
     ]
-    assert followup and followup[0].received_at.minute == 10
+    assert followup and followup[0].received_at.astimezone(UTC).minute == 10
     assert followup[0].thread_id == inbox(env, run)[0].thread_id, (
         "subject fallback joins the thread"
     )
