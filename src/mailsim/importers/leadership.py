@@ -453,7 +453,7 @@ class GenerateOptions:
     days: int = 10  # mail is spread over the days before the clock start
     max_thread: int = 3
     extra_names: Sequence[str] = ()  # real names to scan generated text against
-    id_key: bytes = b""  # the team id key: the scan then also checks the keyed deny list
+    id_key: bytes = b""  # the id key: the scan then also checks the keyed deny list
 
 
 @dataclass

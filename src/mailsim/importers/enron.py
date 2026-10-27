@@ -13,11 +13,11 @@ every other line is one record::
 Bodies, subjects and parties are templates (see `pseudonymize`): no detected real name,
 address or number survives. Sampling is a deterministic function of (seed, shard name, row):
 the `limit` rows with the smallest keyed hash, so the same seed and inputs give a
-byte-identical corpus (identifiers are hashed with a secret key, `ImportConfig.id_key`: the same
-key file is needed to reproduce a corpus; see `load_key`, which never creates one). Raw text
-never leaves this process except through templates; the optional registry file (real names,
-for scanning generated output) and the key file must stay outside the repository (default
-location under ``var/``).
+byte-identical corpus (identifiers are hashed with a keyed HMAC, `ImportConfig.id_key`: the
+committed key `DEFAULT_ID_KEY` makes a corpus reproducible; see `load_key`, which never creates
+one). Raw text never leaves this process except through templates; the optional registry file
+(real names, for scanning generated output) stays outside the repository (default location
+under ``var/``).
 """
 
 from __future__ import annotations
@@ -107,7 +107,7 @@ class ImportConfig:
     min_chars: int = 40
     max_chars: int = 20_000
     harvest_all: bool = True  # build the name registry from every row, not only the sample
-    id_key: bytes = b""  # secret key for hashed identifiers: required (the CLI reads id.key)
+    id_key: bytes = b""  # key for hashed identifiers: required (the CLI loads DEFAULT_ID_KEY)
 
 
 @dataclass
@@ -288,24 +288,30 @@ def read_corpus(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
 
 KEY_DOC = "docs/leadership-inboxes.md, section 'Identifier key'"
 _KEY_CHECK_MSG = b"mailsim id-key check v1"
+DATA_DIR = Path(__file__).resolve().parent / "data"
+# The identifier key is committed on purpose: the Enron corpus is public and pseudonymization is
+# what protects people; the key only has to be stable so generation is reproducible.
+DEFAULT_ID_KEY = DATA_DIR / "enron-id.key"
+# sha256(lower-cased token) digests behind `names.HASHED_DENY` (see `pseudonymize.deny_entry`)
+DENY_DIGESTS = DATA_DIR / "enron-deny-digests.txt"
 
 
 def id_key_check(key: bytes) -> str:
-    """A public check value for the id key: a truncated HMAC of a constant. It reveals nothing
-    usable about the key but tells the team key from any other (`names.ID_KEY_CHECK`)."""
+    """A short check value for the id key: a truncated HMAC of a constant
+    (`names.ID_KEY_CHECK` holds the committed key's)."""
     return hmac.new(key, _KEY_CHECK_MSG, hashlib.sha256).hexdigest()[:16]
 
 
-def load_key(path: Path, *, expected: str | None = None) -> bytes:
-    """The secret key for hashed identifiers and the deny list, read from `path` and checked
-    against `expected` (default `names.ID_KEY_CHECK`). Never created here: a new key would
-    silently change every hashed id and disable the deny list, so a missing or different key
-    is an error. The team key lives in the team password manager (see `KEY_DOC`)."""
+def load_key(path: Path = DEFAULT_ID_KEY, *, expected: str | None = None) -> bytes:
+    """The key for hashed identifiers and the deny list, read from `path` (default: the
+    committed `DEFAULT_ID_KEY`) and checked against `expected` (default `names.ID_KEY_CHECK`).
+    Never created here: a different key would silently change every hashed id and disable the
+    deny list, so a missing or different key is an error."""
     if not path.is_file():
         raise ValueError(
-            f"{path}: id key not found. It is the team's shared secret: restore it from the team "
-            f"password manager ({KEY_DOC}). Do not create a new one: hashed ids and the deny "
-            "list would no longer match the committed pack."
+            f"{path}: id key not found. The project's key is committed at {DEFAULT_ID_KEY} "
+            f"({KEY_DOC}). Do not create a new one: hashed ids and the deny list would no longer "
+            "match the committed pack."
         )
     text = path.read_text(encoding="ascii").strip()
     if len(text) < 32:
@@ -313,15 +319,15 @@ def load_key(path: Path, *, expected: str | None = None) -> bytes:
     key = text.encode()
     if id_key_check(key) != (N.ID_KEY_CHECK if expected is None else expected):
         raise ValueError(
-            f"{path}: this is not the team id key (its check differs from names.ID_KEY_CHECK). "
-            f"Restore the team key ({KEY_DOC}); rotating it is a manual procedure."
+            f"{path}: this is not the project's id key (its check differs from "
+            f"names.ID_KEY_CHECK); use {DEFAULT_ID_KEY} ({KEY_DOC})."
         )
     return key
 
 
-def key_is_private(path: Path) -> bool:
-    """True when only the owner can read the key file."""
-    return path.stat().st_mode & 0o077 == 0
+def deny_digests(path: Path = DENY_DIGESTS) -> list[str]:
+    """The committed sha256 digests behind `names.HASHED_DENY`, one per line."""
+    return path.read_text(encoding="ascii").split()
 
 
 def write_registry(path: Path, registry: Registry) -> None:

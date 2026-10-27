@@ -1461,17 +1461,17 @@ PLACES: frozenset[str] = frozenset(
     )
 )  # fmt: skip
 
-# Public check value of the team's secret id key (`var/enron/id.key`): `enron.id_key_check(key)`,
+# Check value of the committed id key (`importers/data/enron-id.key`): `enron.id_key_check(key)`,
 # a truncated HMAC of a constant. The CLI refuses any other key, because hashed ids (and the
-# deny list) are only reproducible with this one. It changes only when the key is rotated
-# (docs/leadership-inboxes.md, section "Identifier key").
+# deny list) are only reproducible with this one (docs/leadership-inboxes.md, "Identifier key").
 ID_KEY_CHECK = "1a88cb31e2ee55e4"
 
 # Real names that the rules cannot catch (e.g. an unusual first name the corpus also writes in
-# lower case). Each entry is `pseudonymize.deny_entry(id_key, sha256(lower-cased token))`: an
-# HMAC under the team's secret id key, so neither the names nor a guess at them can be checked
-# without the key (`pseudonymize.DenyList`). Matching capitalised tokens are pseudonymized and
-# flagged by the scanner. Adding a name needs the key: see docs/leadership-inboxes.md.
+# lower case). Each entry is `pseudonymize.deny_entry(id_key, sha256(lower-cased token))` under
+# the committed id key (`pseudonymize.DenyList`); the digests are in
+# `importers/data/enron-deny-digests.txt`, never the names. The key is public, so a guessed
+# name can be confirmed: an accepted trade-off (docs/leadership-inboxes.md, "Identifier key").
+# Matching capitalised tokens are pseudonymized and flagged by the scanner.
 HASHED_DENY: frozenset[str] = frozenset(
     {
         "43dbc1fc5ae38a45dfa0098cfa643c6b884e78f668fc9f8974c53fdc95421708",

@@ -179,18 +179,16 @@ def test_cli_refuses_a_missing_or_foreign_id_key(cmd, shards, tmp_path, capsys, 
     missing = tmp_path / "var" / "id.key"
     code, out = _run(capsys, *argv, "--id-key", str(missing))
     assert code == 2 and "id key not found" in out["message"]
-    assert "password manager" in out["message"]
+    assert "data/enron-id.key" in out["message"]
     assert not missing.exists() and not corpus.exists()  # nothing created, nothing written
     foreign = tmp_path / "other.key"
     foreign.write_text("f" * 64 + "\n", encoding="ascii")
     code, out = _run(capsys, *argv, "--id-key", str(foreign))
-    assert code == 2 and "not the team id key" in out["message"]
+    assert code == 2 and "not the project's id key" in out["message"]
 
 
-def test_cli_warns_about_a_readable_key(tmp_path, capsys, id_key_file):
-    id_key_file.chmod(0o644)
+def test_cli_uses_the_committed_key_by_default(tmp_path, capsys):
     empty = tmp_path / "empty"
     empty.mkdir()
-    code = main(["import", "scan", str(empty), "--id-key", str(id_key_file)])
-    err = capsys.readouterr().err
-    assert code == 0 and "readable by other users" in err and "chmod 600" in err
+    code, out = _run(capsys, "import", "scan", str(empty))  # no --id-key: the committed key
+    assert (code, out["ok"], out["findings"]) == (0, True, 0)

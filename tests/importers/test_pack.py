@@ -57,31 +57,22 @@ def test_pack_has_no_harvested_real_names():
     assert not findings, f"{len(findings)} findings (kinds: {sorted({f.kind for f in findings})})"
 
 
-ID_KEY = ROOT / "var" / "enron" / "id.key"
-
-
-@pytest.mark.skipif(not ID_KEY.is_file(), reason="no local team id key (var/enron/id.key)")
-def test_deny_list_is_keyed_with_the_team_key():
-    # issue #9: HASHED_DENY only matches its records under the team key. load_key fails unless
-    # this is the key behind names.ID_KEY_CHECK, the key the entries were derived with.
-    key = enron.load_key(ID_KEY)
+def test_deny_list_is_keyed_with_the_committed_key():
+    # issue #9: HASHED_DENY only matches its records under the committed key (it runs in CI).
+    # load_key fails unless this is the key behind names.ID_KEY_CHECK.
+    key = enron.load_key()
     assert len(N.HASHED_DENY) == 5
     assert all(re.fullmatch(r"[0-9a-f]{64}", e) for e in N.HASHED_DENY)
     findings = Scanner(deny=DenyList(key)).scan_paths([PACK])
     assert not findings, f"{len(findings)} findings (kinds: {sorted({f.kind for f in findings})})"
 
 
-DENY_DIGESTS = ROOT / "var" / "enron" / "deny-digests.txt"
-
-
-@pytest.mark.skipif(not (ID_KEY.is_file() and DENY_DIGESTS.is_file()),
-                    reason="no local team id key or deny digests (var/enron)")  # fmt: skip
 def test_deny_list_entries_are_the_keyed_digests():
-    # issue #9: every committed entry is exactly the team-keyed HMAC of one of the sha256
-    # digests kept with the key (Bitwarden field "deny digests" -> var/enron/deny-digests.txt);
-    # a wrong, missing or extra entry fails here, independent of what the pack contains
-    key = enron.load_key(ID_KEY)
-    digests = DENY_DIGESTS.read_text(encoding="ascii").split()
+    # issue #9: every committed entry is exactly the keyed HMAC of one of the committed sha256
+    # digests (src/mailsim/importers/data/enron-deny-digests.txt); a wrong, missing or extra
+    # entry fails here, independent of what the pack contains. Runs in CI (no local files).
+    key = enron.load_key()
+    digests = enron.deny_digests()
     assert digests and all(re.fullmatch(r"[0-9a-f]{64}", d) for d in digests)
     assert {deny_entry(key, d) for d in digests} == N.HASHED_DENY
 

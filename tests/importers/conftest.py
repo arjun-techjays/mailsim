@@ -149,7 +149,7 @@ def shards(tmp_path_factory) -> list[Path]:
 
 @pytest.fixture
 def id_key_file(tmp_path, monkeypatch) -> Path:
-    """A key file holding TEST_KEY, accepted as the team key for the duration of the test."""
+    """A key file holding TEST_KEY, accepted as the project key for the duration of the test."""
     from mailsim.importers import enron
     from mailsim.importers import names as N
 

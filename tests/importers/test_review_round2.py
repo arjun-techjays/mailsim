@@ -86,7 +86,7 @@ def test_import_records_list_their_hashed_ids(shards):
 def test_id_key_is_read_checked_and_never_created(tmp_path):
     # issue #10: a missing key used to be created silently, changing every hashed id
     path = tmp_path / "var" / "id.key"
-    with pytest.raises(ValueError, match="id key not found.*password manager"):
+    with pytest.raises(ValueError, match="id key not found.*data/enron-id.key"):
         enron.load_key(path, expected="0" * 16)
     assert not path.exists() and not path.parent.exists()
     path.parent.mkdir()
@@ -98,11 +98,12 @@ def test_id_key_is_read_checked_and_never_created(tmp_path):
     path.chmod(0o600)
     check = enron.id_key_check(key.encode())
     assert len(check) == 16 and check != enron.id_key_check(b"cd" * 32)
-    assert enron.load_key(path, expected=check) == key.encode() and enron.key_is_private(path)
-    with pytest.raises(ValueError, match="not the team id key"):
+    assert enron.load_key(path, expected=check) == key.encode()
+    with pytest.raises(ValueError, match="not the project.s id key"):
         enron.load_key(path)  # checked against names.ID_KEY_CHECK by default
-    path.chmod(0o640)
-    assert not enron.key_is_private(path)
+    # the committed key is the default and passes the committed check
+    assert enron.id_key_check(enron.load_key()) == N.ID_KEY_CHECK
+    assert enron.load_key() == enron.load_key(enron.DEFAULT_ID_KEY)
 
 
 def test_digit_rule_is_independent_of_the_scrubber(tmp_path):

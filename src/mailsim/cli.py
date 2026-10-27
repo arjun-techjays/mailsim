@@ -35,9 +35,9 @@ def _emit(obj: Any, stream: Any = None) -> None:
     print(json.dumps(obj, indent=2, sort_keys=True, default=str), file=stream or sys.stdout)
 
 
-_ID_KEY = Path("var/enron/id.key")
-_ID_KEY_HELP = ("the team's secret id key (default var/enron/id.key); required, never created: "
-                "see docs/leadership-inboxes.md")  # fmt: skip
+_ID_KEY_HELP = ("key file for hashed identifiers and the deny list (default: the committed "
+                "src/mailsim/importers/data/enron-id.key); never created, a different key is "
+                "refused: see docs/leadership-inboxes.md")  # fmt: skip
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -78,13 +78,11 @@ def _parser() -> argparse.ArgumentParser:
     en.add_argument("--keep-quotes", action="store_true", help="keep '>' quoted lines")
     en.add_argument("--sample-harvest", action="store_true",
                     help="harvest names from the sample only (faster, weaker)")  # fmt: skip
-    en.add_argument("--id-key", type=Path, default=None,
-                    help="the team's secret key file for hashed identifiers (default: id.key next "
-                         "to --out; never created, see docs/leadership-inboxes.md)")  # fmt: skip
+    en.add_argument("--id-key", type=Path, default=None, help=_ID_KEY_HELP)
     sc = isub.add_parser("scan", help="scan files/directories for residual real PII")
     sc.add_argument("paths", type=Path, nargs="+")
     sc.add_argument("--names", type=Path, default=None, help="registry JSON from import enron")
-    sc.add_argument("--id-key", type=Path, default=_ID_KEY, help=_ID_KEY_HELP)
+    sc.add_argument("--id-key", type=Path, default=None, help=_ID_KEY_HELP)
 
     gen = sub.add_parser("generate", help="generate scenarios (no database needed)")
     gsub = gen.add_subparsers(dest="generate_cmd", required=True)
@@ -97,7 +95,7 @@ def _parser() -> argparse.ArgumentParser:
     ld.add_argument("--start-at", default="2026-10-16T08:00:00Z", help="virtual clock start")
     ld.add_argument("--days", type=_at_least_two, default=10,
                     help="days of mail before the clock start (>= 2)")  # fmt: skip
-    ld.add_argument("--id-key", type=Path, default=_ID_KEY, help=_ID_KEY_HELP)
+    ld.add_argument("--id-key", type=Path, default=None, help=_ID_KEY_HELP)
     names = ld.add_mutually_exclusive_group(required=True)
     names.add_argument("--names", type=Path, help="registry JSON from import enron (required for "
                        "the PII guarantee: every rendered message is scanned against it)")  # fmt: skip
@@ -312,16 +310,12 @@ def _names(path: Path | None) -> list[str]:
     return [str(n) for n in data.get("names", [])]
 
 
-def _load_key(path: Path) -> bytes:
-    """The team id key (`enron.load_key`: never created, a missing or different key is an
-    error); warns when the file is readable by others."""
+def _load_key(path: Path | None) -> bytes:
+    """The id key (`enron.load_key`: the committed key unless `--id-key` names another file;
+    never created, a missing or different key is an error)."""
     from mailsim.importers import enron
 
-    key = enron.load_key(path)
-    if not enron.key_is_private(path):
-        print(f"WARNING: {path} is readable by other users; run: chmod 600 {path}",
-              file=sys.stderr)  # fmt: skip
-    return key
+    return enron.load_key(path or enron.DEFAULT_ID_KEY)
 
 
 def _import(args: argparse.Namespace) -> int:
@@ -336,7 +330,7 @@ def _import(args: argparse.Namespace) -> int:
                "by_kind": _count(f.kind for f in findings),
                "examples": [str(f) for f in findings[:50]]})  # fmt: skip
         return 0 if not findings else 1
-    key = _load_key(args.id_key or args.out.with_name("id.key"))
+    key = _load_key(args.id_key)
     cfg = enron.ImportConfig(limit=args.limit, seed=args.seed, strip_quotes=not args.keep_quotes,
                              harvest_all=not args.sample_harvest, id_key=key)  # fmt: skip
     try:

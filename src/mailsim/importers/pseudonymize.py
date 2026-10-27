@@ -13,7 +13,7 @@ Two stages, so a generator can bind the people of a message to the personas of a
    (`names.THIRD_PARTY_MAP`); URLs, phone numbers, street addresses and mixed letter-digit deal
    ids are replaced outright, and every identifier-like digit run (deal, notice and contract
    numbers, any 6+ digit run that is not money, a decimal or a date) becomes a keyed hash
-   (HMAC-SHA256 with a secret key, so hashed ids cannot be brute-forced from the public seed).
+   (HMAC-SHA256 with the committed id key, which keeps the hashes stable across imports).
    The hashed outputs of a record are listed in the record (``ids``) so the scanner can tell
    them from a digit run the scrubber missed. Templates contain no real names that the
    detectors recognised.
@@ -365,14 +365,13 @@ _DENY_TAG = b"deny\x1f"
 
 def deny_entry(key: bytes, digest: str) -> str:
     """The `names.HASHED_DENY` entry for a token whose sha256(lower case) hex digest is
-    `digest`: HMAC-SHA256 under the secret id key, so a candidate name cannot be checked
-    against the list without the key. Keyed over the digest (not the token) so the list can be
-    re-keyed from the digests alone (docs/leadership-inboxes.md, "Identifier key")."""
+    `digest`: HMAC-SHA256 under the id key. Keyed over the digest (not the token) so the list
+    is built from the committed digests alone (docs/leadership-inboxes.md, "Identifier key")."""
     return hmac.new(key, _DENY_TAG + digest.encode(), hashlib.sha256).hexdigest()
 
 
 class DenyList:
-    """`names.HASHED_DENY` under one id key. With any key other than the team key nothing
+    """`names.HASHED_DENY` under one id key. With any key other than the committed one nothing
     matches, which is why the CLI refuses other keys (`enron.load_key`)."""
 
     def __init__(self, key: bytes) -> None:
@@ -566,11 +565,11 @@ class Pseudonymizer:
     processing order, which is deterministic)."""
 
     def __init__(self, registry: Registry, seed: int, id_key: bytes) -> None:
-        """`id_key` keys the hash of identifiers (deal / notice / contract numbers): the secret
-        key file (`var/enron/id.key`, see `enron.load_key`), which also keys the deny list;
-        tests pass their own."""
+        """`id_key` keys the hash of identifiers (deal / notice / contract numbers) and the deny
+        list: the committed key (`enron.DEFAULT_ID_KEY`, see `enron.load_key`); tests pass their
+        own."""
         if len(id_key) < 16:
-            raise ValueError("an id key of at least 16 bytes is required (var/enron/id.key)")
+            raise ValueError("an id key of at least 16 bytes is required (enron.DEFAULT_ID_KEY)")
         self.reg = registry
         self.seed = seed
         self.id_key = id_key

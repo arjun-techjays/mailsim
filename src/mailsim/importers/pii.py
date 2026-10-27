@@ -273,7 +273,7 @@ def _kind(exc: UnsafeAttachment) -> str:
 
 class Scanner:
     def __init__(self, extra_names: Iterable[str] = (), *, deny: DenyList | None = None) -> None:
-        """`deny`: the keyed `names.HASHED_DENY` (team id key). Without it the scanner cannot
+        """`deny`: the keyed `names.HASHED_DENY` (committed id key). Without it the scanner cannot
         check the deny list; the CLI and the generator always pass it."""
         self.deny = deny
         pairs = set()

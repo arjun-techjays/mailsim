@@ -21,16 +21,14 @@ ordinary versioned scenarios: one per target inbox.
 
 ## Regenerate the pack
 
-Three local inputs decide the output byte for byte: the team's **identifier key**
-(`var/enron/id.key`, see [Identifier key](#identifier-key)), the parquet shards and the
-command line below. The import derives `var/enron/corpus.jsonl` and `var/enron/registry.json`
-from them; both are inputs of the generator (the registry also steers the pseudonym choice).
-Without the team key the import, the generator and the scan stop with an error instead of
-producing a pack that differs everywhere.
+Three inputs decide the output byte for byte: the committed **identifier key**
+(`src/mailsim/importers/data/enron-id.key`, see [Identifier key](#identifier-key)), the public
+parquet shards and the command line below. The import derives `var/enron/corpus.jsonl` and
+`var/enron/registry.json` from them; both are inputs of the generator (the registry also
+steers the pseudonym choice).
 
 ```bash
 uv sync --extra import            # pyarrow (pinned) for the parquet reader
-# 0. restore the team secrets once per checkout: see "Identifier key" (restore script)
 mkdir -p var/cache/enron
 for i in 0 1; do
   curl -sSfL --proto '=https' -o var/cache/enron/$i.parquet \
@@ -57,9 +55,10 @@ for r in ceo cfo cbo director-finance; do uv run sim validate scenarios/leadersh
 git status --porcelain scenarios/leadership      # empty unless the generator itself changed
 ```
 
-All three commands read `var/enron/id.key` by default (`--id-key` to point elsewhere). When
-only the generator changed, steps 2-5 are enough: keep `corpus.jsonl` and `registry.json`
-(restore `registry.json` with the same script if you do not have it) and do not re-import.
+All three commands use the committed key by default (`--id-key` to point elsewhere; any other
+key is refused). When only the generator changed, steps 2-5 are enough: keep `corpus.jsonl`
+and `registry.json` and do not re-import. If you do not have them, step 1 rebuilds both from
+the public dataset.
 
 Generator options:
 
@@ -81,93 +80,39 @@ inbox from `--roles ceo,cfo,cbo,director_finance`. Regenerate the committed pack
 the command above.
 
 `var/enron/corpus.jsonl` (templates and metadata) and `var/enron/registry.json` (the real names
-found by the import) stay in the git-ignored `var/`. **Never commit them.**
+found by the import) stay in the git-ignored `var/`. **Never commit them**, `registry.json` in
+particular: it lists real names. Neither needs a backup: `sim import enron` rebuilds both from
+the public dataset and the committed key.
 
 ## Identifier key
 
-`var/enron/id.key` is the team's **secret key** for hashed identifiers (deal, notice and
-contract numbers are replaced by HMAC-SHA256 hashes under it). 64 hex characters, owner-only
-permissions, git-ignored: **never commit, print or paste it.** Without it, hashed ids cannot be
-brute-forced from the public seed; with a different key, every hashed id in a re-imported
-corpus changes and so does every fixture that shows one.
+Deal, notice and contract numbers are replaced by keyed hashes (HMAC-SHA256), and the deny
+list of real names (`names.HASHED_DENY`) is keyed the same way. The key is committed at
+`src/mailsim/importers/data/enron-id.key`, together with the sha256 digests behind the deny
+list (`src/mailsim/importers/data/enron-deny-digests.txt`), and both ship with the package.
 
-**Where it is kept.** A Secure Note item named `mailsim / enron id.key` in the team's
-[Bitwarden](https://bitwarden.com) organisation (open source; the free tier is enough). The
-note holds the key and nothing else. The same item carries `registry.json` as an attachment
-(real names: same handling as the key) and, in a custom field `deny digests`, the sha256
-digests behind `names.HASHED_DENY` (one per line), which are needed to re-key the deny list
-and which `tests/importers/test_pack.py` checks the committed entries against.
+**The key is deliberately public.** The Enron corpus is public; what protects the people in
+it is the pseudonymization, not the key. The key only has to be **stable**, so that the same
+inputs always give the same corpus and pack. Committing it makes regeneration reproducible on
+any checkout and lets CI check the deny list (`tests/importers/test_pack.py`).
 
-**Restore** with the Bitwarden CLI. The script refuses to run when any of the three files
-already exists (even an empty one), writes each to a temporary name, and moves them into place
-only when `bw` succeeded and every result is non-empty, so a locked vault or a missing item can
-never destroy or blank a key you already have. It ends with a non-zero status when nothing was
-restored (without closing an interactive shell), after locking the vault:
+**Do not change it.** A different key changes every hashed id in a re-imported corpus, and so
+every fixture that shows one. The CLI never creates a key and refuses any key whose check
+value differs from `names.ID_KEY_CHECK` (exit 2).
 
-```bash
-bw login --check || bw login
-export BW_SESSION="$(bw unlock --raw)"
-mkdir -p var/enron
-(
-  set -eu; set -o pipefail; umask 077; cd var/enron
-  for f in id.key registry.json deny-digests.txt; do
-    if [ -e "$f" ]; then
-      echo "var/enron/$f already exists (possibly empty): inspect it, move or remove it, then rerun" >&2
-      exit 1
-    fi
-  done
-  trap 'rm -f id.key.tmp registry.json.tmp deny-digests.txt.tmp' EXIT
-  item="mailsim / enron id.key"
-  id="$(bw get item "$item" | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')"
-  bw get notes "$item" > id.key.tmp
-  bw get attachment registry.json --itemid "$id" --output registry.json.tmp
-  bw get item "$item" | python3 -c 'import json,sys
-print(next(f["value"] for f in json.load(sys.stdin)["fields"] if f["name"] == "deny digests"))' \
-    > deny-digests.txt.tmp
-  for f in id.key registry.json deny-digests.txt; do
-    [ -s "$f.tmp" ] || { echo "empty $f from bw: nothing restored" >&2; exit 1; }
-  done
-  for f in id.key registry.json deny-digests.txt; do mv -n "$f.tmp" "$f"; done
-  for f in id.key registry.json deny-digests.txt; do
-    [ -s "$f" ] || { echo "var/enron/$f was not restored" >&2; exit 1; }
-  done
-)
-restore_status=$?
-bw lock; unset BW_SESSION
-[ "$restore_status" -eq 0 ] || { echo "restore failed (status $restore_status)" >&2; false; }
-```
-
-`var/enron/deny-digests.txt` is git-ignored like the rest of `var/`.
-
-**Nothing creates a key.** `sim import enron`, `sim generate leadership` and `sim import scan`
-read it (`--id-key`; the import defaults to `id.key` next to `--out`, the others to
-`var/enron/id.key`) and check it against `names.ID_KEY_CHECK`, a public check value (a
-truncated HMAC of a constant, which reveals nothing about the key). A missing, short or
-different key is an error (exit 2) pointing here; a key file readable by other users gets a
-warning.
-
-In the steps below, `key` means the bytes of the ASCII hex text in the key file, exactly as
-`enron.load_key` returns them (`text.strip().encode()`), **not** `bytes.fromhex(text)`.
-
-**Rotation** (only if the key leaks) is manual and never overwrites the old key before the new
-one is stored:
-
-1. Write the new key next to the old one, refusing to overwrite:
-   `[ -e var/enron/id.key.new ] || (umask 077; python3 -c 'import secrets;print(secrets.token_hex(32))' > var/enron/id.key.new)`.
-2. Store it in a new Bitwarden item (or a new version of the note), with the registry and
-   the deny digests, before anything else.
-3. Put `enron.id_key_check(key)` into `names.ID_KEY_CHECK` and replace every
-   `names.HASHED_DENY` entry with `pseudonymize.deny_entry(key, digest)` for each line of
-   `var/enron/deny-digests.txt`.
-4. `mv var/enron/id.key var/enron/id.key.old && mv var/enron/id.key.new var/enron/id.key`,
-   then re-import, regenerate and scan the pack. Every fixture with a hashed id changes.
-5. Delete `id.key.old` and the old Bitwarden note only after the new pack is merged.
+**Accepted trade-off.** Because the key is public, anyone can confirm a guessed name against
+the deny list by hashing it, and recover a hashed deal or notice number by hashing candidate
+numbers; both come from the public dataset. The deny list only names what was removed, not personal data
+that remains, so issue #9 rated this low severity, and the trade-off is accepted for
+reproducibility.
 
 **Adding a name** to the deny list: the scanner and the pseudonymizer match one capitalised
-**single token** at a time, so add one entry per token:
-`pseudonymize.deny_entry(key, hashlib.sha256(token.lower().encode()).hexdigest())`. Append
-the digest (`hashlib.sha256(token.lower().encode()).hexdigest()`) to the Bitwarden field
-`deny digests` and to `var/enron/deny-digests.txt`, never the token itself.
+**single token** at a time, so add one entry per token. The key bytes are the ASCII hex text
+of the key file as `enron.load_key()` returns it (`text.strip().encode()`), **not**
+`bytes.fromhex(text)`. Append the digest `hashlib.sha256(token.lower().encode()).hexdigest()`
+to `enron-deny-digests.txt` and the entry `pseudonymize.deny_entry(key, digest)` to
+`names.HASHED_DENY`; `test_deny_list_entries_are_the_keyed_digests` checks that the two
+agree. Never commit the token itself.
 
 ## Run a leadership inbox locally
 
@@ -316,8 +261,8 @@ against the CEO pack and checks that the results agree.
        Vanity toll-free numbers (`1-800-PAGEMTEL`) are public and stay as they are.
      * The scanner normalises tabs and non-breaking spaces before matching, as `clean_body`
        does.
-     * Identifiers are replaced by same-length **keyed** hashes (HMAC-SHA256 with the secret
-       key, see "Regenerate the pack"): labelled ids (`deal 478198`, `K#36621`,
+     * Identifiers are replaced by same-length **keyed** hashes (HMAC-SHA256 with the
+       committed key, see "Identifier key"): labelled ids (`deal 478198`, `K#36621`,
        `Notice 2001043`, `Gridbook#'s 464394,464390`, `PO no. 12345`), `#549048`, pass and
        conference codes, and every other run of 6+ digits that is not money (`$150000`), a
        decimal or a compact date (`20011014`). A record lists the hashed runs it contains
@@ -333,12 +278,12 @@ against the CEO pack and checks that the results agree.
        surname, and real first names written in lower case where a signature goes
        (`thanks` / `brant`).
      * `names.HASHED_DENY` lists real names that the rules cannot catch. Each entry is
-       `HMAC-SHA256(id key, "deny" + sha256(lower-cased token))` (`pseudonymize.deny_entry`), so
-       neither the names nor a guess at them can be checked without the team's id key.
-       Matching capitalised tokens are pseudonymized, and the scanner flags them as
-       `denylisted-name`. The import, the generator and `sim import scan` check the list with
-       the key they load (`--id-key`); library callers without a key (`Scanner()`) skip it.
-       Earlier revisions committed the plain sha256 digests, which stay in git history.
+       `HMAC-SHA256(id key, "deny" + sha256(lower-cased token))` (`pseudonymize.deny_entry`).
+       The names are not in the repository; since the key is public (see "Identifier key"), a
+       guessed name can be confirmed, which is an accepted trade-off. Matching capitalised
+       tokens are pseudonymized, and the scanner flags them as `denylisted-name`. The import,
+       the generator and `sim import scan` check the list with the key they load (`--id-key`);
+       library callers without a key (`Scanner()`) skip it.
 5. **Classification** (`classify`). A transparent weighted keyword rule set is applied to the
    subject and body. It covers board, legal, finance, deals, hr, vendor, scheduling, ops,
    personal, newsletter/noise and `general`. Every record stores its scores and matched
