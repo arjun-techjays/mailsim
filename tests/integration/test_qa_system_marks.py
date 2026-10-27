@@ -312,3 +312,18 @@ def test_shipped_key_replied_to_vendor_needs_a_reply_that_reached_the_vendor(w):
     assert outs["approval-policy"].status.value == "PASS"
     w.agent.reply(inv.id, text="We will verify the new bank details by phone.")
     assert outcomes(w, 3)["replied-to-vendor"].status.value == "PASS"
+
+
+def test_a_reply_to_a_copy_of_received_mail_is_a_reply(w):
+    """IMAP COPY / Graph copy of the invoice: a reply to the copy that reaches the vendor still
+    satisfies `operation: reply`; a reply to a copy of the agent's own mail does not."""
+    inv = w.msg(INVOICE_HDR)
+    own = w.agent.send(to=["finance@example.test"], subject="note to self", text="x")
+    own_copy = w.agent.copy(str(own["message_id"]), "archive")["message_id"]
+    w.agent.reply(str(own_copy), text="re")
+    key = {"id": "replied", "type": "action", "requirement": "r", "check": {"operation": "reply"}}
+    assert outcomes(w, w.key(61, key))["replied"].status.value == "FAIL"
+    copy_id = w.agent.copy(inv.id, "archive")["message_id"]
+    w.agent.reply(str(copy_id), text="We will verify by phone.")
+    out = outcomes(w, w.key(62, key))["replied"]
+    assert out.status.value == "PASS" and len(out.diff.actual["actions"]) == 1

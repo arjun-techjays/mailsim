@@ -149,10 +149,13 @@ class RunIndex:
         # each message as it was created (From, headers incl. Reply-To), whatever happened to
         # it later: whom a reply had to reach is fixed when the replied message arrived
         self.origins: dict[str, dict[str, Any]] = {}
+        self.copied: set[str] = set()  # ids created by COPY (same content as their source)
         self.agent_sent: set[str] = set()  # the agent's own sent mail (its Sent copies)
         for e in events:
             msg = e["payload"].get("message")
             if isinstance(msg, dict) and isinstance(msg.get("id"), str):
+                if msg["id"] not in self.origins and e["type"] == "message.copied":
+                    self.copied.add(msg["id"])
                 self.origins.setdefault(msg["id"], msg)
                 if e["type"] == "message.sent" and e["actor"] == AGENT:
                     self.agent_sent.add(msg["id"])
@@ -206,11 +209,12 @@ class RunIndex:
         return Answered(by_id, by_header)
 
     def reply_recipients(self, occ: Occurrence) -> set[str]:
-        """Normalised To/Cc/Bcc of the mail an action sent (its own `message.sent` events)."""
+        """Normalised To/Cc/Bcc of the mail an action sent: the `message.sent` events in its
+        window written by its own actor (anyone else's mail there is not this reply)."""
         out: set[str] = set()
         for q in range(occ.seq_start, occ.seq_end + 1):
             e = self.by_seq.get(q)
-            if e is not None and e["type"] == "message.sent":
+            if e is not None and e["type"] == "message.sent" and e["actor"] == occ.actor:
                 out |= _recipients(e["payload"].get("message"))
         return out
 
@@ -218,15 +222,32 @@ class RunIndex:
         """A completed `reply` that answered no one, which an answer key's `operation: reply`
         does not count. Same rule as ANSWERED: the reply's mail must reach the replied
         message's sender (its From or Reply-To). And that message must not be one the agent
-        made itself: its own sent mail, or mail it inserted, copied, drafted or delivered to
-        itself (a mail to self, then a "reply" to either copy, answers no one). Refused attempts
-        and other operations are judged as recorded (False)."""
+        made itself (`agent_made`: its own sent mail, mail it inserted, drafted or delivered to
+        itself, or a copy of such mail; a mail to self, then a "reply" to either copy, answers
+        no one). Refused attempts and other operations are judged as recorded (False)."""
         if occ.operation != "reply" or occ.outcome != "ok":
             return False
         orig = self.origins.get(str(occ.input.get("message_id") or ""))
-        if orig is None or orig["id"] in self.agent_created or orig["id"] in self.agent_sent:
+        if orig is None or self.agent_made(orig):
             return True
         return self.reply_recipients(occ).isdisjoint(_senders(orig))
+
+    def agent_made(self, msg: dict[str, Any]) -> bool:
+        """`msg` (as created) is the agent's own: its sent mail, or mail it inserted, drafted
+        or delivered to itself. A COPY takes its source's provenance (the earliest non-copy
+        with the same raw content in that mailbox): a copy of received mail is still received
+        mail. A copy whose source is unknown counts as the agent's (fails closed)."""
+        mid = msg["id"]
+        if mid in self.agent_sent:
+            return True
+        if mid not in self.copied:
+            return mid in self.agent_created
+        blob = msg.get("raw_blob_ref")
+        source = next((o for o in self.origins.values()
+                       if blob and o["id"] not in self.copied
+                       and o.get("raw_blob_ref") == blob
+                       and o.get("mailbox_id") == msg.get("mailbox_id")), None)  # fmt: skip
+        return source is None or self.agent_made(source)
 
     # ------------------------------------------------------------------ windows
     def events_in(self, cutoff: int) -> list[dict[str, Any]]:

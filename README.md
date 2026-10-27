@@ -98,9 +98,10 @@ Expired idempotency records are swept on each claim; `python -m mailsim.serve sw
   temporal `first`/`then` action refs, a completed `reply` counts only when its mail reached
   the replied message's sender (`From` or `Reply-To`, any case; Cc and Bcc count). It must also
   answer a message the agent did not make itself: replies to its own sent mail, or to mail it
-  sent to itself, inserted, copied or drafted, never count. Every interface records a client's
-  reply as one `reply`, whoever it is addressed to: SMTP or Gmail mail whose In-Reply-To names
-  a message, Graph `reply` with `toRecipients`, a reply draft re-addressed and sent. So a
+  sent to itself, inserted or drafted (or a copy of such mail), never count; a copy of
+  received mail counts like the original. Every interface records a client's reply as one
+  `reply`, whoever it is addressed to: SMTP or Gmail mail whose In-Reply-To (else References)
+  names a message, Graph `reply` with `toRecipients`, a reply draft re-addressed and sent. So a
   "reply" sent only to self or to a third party is in the action log but is not counted. The
   `action` diff lists such replies under `excluded_not_answering`. Refused attempts (`outcome`
   an error code or `any`) are matched as recorded. A policy `forbid: {operation: reply}` still

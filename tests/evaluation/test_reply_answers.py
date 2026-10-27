@@ -42,7 +42,15 @@ class Rec:
                 actor: str = "simulator") -> None:  # fmt: skip
         self._ev("message.delivered", {"message": {
             "id": mid, "mailbox_id": MBX, "from": {"email": sender}, "to": _addr(ME),
-            "headers": headers or {}}}, actor)  # fmt: skip
+            "headers": headers or {}, "raw_blob_ref": f"blob-{mid}"}}, actor)  # fmt: skip
+
+    def copy(self, src: str, new: str, blob: str | None = None) -> None:
+        """IMAP COPY / Graph copy by the agent: same content (and raw blob), a new id."""
+        msg = next(e["payload"]["message"] for e in self.events
+                   if e["payload"].get("message", {}).get("id") == src)  # fmt: skip
+        self._ev("message.copied", {"message": {**msg, "id": new,
+                                                "raw_blob_ref": blob or msg["raw_blob_ref"]}},
+                 "agent")  # fmt: skip
 
     def _act(self, op: str, start: int, end: int, input_: dict[str, Any],
              outcome: str = "ok") -> str:  # fmt: skip
@@ -55,7 +63,7 @@ class Rec:
     def send(self, sid: str, to: list[str], cc: list[str] | None = None, op: str = "send",
              input_: dict[str, Any] | None = None) -> str:  # fmt: skip
         msg = {"id": sid, "mailbox_id": MBX, "from": {"email": ME}, "to": _addr(*to),
-               "cc": _addr(*(cc or [])), "headers": {}}  # fmt: skip
+               "cc": _addr(*(cc or [])), "headers": {}, "raw_blob_ref": f"blob-{sid}"}  # fmt: skip
         start = self._ev("message.sent", {"message": msg}, "agent")
         end = start
         if ME in to:  # mail to self is also delivered into the agent's own mailbox
@@ -177,3 +185,50 @@ def test_answered_and_reply_share_the_recipients_of_each_reply():
     assert idx.answered_at(idx.last_seq).recipients_by_id == {
         "inv": {ME, "boss@example.test", VENDOR}}  # fmt: skip
     assert [idx.answers_nobody(o) for o in idx.occurrences] == [True, False]
+
+
+def test_a_malformed_sent_event_reaches_no_one():
+    rec = Rec()
+    seq = rec._ev("message.sent", {"message": "not a message"}, "agent")
+    rec._act("reply", seq, seq, {"message_id": "inv"})
+    idx = RunIndex(rec.events, rec.actions, MBX)
+    (occ,) = idx.occurrences
+    assert idx.reply_recipients(occ) == set() and idx.answers_nobody(occ)
+    assert replied(rec).status is Status.FAIL  # never a pass on data it cannot read
+
+
+def test_only_the_replying_actors_own_mail_counts():
+    rec = Rec()
+    start = rec._ev("message.sent", {"message": {"id": "p", "from": {"email": "x@example.test"},
+                                                 "to": _addr(VENDOR)}}, "simulator")  # fmt: skip
+    end = rec._ev("message.sent", {"message": {"id": "s", "from": {"email": ME},
+                                               "to": _addr(ME)}}, "agent")  # fmt: skip
+    rec._act("reply", start, end, {"message_id": "inv"})
+    idx = RunIndex(rec.events, rec.actions, MBX)
+    assert idx.reply_recipients(idx.occurrences[0]) == {ME}
+    assert replied(rec).status is Status.FAIL  # someone else's mail to the vendor is not it
+
+
+def test_a_copy_of_received_mail_is_still_received_mail():
+    """IMAP COPY keeps the inbox original; SMTP/Gmail may resolve In-Reply-To to the copy. A
+    real answer to the sender then still counts, as ANSWERED does."""
+    rec = Rec()
+    rec.copy("inv", "inv_copy")
+    rec.copy("inv_copy", "inv_copy2")  # a copy of a copy
+    a = rec.reply("inv_copy", [VENDOR])
+    b = rec.reply("inv_copy2", [VENDOR])
+    out = replied(rec, eq=2)
+    assert out.status is Status.PASS and out.diff.actual["actions"] == [a, b]
+
+
+def test_a_copy_of_the_agents_own_mail_is_still_its_own():
+    rec = Rec()
+    rec.send("note", [ME])  # mail to self: Sent copy `note` and inbox copy `note_in`
+    rec.copy("note", "note_copy")
+    rec.copy("note_in", "in_copy", blob="blob-note")  # same raw as the Sent copy
+    rec.copy("inv", "orphan", blob="blob-unknown")  # source cannot be resolved: fail closed
+    rec.reply("note_copy", [ME])
+    rec.reply("in_copy", [ME])
+    rec.reply("orphan", [VENDOR])
+    out = replied(rec)
+    assert out.status is Status.FAIL and len(out.diff.actual["excluded_not_answering"]) == 3
