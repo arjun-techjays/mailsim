@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+TEST_KEY = b"test-only-identifier-key-0123456789"  # never a real key: tests only
+
 PEOPLE = [
     ("Wendell", "Quarrick"), ("Marta", "Pellowe"), ("Osgood", "Brannick"), ("Livia", "Tazewell"),
     ("Ferris", "Ockenden"), ("Halvard", "Mirabeau"), ("Ingrid", "Sorrowby"), ("Teodor", "Vasquell"),
@@ -21,7 +23,7 @@ PEOPLE = [
 
 TOPIC_LINES = {
     "finance": [
-        "the budget for the quarter needs review before we close the books.",
+        "the budget for the quarter needs review before the books close.",
         "the invoice payment is due friday and the audit team wants the forecast.",
         "cash and revenue numbers for the quarterly earnings look fine.",
     ],
@@ -72,8 +74,9 @@ TOPIC_LINES = {
     ],
 }
 FILLER = (
-    "please review and let me know. thanks for the help, the numbers look fine and the team "
-    "agreed. please call me if you have questions. the following items are attached."
+    "Please review the account figures and let me know. Thanks for the help, the numbers look "
+    "fine for the close and the team agreed. Please call me if you have questions. The following "
+    "items are attached."
 )
 
 
@@ -88,7 +91,7 @@ def make_texts(n: int = 240, seed: int = 3) -> list[str]:
     for i in range(n):
         topic = topics[i % len(topics)]
         a, b = rnd.sample(PEOPLE, 2)
-        line = " ".join(rnd.sample(TOPIC_LINES[topic], 2)).capitalize()
+        line = " ".join(t[:1].upper() + t[1:] for t in rnd.sample(TOPIC_LINES[topic], 2))
         body = f"{line}\n{FILLER}"
         kind = i % 4
         if kind == 0:  # single message, greeting + sign-off

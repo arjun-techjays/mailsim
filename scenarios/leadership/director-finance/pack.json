@@ -7,227 +7,256 @@
   },
   "seed": 7,
   "messages": 28,
-  "threads": 23,
+  "threads": 26,
+  "attachments": 7,
   "topics": {
     "finance": 15,
+    "general": 2,
     "hr": 2,
-    "newsletter": 2,
     "scheduling": 4,
     "vendor": 5
   },
+  "hashed_ids": [
+    "800888",
+    "910033",
+    "934062"
+  ],
   "fixtures": [
     {
-      "fixture": "fixtures/001-i-have-gone-through-all-the-plans-names.eml",
-      "topic": "newsletter",
-      "thread": 20,
-      "suggested_labels": [
-        "Newsletters"
-      ]
-    },
-    {
-      "fixture": "fixtures/002-effective-january-1-2026-the-standard-mi.eml",
-      "topic": "finance",
-      "thread": 7,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/003-pg-e-core.eml",
-      "topic": "vendor",
-      "thread": 12,
-      "suggested_labels": [
-        "Vendors"
-      ]
-    },
-    {
-      "fixture": "fixtures/004-fw-pg-e-core.eml",
-      "topic": "vendor",
-      "thread": 12,
-      "suggested_labels": [
-        "Vendors"
-      ]
-    },
-    {
-      "fixture": "fixtures/005-re-pg-e-core.eml",
-      "topic": "vendor",
-      "thread": 12,
-      "suggested_labels": [
-        "Vendors"
-      ]
-    },
-    {
-      "fixture": "fixtures/006-sorry-i-didn-t-get-back-to-you-last.eml",
-      "topic": "scheduling",
-      "thread": 16,
-      "suggested_labels": [
-        "Calendar"
-      ]
-    },
-    {
-      "fixture": "fixtures/007-fw-leander-ashdown-mitigation.eml",
-      "topic": "finance",
-      "thread": 0,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/008-please-let-me-know-if-you-need-any.eml",
-      "topic": "finance",
-      "thread": 4,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/009-slow-browser-may-need-to-wait-15-seconds.eml",
-      "topic": "newsletter",
-      "thread": 19,
-      "suggested_labels": [
-        "Newsletters"
-      ]
-    },
-    {
-      "fixture": "fixtures/010-did-you-have-the-chance-to-audit-the.eml",
-      "topic": "finance",
-      "thread": 6,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/011-would-like-to-be-considered-for-a-promot.eml",
-      "topic": "hr",
-      "thread": 17,
-      "suggested_labels": [
-        "People"
-      ]
-    },
-    {
-      "fixture": "fixtures/012-oona-asked-that-i-update-you-on-our.eml",
+      "fixture": "fixtures/001-owen-new-ctr-power-trader-id-for.eml",
       "topic": "finance",
       "thread": 9,
+      "attachments": 0,
       "suggested_labels": [
         "Finance"
       ]
     },
     {
-      "fixture": "fixtures/013-celeste.eml",
+      "fixture": "fixtures/002-a-revised-credit-worksheet-for-dunmore.eml",
+      "topic": "finance",
+      "thread": 6,
+      "attachments": 1,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/003-the-memo-referenced-above.eml",
       "topic": "scheduling",
-      "thread": 14,
+      "thread": 19,
+      "attachments": 1,
       "suggested_labels": [
         "Calendar"
       ]
     },
     {
-      "fixture": "fixtures/014-re-celeste.eml",
+      "fixture": "fixtures/004-looks-like-we-ll-be-staying-the-night.eml",
+      "topic": "general",
+      "thread": 23,
+      "attachments": 0,
+      "suggested_labels": []
+    },
+    {
+      "fixture": "fixtures/005-this-expense-project-will-be-settled.eml",
+      "topic": "finance",
+      "thread": 12,
+      "attachments": 0,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/006-i-have-a-question-in-regards.eml",
+      "topic": "finance",
+      "thread": 5,
+      "attachments": 0,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/007-ok-to-buy-and-sell-west-physical.eml",
+      "topic": "finance",
+      "thread": 11,
+      "attachments": 0,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/008-while-our-established-schedules-of-tuesd.eml",
+      "topic": "finance",
+      "thread": 0,
+      "attachments": 0,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/009-here-s-a-revised-draft-incorporating-you.eml",
       "topic": "scheduling",
-      "thread": 14,
+      "thread": 18,
+      "attachments": 1,
       "suggested_labels": [
         "Calendar"
       ]
     },
     {
-      "fixture": "fixtures/015-great-job-caleb.eml",
+      "fixture": "fixtures/010-just-a-couple-of-quick-items.eml",
       "topic": "vendor",
-      "thread": 13,
+      "thread": 15,
+      "attachments": 0,
       "suggested_labels": [
         "Vendors"
       ]
     },
     {
-      "fixture": "fixtures/016-who-is-next.eml",
-      "topic": "finance",
-      "thread": 3,
+      "fixture": "fixtures/011-please-call-me-in-the-am.eml",
+      "topic": "vendor",
+      "thread": 17,
+      "attachments": 0,
       "suggested_labels": [
-        "Finance"
+        "Vendors"
       ]
     },
     {
-      "fixture": "fixtures/017-re-who-is-next.eml",
-      "topic": "finance",
-      "thread": 3,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/018-fw-i-hope-that-you-had-a-good-holiday.eml",
+      "fixture": "fixtures/012-yara.eml",
       "topic": "hr",
-      "thread": 18,
+      "thread": 21,
+      "attachments": 0,
       "suggested_labels": [
         "People"
       ]
     },
     {
-      "fixture": "fixtures/019-attached-is-a-newly-revised-credit-watch.eml",
-      "topic": "finance",
-      "thread": 8,
-      "suggested_labels": [
-        "Finance"
-      ]
+      "fixture": "fixtures/013-sorry-i-didnt-get-back.eml",
+      "topic": "general",
+      "thread": 22,
+      "attachments": 0,
+      "suggested_labels": []
     },
     {
-      "fixture": "fixtures/020-dude-thanks-for-the-words.eml",
-      "topic": "scheduling",
-      "thread": 15,
-      "suggested_labels": [
-        "Calendar"
-      ]
-    },
-    {
-      "fixture": "fixtures/021-i-am-working-with-cibc-on-another-credit.eml",
-      "topic": "finance",
-      "thread": 1,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/022-cash-vi-confirmation.eml",
-      "topic": "finance",
-      "thread": 2,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/023-re-cash-vi-confirmation.eml",
-      "topic": "finance",
-      "thread": 2,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/024-hugo-jardine-nightingale-has-reserved-a-.eml",
-      "topic": "finance",
-      "thread": 10,
-      "suggested_labels": [
-        "Finance"
-      ]
-    },
-    {
-      "fixture": "fixtures/025-this-is-a-copy-of-your-message-sent.eml",
+      "fixture": "fixtures/014-when-do-we-plan-to-change.eml",
       "topic": "vendor",
-      "thread": 11,
+      "thread": 14,
+      "attachments": 0,
       "suggested_labels": [
         "Vendors"
       ]
     },
     {
-      "fixture": "fixtures/026-when-wednesday-february-13-2026-1-00-pm-.eml",
+      "fixture": "fixtures/015-re-yara.eml",
+      "topic": "hr",
+      "thread": 21,
+      "attachments": 0,
+      "suggested_labels": [
+        "People"
+      ]
+    },
+    {
+      "fixture": "fixtures/016-ansel-provided-financial-premium-for-elo.eml",
       "topic": "finance",
-      "thread": 5,
+      "thread": 7,
+      "attachments": 0,
       "suggested_labels": [
         "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/017-thea-will-be-doing-cash-while.eml",
+      "topic": "finance",
+      "thread": 1,
+      "attachments": 0,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/018-i-just-got-off-the-phone.eml",
+      "topic": "finance",
+      "thread": 2,
+      "attachments": 0,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/019-is-there-any-reason-why-this-counterpart.eml",
+      "topic": "vendor",
+      "thread": 16,
+      "attachments": 0,
+      "suggested_labels": [
+        "Vendors"
+      ]
+    },
+    {
+      "fixture": "fixtures/020-the-latest-set-of-documents-which.eml",
+      "topic": "finance",
+      "thread": 3,
+      "attachments": 1,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/021-the-corvane-americas-master-schedule-of-.eml",
+      "topic": "finance",
+      "thread": 8,
+      "attachments": 1,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/022-file-for-the-latest-statement-of-work.eml",
+      "topic": "finance",
+      "thread": 10,
+      "attachments": 1,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/023-three-wire-requests-for-immediate-paymen.eml",
+      "topic": "finance",
+      "thread": 4,
+      "attachments": 1,
+      "suggested_labels": [
+        "Finance"
+      ]
+    },
+    {
+      "fixture": "fixtures/024-building-maintenance-somehow-got-a-hold.eml",
+      "topic": "vendor",
+      "thread": 13,
+      "attachments": 0,
+      "suggested_labels": [
+        "Vendors"
+      ]
+    },
+    {
+      "fixture": "fixtures/025-cultivation-dinner.eml",
+      "topic": "scheduling",
+      "thread": 20,
+      "attachments": 0,
+      "suggested_labels": [
+        "Calendar"
+      ]
+    },
+    {
+      "fixture": "fixtures/026-re-cultivation-dinner.eml",
+      "topic": "scheduling",
+      "thread": 20,
+      "attachments": 0,
+      "suggested_labels": [
+        "Calendar"
       ]
     },
     {
       "fixture": "fixtures/027-urgent-confidential-payment-today.eml",
       "topic": "finance",
-      "thread": 21,
+      "thread": 24,
+      "attachments": 0,
       "suggested_labels": [
         "Finance"
       ]
@@ -235,7 +264,8 @@
     {
       "fixture": "fixtures/028-updated-remittance-details-invoice-ns-20.eml",
       "topic": "finance",
-      "thread": 22,
+      "thread": 25,
+      "attachments": 0,
       "suggested_labels": [
         "Finance"
       ]

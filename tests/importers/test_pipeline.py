@@ -12,7 +12,7 @@ import pytest
 from mailsim.cli import main
 from mailsim.importers import enron
 from mailsim.importers.pseudonymize import PLACEHOLDER, Renderer
-from tests.importers.conftest import PEOPLE, make_texts
+from tests.importers.conftest import PEOPLE, TEST_KEY, make_texts
 
 
 def _run(capsys, *argv: str) -> tuple[int, dict]:
@@ -22,7 +22,7 @@ def _run(capsys, *argv: str) -> tuple[int, dict]:
 
 
 def test_import_is_deterministic_and_pseudonymized(shards, tmp_path):
-    cfg = enron.ImportConfig(limit=1000, seed=7)
+    cfg = enron.ImportConfig(limit=1000, seed=7, id_key=TEST_KEY)
     recs, header, registry = enron.import_enron(shards, cfg)
     first = enron.write_corpus(tmp_path / "a.jsonl", recs, header)
     again = enron.write_corpus(tmp_path / "b.jsonl", *enron.import_enron(shards, cfg)[:2])
@@ -51,9 +51,11 @@ def test_import_is_deterministic_and_pseudonymized(shards, tmp_path):
 
 
 def test_sampling_is_keyed_by_seed(shards):
-    a, _, _ = enron.import_enron(shards, enron.ImportConfig(limit=40, seed=1))
-    b, _, _ = enron.import_enron(shards, enron.ImportConfig(limit=40, seed=1, harvest_all=False))
-    c, _, _ = enron.import_enron(shards, enron.ImportConfig(limit=40, seed=2))
+    a, _, _ = enron.import_enron(shards, enron.ImportConfig(limit=40, seed=1, id_key=TEST_KEY))
+    b, _, _ = enron.import_enron(
+        shards, enron.ImportConfig(limit=40, seed=1, harvest_all=False, id_key=TEST_KEY)
+    )
+    c, _, _ = enron.import_enron(shards, enron.ImportConfig(limit=40, seed=2, id_key=TEST_KEY))
     assert len(a) <= 40 and [r["topic"] for r in a] == [r["topic"] for r in b]
     assert [r["segments"] for r in a] != [r["segments"] for r in c]
     assert enron.sample_key(1, "0.parquet", 3) != enron.sample_key(2, "0.parquet", 3)
@@ -79,6 +81,8 @@ def test_cli_import_scan_generate(shards, tmp_path, capsys):
     code, out = _run(capsys, "import", "enron", "--parquet", *map(str, shards), "--limit", "1000",
                      "--seed", "7", "--out", str(corpus), "--registry-out", str(reg))  # fmt: skip
     assert code == 0 and out["ok"] and out["records"] > 200 and len(out["sha256"]) == 64
+    key = tmp_path / "var" / "id.key"  # the secret for hashed ids, next to the corpus
+    assert key.is_file() and key.stat().st_mode & 0o777 == 0o600
     code, out = _run(capsys, "import", "enron", "--parquet", *map(str, shards), "--limit", "50",
                      "--out", str(tmp_path / "q.jsonl"), "--keep-quotes", "--sample-harvest")  # fmt: skip
     assert code == 0 and out["sampled"] == 50
@@ -137,14 +141,18 @@ def test_cli_errors(tmp_path, capsys, monkeypatch, shards):
 
 def test_cli_generate_without_registry_warns(shards, tmp_path, capsys):
     corpus = tmp_path / "corpus.jsonl"
-    enron.write_corpus(corpus, *enron.import_enron(shards, enron.ImportConfig(limit=1000))[:2])
+    enron.write_corpus(
+        corpus, *enron.import_enron(shards, enron.ImportConfig(limit=1000, id_key=TEST_KEY))[:2]
+    )
     code, out = _run(capsys, "generate", "leadership", "--corpus", str(corpus), "--out",
                      str(tmp_path / "p"), "--roles", "coo", "--volume", "coo=3", "--no-names")  # fmt: skip
     assert code == 0 and out["scenarios"][0]["messages"] == 3
 
 
 def test_size_filter_applies_before_sampling(shards):
-    _, header, _ = enron.import_enron(shards, enron.ImportConfig(limit=5, seed=1, min_chars=40))
+    _, header, _ = enron.import_enron(
+        shards, enron.ImportConfig(limit=5, seed=1, min_chars=40, id_key=TEST_KEY)
+    )
     assert header["stats"]["sampled"] == 5 and header["stats"]["dropped_size"] == 1
 
 

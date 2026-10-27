@@ -36,7 +36,12 @@ _DISCLAIMER = re.compile(
 )
 _RULE = re.compile(r"^\s*[-*_=~]{20,}\s*$")
 _SMART_APOS = re.compile(r"(?<=[A-Za-z])\?(?=(?:s|t|ll|re|ve|d|m)\b)")
+# an apostrophe that became a comma: "Enron,s", "I,m", "everyone,s", "HR,s"
+_COMMA_APOS = re.compile(r"(?<=[A-Za-z]),(?=(?:s|t|ll|re|ve|d|m)\b)")
 _SMART_DASH = re.compile(r"(?<=\w) \? (?=\w)")
+# "?" left where a non-breaking space or a closing quote was: "morning.? He", "NY? 10055"
+_Q_AFTER_PUNCT = re.compile(r"(?<=[.,;:!])\?+(?=\s|$)")
+_Q_BEFORE_ZIP = re.compile(r"(?<=\b[A-Z]{2})\?(?=\s+\d{5}\b)")
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _LONG_TOKEN = re.compile(r"\S{60,}")
 MAX_SEGMENTS = 8
@@ -198,14 +203,23 @@ def _strip_disclaimer(lines: list[str]) -> list[str]:
 
 def clean_body(text: str, *, strip_quotes: bool = True, strip_disclaimers: bool = True) -> str:
     """Normalise one body: transfer-encoding leftovers, charset artefacts ('?' for smart
-    quotes), HTML entities, control characters and whitespace."""
+    quotes, non-breaking spaces and bullets, ',' for an apostrophe), HTML entities, control
+    characters, stray trailing backslashes and whitespace."""
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = text.replace("=\n", "").replace("=20", " ").replace("=09", " ").replace("=3D", "=")
     text = html.unescape(text).replace("\xa0", " ")
     text = _CONTROL.sub("", text).replace("\t", " ")
     text = _SMART_APOS.sub("'", text)
+    text = _COMMA_APOS.sub("'", text)
     text = _SMART_DASH.sub(" - ", text)
-    lines = [re.sub(r"^(\s*)\?\s+(?=\S)", r"\1- ", ln.rstrip()) for ln in text.split("\n")]
+    text = _Q_AFTER_PUNCT.sub("", text)
+    text = _Q_BEFORE_ZIP.sub("", text)
+    lines = []
+    for ln in text.split("\n"):
+        ln = re.sub(r"\\+$", "", ln.rstrip()).rstrip()  # stray trailing backslashes
+        ln = re.sub(r"^(\s*)\?\s+(?=\S)", r"\1- ", ln)  # "? item": a bullet
+        ln = re.sub(r"^(\s*)\?+(?=\S)", r"\1", ln)  # "?https://...": a lost character
+        lines.append("" if re.fullmatch(r"[\s?]+", ln) else ln)
     if strip_quotes:
         lines = [ln for ln in lines if not ln.lstrip().startswith(">")]
     if strip_disclaimers:

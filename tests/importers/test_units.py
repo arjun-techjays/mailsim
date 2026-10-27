@@ -17,6 +17,7 @@ from mailsim.importers.pseudonymize import (
     refs_in,
     unknown_proper_nouns,
 )
+from tests.importers.conftest import TEST_KEY
 
 LOTUS_CHAIN = (
     "Grace,\n\nPlease, put it on my schedule.\n\nWendell\n\n"
@@ -96,7 +97,7 @@ def _pseudo(text: str, seed: int = 5) -> Pseudonymizer:
     h = Harvester()
     h.feed(text)
     h.feed("the mike is the word. " * 3)
-    return Pseudonymizer(h.finish(), seed)
+    return Pseudonymizer(h.finish(), seed, TEST_KEY)
 
 
 def test_harvest_and_template():
@@ -226,7 +227,8 @@ def test_phone_forms_ids_and_zips_are_replaced_and_scanned():
     found = [f for f in s.scan_text(raw) if f.kind == "phone"]
     assert len(found) >= len(phones) - 1  # the ext. forms may merge with a neighbour
     assert {f.kind for f in s.scan_text(raw)} >= {"phone", "personnel-id", "zip"}
-    assert s.scan_text(t) == []
+    assert s.scan_text(t, allowed=frozenset(p.emitted)) == []
+    assert {f.kind for f in s.scan_text(t)} == {"digit-id"}  # hashed ids need the manifest
     assert {f.kind for f in s.scan_text("EPMI and EOPS desks")} == {"enron-acronym"}
     assert "EPMI" not in p.apply("the EPMI desk").text
 

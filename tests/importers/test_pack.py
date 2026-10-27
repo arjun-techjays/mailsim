@@ -169,3 +169,108 @@ def test_scripted_ceo_denies_the_wire_request(env):
     replies = [m for m in mb.list_messages(folder="inbox", page_size=500).items
                if m.from_.email == "helena.marsh@corvane.example.test"]  # fmt: skip
     assert replies and "not asked for any payment" in mb.get_message(replies[-1].id).body_text
+
+
+def _fixtures(slug):
+    root = PACK / slug
+    manifest = json.loads((root / "pack.json").read_text())
+    return manifest, [
+        email.message_from_bytes((root / e["fixture"]).read_bytes(), policy=policy.default)
+        for e in manifest["fixtures"]
+    ]
+
+
+@pytest.mark.parametrize("slug", sorted(ROLES))
+def test_pack_message_ids_are_unique_per_mailbox(slug):
+    _, msgs = _fixtures(slug)
+    ids = [m["Message-ID"] for m in msgs]
+    assert len(ids) == len(set(ids)) and all(i.endswith(".example.test>") for i in ids)
+
+
+@pytest.mark.parametrize("slug", sorted(ROLES))
+def test_pack_attachments_are_real_documents_where_bodies_claim_them(slug):
+    import re
+
+    from mailsim.importers.attachments import extract_text
+    from mailsim.importers.documents import claims_attachment
+    from tests.importers.test_realism import _check_pdf_structure
+
+    manifest, msgs = _fixtures(slug)
+    total = 0
+    for entry, m in zip(manifest["fixtures"], msgs, strict=True):
+        body = m.get_body(("plain",)).get_content()
+        atts = list(m.iter_attachments())
+        assert entry["attachments"] == len(atts)
+        claims = claims_attachment(body)  # claims, stubs, title lines, "in .pdf format", ...
+        assert bool(atts) == claims, (entry["fixture"], body[:200])  # claims and files agree
+        assert not re.search(r"<<[^<>]+>>|\(See attached file", body)  # no stubs left
+        for att in atts:
+            data = att.get_payload(decode=True)
+            total += 1
+            assert 1_000 < len(data) < 100_000
+            if att.get_content_type() == "application/pdf":
+                assert _check_pdf_structure(data) >= 2
+            assert len(extract_text(data, att.get_filename())) > 200
+    assert total == manifest["attachments"] >= 1
+
+
+@pytest.mark.parametrize("slug", sorted(ROLES))
+def test_pack_dates_follow_the_clock(slug):
+    import re
+    from datetime import datetime
+
+    from mailsim.importers import dates as D
+
+    loaded = load_scenario(PACK / slug / "scenario.yaml")
+    raw_start = loaded.doc.scenario.environment.clock.start_at
+    start = (raw_start if isinstance(raw_start, datetime)
+             else datetime.fromisoformat(str(raw_start).replace("Z", "+00:00")))  # fmt: skip
+    _, msgs = _fixtures(slug)
+    for m in msgs:
+        sent = m["Date"].datetime
+        assert sent < start
+        body = m.get_body(("plain",)).get_content()
+        assert not re.search(r"(?<!Windows )\b(?:199\d|200[0-3])\b(?! ?MW)", body), body[:300]
+        for full in re.findall(r"\b\d{1,2}/\d{1,2}/(\d{2}|\d{4})\b", body):
+            assert full in ("25", "26", "2025", "2026"), full
+        own = body.replace("\r\n", "\n").split("---------- Forwarded message")[0]
+        # every mentioned date (year-less ones read near the send date) sits on the side of the
+        # send date its tense says, and no month or month/day is left unshifted
+        assert D.date_conflicts(own, sent.date()) == [], (m["Subject"], own[:300])
+        assert D.unplaced(own) == [], (m["Subject"], D.unplaced(own))
+        for when, last, _s, _e in D.mentions(own, sent.date()):
+            assert when.year >= start.year - 1 and last <= start.date().replace(year=start.year + 1)
+        quoted = re.findall(r"^Date: (\w{3}, \d\d \w{3} \d{4} \d\d:\d\d)$", body, re.M)
+        for q in quoted:  # a forwarded original is older than the forward
+            assert datetime.strptime(q, "%a, %d %b %Y %H:%M").replace(tzinfo=sent.tzinfo) < sent
+
+
+_WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+_MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August",
+           "September", "October", "November", "December")  # fmt: skip
+
+
+@pytest.mark.parametrize("slug", sorted(ROLES))
+def test_pack_weekday_dates_are_not_in_the_past_unless_said_so(slug):
+    """Independent of `dates.date_conflicts`: a weekday-named date ("Friday, October 2") in a
+    body is on or after the send date, unless a past-tense verb sits right next to it."""
+    import re
+    from datetime import date
+
+    rx = re.compile(rf"\b({'|'.join(_WEEKDAYS)}),?\s+({'|'.join(_MONTHS)})\.?\s+(\d{{1,2}})"
+                    r"(?:st|nd|rd|th)?(?:,\s*(\d{4}))?")  # fmt: skip
+    past = re.compile(r"\b(?:was|were|had|did|met|held|sent|signed|received|closed|ended|"
+                      r"happened|occurred|took place|started|began|finished|formed)\b",
+                      re.IGNORECASE)  # fmt: skip
+    _, msgs = _fixtures(slug)
+    for m in msgs:
+        sent = m["Date"].datetime.date()
+        body = m.get_body(("plain",)).get_content().replace("\r\n", "\n")
+        own = body.split("---------- Forwarded message")[0]
+        for hit in rx.finditer(own):
+            month = _MONTHS.index(hit.group(2)) + 1
+            year = int(hit.group(4)) if hit.group(4) else sent.year
+            when = date(year, month, int(hit.group(3)))
+            assert _WEEKDAYS[when.weekday()] == hit.group(1), hit.group(0)  # weekdays stay right
+            context = own[max(0, hit.start() - 30) : hit.end() + 20]
+            assert when >= sent or past.search(context), (m["Subject"], hit.group(0))

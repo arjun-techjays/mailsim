@@ -13,14 +13,16 @@ from mailsim.importers import enron, leadership
 from mailsim.importers.leadership import GenerateOptions, generate, write_scenarios
 from mailsim.importers.pii import Scanner
 from mailsim.scenario.loader import load_scenario
-from tests.importers.conftest import PEOPLE
+from tests.importers.conftest import PEOPLE, TEST_KEY
 
 VOLUME = {"ceo": 14, "cfo": 12, "cbo": 12, "director_finance": 10}
 
 
 @pytest.fixture(scope="module")
 def corpus(shards):
-    records, header, registry = enron.import_enron(shards, enron.ImportConfig(limit=1000, seed=7))
+    records, header, registry = enron.import_enron(
+        shards, enron.ImportConfig(limit=1000, seed=7, id_key=TEST_KEY)
+    )
     return header, records, registry
 
 

@@ -17,6 +17,12 @@ from __future__ import annotations
 COMPANY = "Corvane"
 COMPANY_LONG = "Corvane Energy"
 COMPANY_DOMAIN = "corvane.example.test"
+# The fictional head-office address used for every scrubbed street address and in documents.
+FAKE_STREET = "100 Commerce Street"
+FAKE_CITY = "Riverton"
+FAKE_STATE = "TX"
+FAKE_ZIP = "79999"
+FAKE_ADDRESS = f"{FAKE_STREET}, {FAKE_CITY}, {FAKE_STATE} {FAKE_ZIP}"
 
 KNOWN_PEOPLE: tuple[str, ...] = (
     "Kenneth Lay", "Ken Lay", "Jeff Skilling", "Jeffrey Skilling", "Andrew Fastow",
@@ -81,6 +87,7 @@ ENTITY_MAP: dict[str, str] = {
     "Enron Transportation Services": "Corvane Transport",
     "Enron Gas Pipeline Group": "Corvane Pipelines",
     "Enron International": "Corvane International",
+    "Enron Americas": "Corvane Americas",
     "Enron Corporation": "Corvane Energy Inc.",
     "Enron Corp.": "Corvane Energy Inc.",
     "Enron Corp": "Corvane Energy Inc.",
@@ -100,6 +107,8 @@ ENTITY_MAP: dict[str, str] = {
     "Transwestern Pipeline": "Westline Pipeline",
     "Transwestern": "Westline",
     "Florida Gas Transmission": "Gulfline Gas",
+    "Texas Gas Transmission": "Bayline Gas Transmission",
+    "Texas Gas": "Bayline Gas",
     "Azurix": "Aquavance",
     "Dabhol": "Coastal Power",
     "Arthur Andersen": "Brightwater Audit",
@@ -121,6 +130,10 @@ ENTITY_MAP: dict[str, str] = {
     "Omaha": "Plainsview",
     "Calgary": "Northgate",
     # business-unit acronyms used as identifiers
+    "FGT": "GGT",
+    "NBPL": "PLPL",
+    "GPG": "CPG",
+    "EGPG": "CPGG",
     "ENA": "CNA",
     "EES": "CES",
     "EBS": "CNS",
@@ -144,6 +157,84 @@ ENTITY_MAP: dict[str, str] = {
     "EOPS": "CVOPS",
     "ENAC": "CNAC",
 }
+
+# Real third parties (firms, institutions, brands, publications, sports teams, internal trading
+# systems) that would identify people or the corpus' origin, mapped to fictional names. Same
+# rules as ENTITY_MAP (longest first; lower-case keys match in any case). The scanner flags any
+# key that survives (`THIRD_PARTY_NAMES`). Truly generic large public names stay as they are
+# (`PUBLIC_ORGS`).
+THIRD_PARTY_MAP: dict[str, str] = {
+    "ING Barings": "Halberd Barrow",
+    "Barings": "Halberd",
+    "Prebon Yardley": "Brannock Tull",
+    "Prebon": "Brannock",
+    "Napster": "Tunefolio",
+    "Texas A&M": "Gulf State Tech",
+    "A&M": "Gulf State",
+    "Eyes of Texas": "Old Gold and Blue",
+    "Astros": "Riverton Comets",
+    "Minnesota Twins": "Lakeview Rapids",
+    "Aggies": "Gulf State fans",
+    "Longhorns": "Flagstaff fans",
+    "Rite Aid": "Brightway Pharmacy",
+    "Right Aid": "Brightway Pharmacy",
+    "World Economic Forum": "Global Leaders Forum",
+    "WEF": "GLF",
+    "NiSource": "Ridgeline Utilities",
+    "enerfaxdaily": "gridwiredaily",
+    "enerfax": "gridwire",
+    "Enerfax": "Gridwire",
+    "ENERFAX": "GRIDWIRE",
+    "TrueQuote": "Quotebridge",
+    "True Quote": "Quotebridge",
+    "Restructuring Today": "Market Reform Weekly",
+    "PMA Online": "Power Desk Online",
+    "NRDC": "CGC",
+    "Carnegie Mellon": "Allegheny Institute",
+    "MSCF": "MSQF",
+    "Baylor": "Brazos",
+    "Rice University": "Bayou University",
+    "Waco": "Brazos City",
+    "KCS Resources": "Kettle Creek Resources",
+    "KCS": "KCR",
+    "Sitara": "Tidewater",
+    "SITARA": "TIDEWATER",
+    "TAGG": "TRAX",
+    "Tagg": "Trax",
+    "Enpower": "Gridbook",
+    "Allen Center": "Commerce Center",
+    "Northern Border Pipeline": "Prairie Line Pipeline",
+    "Northern Border": "Prairie Line",
+    "Kaiser Aluminum": "Westmark Aluminum",
+    "eSpeak": "TownHall Live",
+    "Midwestern Gas": "Heartland Gas",
+    "Intelligence Press": "Gasline Press",
+    "eBiz": "Pulse",
+    "CommodityLogic": "TradeLedger",
+    "Enfolio": "Portfolio",
+    "eHRonline": "PeopleDesk",
+    "A.Word.A.Day": "Word of the Week",
+    "Aspen Institute": "Ridgeview Institute",
+    "V&E": "M&P",
+    "PIRA": "PERA",
+    "Trail Blazers": "Riverton Comets",
+    "Blazers": "Comets",
+    "NEPCO": "CEPCO",
+    "E-Next": "C-Next",
+    "Classmates": "Alumni Finder",
+    "Brown Bag": "Brown Bag",
+    "BHLP": "BRLP",
+    "TV Tokyo": "Channel Nine",
+    "Wall Street": "Wall Street",
+    "eThink": "IdeaHub",
+    "ESPEAK": "TOWNHALL LIVE",
+}
+THIRD_PARTY_NAMES: frozenset[str] = frozenset(
+    k for k in THIRD_PARTY_MAP if len(k) > 3 or k.isupper()
+)
+# Real counterparties the import leaves as they are (the words are too common to map blindly):
+# the scanner flags them (capitalised, standalone), so generation skips the record.
+THIRD_PARTY_FLAG_ONLY: frozenset[str] = frozenset(["Coral", "APB"])
 
 # Distinctive entity names mapped case-insensitively and flagged by the scanner in any case.
 ENTITY_NAMES: frozenset[str] = frozenset(
@@ -174,13 +265,40 @@ ENRON_ACRONYMS: frozenset[str] = frozenset(
         "EESI",
         "ENAC",
         "EOPS",
+        "FGT",
+        "NBPL",
+        "GPG",
+        "EGPG",
+        "EOS",
+        "EGS",
+        "RAC",
+        "ET&S",
+        "HPL",
     ]
 )
+# Short entity acronyms mapped case-sensitively and only when standalone (not part of "TWh",
+# "TW/JS", "EAST"): Transwestern, Enron Americas, Texas Gas Transmission. The scanner flags any
+# that survive.
+STRICT_ACRONYMS: dict[str, str] = {"TW": "WL", "EA": "CVA", "TGT": "BGT"}
+TW = r"(?<![\w/&\-])TW(?![\w/&\-])"
+STRICT_ACRONYM = r"(?<![\w/&\-])(?:TW|EA|TGT)(?![\w/&\-])"
 
-# Large public utilities, exchanges, regulators and banks that may stay in curated text
-# (documented residual risk); anything else in "<Name> Inc/Media/Group..." is rejected.
+# Market operators, exchanges, regulators, indices and price benchmarks: the only real
+# organisations that may stay in curated text. Every other real company (utilities, banks,
+# energy and technology firms, newspapers, associations) is mapped to a fictional name
+# (`ENTITY_MAP`, `THIRD_PARTY_MAP`) or the record is dropped (the scanner flags `REAL_ORGS`).
 PUBLIC_ORGS: frozenset[str] = frozenset(
+    ["CAISO", "NYISO", "PJM", "ICE", "EEI", "FERC", "WTI", "ERCOT", "NYMEX", "ISO", "NERC", "SPP",
+     "MISO", "IPE", "CFTC", "SEC", "NYSE", "NASDAQ", "NPCC", "WSCC", "Henry", "Hub", "Brent",
+     "NP15", "SP15",
+     "NP-15", "SP-15", "ZP26", "ZP-26", "COB", "Mid-C"]
+)  # fmt: skip
+
+# Capitalised words of well-known organisations that are never a person's name (the import uses
+# them to tell firms from people; this does NOT allow them in curated output, see `REAL_ORGS`).
+NEVER_PERSON_ORGS: frozenset[str] = PUBLIC_ORGS | frozenset(
     [
+        "<Name> Inc/Media/Group...",
         "PG&E",
         "PG",
         "ERCOT",
@@ -223,7 +341,6 @@ PUBLIC_ORGS: frozenset[str] = frozenset(
         "BP",
         "Duke",
         "Reliant",
-        "Dynegy",
         "Williams",
         "El",
         "Paso",
@@ -263,8 +380,63 @@ PUBLIC_ORGS: frozenset[str] = frozenset(
         "S&P",
         "Standard",
         "Poor's",
+        "CIBC",
+        "Conoco",
+        "Phillips",
+        "Adobe",
+        "Acrobat",
+        "Netscape",
+        "AOL",
+        "Yahoo",
+        "Hyperion",
+        "Amazon",
     ]
 )
+
+# Real companies, banks, utilities, newspapers and associations: the scanner flags them
+# ("real-org"), so a record that names one is never curated. Case-insensitive alternatives are
+# distinctive names; the case-sensitive ones are also ordinary words ("Chase", "Shell").
+REAL_ORGS_ANYCASE: tuple[str, ...] = (
+    "sempra", "pseg", "calpine", "mirant", "halliburton", "schlumberger",
+    "westinghouse", "siemens", "citigroup", "citibank", "jp ?morgan", "barclays", "verizon",
+    "exxon", "chevron", "texaco", "conoco", "phillips petroleum", "netscape", "yahoo",
+    "mastercard", "goldman,? sachs", "merrill lynch", "morgan stanley", "wells fargo",
+    "credit suisse", "abn ?amro", "deutsche bank", "bank of america", "el paso", "pg&e",
+    "pacific gas", "southern california edison", "sun microsystems", "microsoft", "cisco",
+    "at&t", "reliant energy", "duke energy", "cibc", "moody'?s", "standard (?:&|and) poor'?s",
+    "global finance", "bakersfield", "philadelphia gas works", "michigan gas utilities",
+    "general land office", "western coal", "new ?power", "nymex hub", "aquila", "tractebel",
+    "puget sound", "avista", "pacificorp", "idacorp", "tenaska", "constellation energy",
+    "cinergy", "entergy", "txu", "allegheny energy", "williams energy", "koch", "bp amoco",
+    "kinder morgan", "transco", "tennessee gas", "natural gas pipeline company", "columbia gas",
+    "panhandle eastern", "northwest pipeline", "kern river", "questar", "nicor", "peoples gas",
+    "keyspan", "con ?edison", "conedison", "nstar", "first energy", "firstenergy", "aep",
+    "bank one", "natsource", "amerex", "icap", "tullett", "spectron", "enovate",
+    "tucson electric", "oklahoma gas", "atlanta gas", "hunt oil", "bear stearns",
+    "lng express", "bishops corner", "seattle city light", "city light", "pse&g", "tennessee z",
+    "superior water", "sithe", "southern union",
+)  # fmt: skip
+REAL_ORGS_CASED: tuple[str, ...] = (
+    "Chase", "Citizens", "Williams", "Shell", "IBM", "Oracle", "Intel", "Adobe", "AOL", "Amazon",
+    "Hyperion", "Fitch", "S&P", "UBS", "BP", "GE", "Edison", "Visa", "American Express",
+    "General Electric", "Continental Airlines", "Southern Company", "Mobil", "Exxon", "Duke",
+    "Reliant", "Sprint", "BT", "Dow Jones", "Bloomberg", "Reuters", "Platts", "OGE", "TEP",
+    "SRP", "PNM", "APS", "SCE", "SDG&E", "LADWP", "BPA", "CNG", "COH", "AGL", "NGPL", "TETCO",
+    "ANR", "Hunt", "Border", "OATI", "ARM", "ENTEX", "Entex", "YPF", "D&T", "AA", "CDWR", "EDES", "People's", "Peoples", "WPTF", "CERS", "Alliance", "BEAR",
+    "Infinity", "SBPL", "SBFL",
+)  # fmt: skip
+# Internal systems of the real company: flagged in any case (the import maps the usual spellings)
+SYSTEM_NAMES_ANYCASE: tuple[str, ...] = (
+    "enpower", "sitara", "tagg", "enfolio", "ehronline", "commoditylogic", "espeak", "enerfax",
+    "napster", "nisource", "prebon",
+)  # fmt: skip
+
+# Fictional organisations of the roster, the risk items and the pseudonym pools: never flagged.
+FICTIONAL_ORG_WORDS: frozenset[str] = frozenset(
+    ["Corvane", "Brightwater", "Nimbus", "Harbor", "Northstar", "Marlow", "Pike", "Kincaid",
+     "Morales", "Coastline", "Meridian", "Halden", "Stellaris", "Larkspur", "Riverton",
+     "Lakeport"]
+)  # fmt: skip
 
 # Words used inside Lotus Notes routing paths (Name/HOU/ECT@ECT) - never names.
 LOTUS_UNITS = frozenset(
@@ -325,9 +497,9 @@ FAKE_LAST: tuple[str, ...] = (
     "Abernathy", "Ashdown", "Bellamy", "Blackwood", "Brennick", "Calloway", "Carrow",
     "Delacroix", "Dunmore", "Ellery", "Fairbanks", "Fenwick", "Galloway", "Hartwell",
     "Holloway", "Ingram", "Jessop", "Kendrick", "Lockhart", "Marchetti", "Merriweather",
-    "Northcott", "Oakley", "Pemberton", "Quayle", "Radcliffe", "Rowntree", "Sandoval",
-    "Somerset", "Thackeray", "Underhill", "Vance", "Wexford", "Whitcombe", "Yardley",
-    "Zeller", "Arkwright", "Bramley", "Castellan", "Draycott", "Everly", "Faraday",
+    "Northcott", "Oakley", "Pemberton", "Quarles", "Radcliffe", "Rowntree", "Sandoval",
+    "Somerset", "Thackeray", "Underhill", "Vance", "Wexford", "Whitcombe", "Yarwood",
+    "Zeller", "Arkwright", "Bramley", "Castellan", "Draycott", "Everly", "Fairlie",
     "Greystone", "Halloran", "Ivers", "Jardine", "Kingsley", "Larkin", "Montague", "Nightingale",
     "Ormsby", "Penhallow", "Quill", "Rainford", "Sallow", "Tremaine", "Upton", "Verity",
     "Winslow", "Ashcombe", "Birchall", "Coldwell", "Dewhurst", "Elmsley", "Fothergill",
@@ -1094,8 +1266,200 @@ CONTEXT_STOP: frozenset[str] = frozenset(
         "Email",
         "Mobile",
         "Cell",
+        "Tel",
+        "Telephone",
+        "Pager",
     ]
 )
+
+# Markers of famous, recognisable records (the CEO succession memo, the collapse, national
+# news; real politicians are in HASHED_DENY): such records are never curated, and the scanner flags them.
+FAMOUS_MARKERS: tuple[str, ...] = (
+    r"succession plan",
+    r"years as (?:CEO|chairman|chief executive)",
+    r"board has accepted my recommendation",
+    r"appoint\w*\s+\S+(?:\s+\S+)?\s+as\s+(?:the\s+)?"
+    r"(?:new\s+)?(?:CEO|chief executive)",
+    r"resign\w*\s+as\s+(?:CEO|chief executive|chairman)",
+    r"special purpose entit",
+    r"off[- ]balance[- ]sheet",
+    r"powers (?:report|committee)",
+    r"(?:SEC|justice department|congressional) (?:investigation|inquiry|probe)",
+    r"september 11|world trade center|terrorist attack",
+    r"rolling blackouts",
+    r"energy crisis",
+    r"california crisis",
+    r"chairman and (?:chief executive officer|ceo)",
+    r"lost everything",
+    r"mode of departure",
+    r"decided to leave the company",
+    r"\bthe big e\b",
+    r"our vision to become",
+    r"preferred with stellaris|authorized shares",
+    r"savings plan",
+    r"world's leading company|loose/tight",
+    r"\besource\b",
+    r"\bCERA\b",
+    r"finance festival",
+    r"turbo ?park",
+    r"the body shop",
+    r"public policy foundation|heritage foundation|farewell evening|\blady [A-Z]",
+    r"(?:transition|sale) of .{0,40}to stellaris|stellaris employee",
+    r"(?:merger|deal) (?:between|with) (?:corvane and )?stellaris|stellaris (?:merger|deal)",
+    r"liquidity crisis",
+    r"cash infusion",
+    r"the corvane situation",
+    r"bad accounting",
+    r"securitization of",
+    r"read the articles",
+    r"partnership (?:one|two)",
+    r"public domain report",
+    r"divestiture",
+    r"price manipulation",
+    r"select committee",
+)
+# Local landmarks of the corpus' home city (they place a message in the real company's town)
+LANDMARKS: tuple[str, ...] = (
+    r"houstonian", r"\bI-?45\b", r"\bI-?10\b", r"610 loop", r"beltway 8", r"galleria",
+    r"river oaks", r"montrose", r"memorial (?:drive|park)", r"rice village", r"astrodome",
+    r"hobby airport", r"intercontinental airport", r"\bIAH\b", r"the woodlands", r"sugar land",
+    r"kingwood", r"\bkaty\b", r"downtown tunnel", r"metropolitan racquet", r"westheimer",
+    r"\bkirby\b", r"san felipe", r"post oak", r"bellaire", r"bissonnet", r"chimney rock",
+    r"gessner", r"richmond ave", r"fannin", r"louisiana st", r"satellite lounge", r"clear creek",
+    r"\bCAM\b(?= and)", r"art museum",
+)  # fmt: skip
+
+# First names of the fictional roster (leadership.ROSTER; a test keeps them in sync): a real
+# person's first name alone on a sign-off line is flagged unless it is one of these or a
+# pseudonym of the person pools.
+PERSONA_FIRST: frozenset[str] = frozenset(
+    ["Helena", "Rohan", "Natalie", "Graham", "Simone", "Owen", "Priya", "Marcus", "Aisha",
+     "Julia", "Edward", "Lena", "Tom", "Kara", "David", "Fiona", "Sam", "Chris"]
+)  # fmt: skip
+
+# Organisation pseudonyms (`{{o:N:n}}`): org-like invented words, disjoint from the person pools
+# and the persona names, so a firm never reads like a person.
+FAKE_ORG_NAMES: tuple[str, ...] = (
+    "Alderwick", "Bramblecote", "Caskwell", "Dunholt", "Eastmere", "Fallowmere", "Glenhallow",
+    "Harrowdene", "Ivyreach", "Juniperline", "Kestrelmoor", "Larchwood", "Millstead",
+    "Northvane", "Oakhollow", "Quarrybrook", "Ravenhurst", "Saltmarsh", "Thistledown",
+    "Umberfield", "Valewright", "Westerholt", "Yewbank", "Zephyrine", "Ashgrove", "Brightmoor",
+    "Coldharbour", "Driftwood", "Emberline", "Foxcombe",
+)  # fmt: skip
+
+# Place / asset pseudonyms (`{{l:N:n}}`): plant sites, hubs, venues and pools whose real names
+# the import took for people ("at the X", "X Power Pool", "from X to NP-15"). Disjoint from the
+# person and organisation pools.
+FAKE_PLACES: tuple[str, ...] = (
+    "Ambleford", "Bracksmoor", "Cresthollow", "Dunvarrow", "Eskwater", "Farrowdale",
+    "Greyhallow", "Holmbrooke", "Ivelgate", "Kestrelby", "Lanmoor", "Marrowgate", "Nethercombe",
+    "Orrowfield", "Pellbrook", "Quenmoor", "Rookhaven", "Stonereach", "Tarrowby", "Ullswick",
+    "Varrowdale", "Wexmoor", "Yarrowgate", "Brackwater",
+)  # fmt: skip
+
+# Capitalised words that are never a person's name in this corpus (institutions, places of
+# business, generic business nouns): never pseudonymized as a name and never harvested as one,
+# so "Federal Credit Union" or "Global Business Council" keep their words.
+COMMON_WORDS: frozenset[str] = frozenset(
+    (
+        "Council", "Union", "Association", "Institute", "Society", "Federation", "Commission",
+        "Authority", "Agency", "Bureau", "Exchange", "Market", "Markets", "Partners", "Partner",
+        "Capital", "Fund", "Funds", "Trust", "Credit", "Federal", "National", "International",
+        "Regional", "Pacific", "Atlantic", "Gulf", "Electric", "Light", "Water", "Oil", "Resources",
+        "Holdings", "Industries", "Products", "Solutions", "Technologies", "Company", "Corporation",
+        "Incorporated", "Limited", "Direct", "Risk", "Currency", "Rate", "Rates", "Line", "Lines",
+        "Street", "Avenue", "Road", "Building", "Tower", "Plaza", "Club", "Conference", "Forum",
+        "Summit", "Business", "World", "Economic", "Hotel", "Airport", "Station", "County", "City",
+        "State", "District", "Ministry", "Court", "University", "College", "School", "Academy",
+        "Hospital", "Church", "Bank", "Banking", "Securities", "Investments", "Insurance", "Media",
+        "Press", "Times", "Journal", "Hub", "Floor", "Room", "Suite", "Center", "Centre",
+        "Division", "Unit", "Region", "Pipeline", "Transmission", "Storage", "Trading", "Marketing",
+        "Retail", "Wholesale", "Supply", "Utility", "Utilities", "Steel", "Chemical", "Aluminum",
+        "Paper", "Mining", "Coal", "Nuclear", "Solar", "Wind", "Hydro", "Gas", "Power", "Energy",
+        "Services", "Group", "Systems", "Network", "Networks", "Communications", "Management",
+        "Development", "Operations", "Finance", "Accounting", "Legal", "Strategy", "Policy",
+        "Planning", "Analytics", "Research", "Support", "Training", "Control", "Desk", "Global",
+        "Product", "Products", "Project", "Program", "Portfolio", "Team", "Office", "Board",
+        "Committee", "Department", "Agreement", "Contract", "Master", "Schedule", "Report",
+        "Reports", "Update", "Notice", "Plan", "Review", "Meeting", "Party", "Holiday", "Annual",
+        "Weekly", "Daily", "Monthly", "Quarterly", "Index", "Prices", "Imperial", "Continental",
+        "Southern", "Northern", "Eastern", "Western", "Central", "Midwest", "Mid", "Upper", "Lower",
+        "Commercial", "Industrial", "Residential", "Municipal", "Public", "Private", "Mutual",
+        "Cooperative", "Consolidated", "United", "Allied", "Standard", "General", "Universal",
+        "Premier", "Pioneer", "Liberty", "Freedom", "Heritage", "Summit", "Alliance", "Partnership",
+        "Ventures", "Equity", "Asset", "Assets", "Advisors", "Advisory", "Associates", "Consulting",
+        "Engineering", "Construction", "Manufacturing", "Logistics", "Transport", "Transportation",
+        "Freight", "Rail", "Airlines", "Air", "Motors", "Foods", "Health", "Medical", "Pharmacy",
+        "Software", "Hardware", "Data", "Digital", "Online", "Interactive", "Mobile", "Wireless",
+        "Cable", "Telecom", "Broadband", "Satellite", "Radio", "Television", "Magazine",
+        "Newsletter", "Bulletin", "Gazette", "Herald", "Tribune", "Chronicle", "Monitor", "Review",
+        "Digest", "Weekly", "Times", "Symphony", "Orchestra", "Opera", "Theatre", "Theater",
+        "Museum", "Gallery", "Library", "Zoo", "Stadium", "Arena", "Garden", "Gardens", "Club",
+        "Golf", "Country", "Tennis", "Yacht", "Saint", "St", "Fort", "Bayou", "Prairie", "Plains",
+        "Desert", "Mesa", "Village", "Town", "Township", "Borough", "Parish", "Province",
+        "Territory", "Republic", "Kingdom", "Empire", "Commonwealth", "Nation", "Nations", "Tax",
+        "Treasury", "Revenue", "Budget", "Audit", "Compliance", "Regulatory", "Affairs",
+        "Government", "Governor", "Senate", "House", "Congress", "Legislature", "Assembly",
+        "Cabinet", "Agency", "Customer", "Customers", "Client", "Clients", "Vendor", "Vendors",
+        "Supplier", "Suppliers", "Dealer", "Dealers", "Broker", "Brokers", "Trader", "Traders",
+        "Analyst", "Analysts", "Associate", "Manager", "Managers", "Director", "Directors",
+        "Officer", "Officers", "President", "Chairman", "Chair", "Vice", "Senior", "Junior",
+        "Executive", "Executives", "Staff", "Employee", "Employees", "Member", "Members", "Owner",
+        "Owners", "Holder", "Holders", "Investor", "Investors", "Lender", "Lenders", "Borrower",
+        "Counterparty", "Counterparties", "Party", "Parties", "Participant", "Participants"
+    )
+)  # fmt: skip
+# Place names that are never pseudonymized as people (unless they are also common first names,
+# which keep the usual context rules).
+PLACES: frozenset[str] = frozenset(
+    (
+        "Dallas", "Austin", "Chicago", "Denver", "Phoenix", "Atlanta", "Boston", "Seattle",
+        "Sacramento", "Oakland", "Toronto", "London", "Paris", "Tokyo", "Sydney", "Singapore",
+        "Mumbai", "Delhi", "Washington", "Baltimore", "Philadelphia", "Pittsburgh", "Cleveland",
+        "Detroit", "Minneapolis", "Miami", "Orlando", "Tampa", "Nashville", "Memphis", "Charlotte",
+        "Richmond", "Tulsa", "Albuquerque", "Tucson", "Reno", "Boise", "Spokane", "Anchorage",
+        "Honolulu", "Edmonton", "Vancouver", "Montreal", "Ottawa", "Monterrey", "Bogota", "Lima",
+        "Caracas", "Madrid", "Barcelona", "Milan", "Rome", "Berlin", "Frankfurt", "Munich", "Oslo",
+        "Stockholm", "Amsterdam", "Brussels", "Geneva", "Zurich", "Dublin", "Moscow", "Beijing",
+        "Shanghai", "Hong", "Kong", "Seoul", "Osaka", "Bangkok", "Jakarta", "Manila", "Cairo",
+        "Lagos", "Nairobi", "Johannesburg", "Galveston", "Beaumont", "Midland", "Odessa", "Lubbock",
+        "Amarillo", "Corpus", "Christi", "Laredo", "Brownsville", "Plano", "Irving", "Arlington",
+        "Katy", "Sugar", "Woodlands", "Kingwood", "Tahoe", "Aspen", "Vail", "Napa", "Sonoma",
+        "Monterey", "Carmel", "Diego", "Francisco", "Jose", "Antonio", "Vegas", "Orleans",
+        "Springs", "Beach", "Palm", "Scottsdale", "Sedona", "Breckenridge", "Telluride",
+        "Steamboat", "Cancun", "Cabo", "Bahamas", "Bermuda", "Jamaica", "Hawaii", "Maui", "Alaska",
+        "Mexico", "Canada", "Brazil", "Argentina", "Chile", "Peru", "Colombia", "Venezuela",
+        "Ecuador", "Bolivia", "Germany", "France", "Spain", "Italy", "Britain", "England",
+        "Scotland", "Wales", "Ireland", "Norway", "Sweden", "Denmark", "Finland", "Netherlands",
+        "Belgium", "Switzerland", "Austria", "Poland", "Russia", "China", "Japan", "Korea", "India",
+        "Pakistan", "Australia", "Zealand", "Africa", "Egypt", "Nigeria", "Kenya", "Israel",
+        "Turkey", "Greece", "Portugal", "Houston", "Portland", "Omaha", "Calgary", "Riverton",
+        "Lakeport", "Plainsview", "Northgate", "Sacramento", "Fresno", "Bakersfield", "Stockton",
+        "Modesto", "Pasadena", "Burbank", "Anaheim", "Irvine", "Ventura", "Oxnard", "Barbara",
+        "Cruz", "Rosa", "Luis", "Obispo", "Bernardino", "Riverside", "Redding", "Eureka", "Salem",
+        "Eugene", "Medford", "Bend", "Olympia", "Tacoma", "Yakima", "Fargo", "Bismarck", "Sioux",
+        "Lincoln", "Topeka", "Wichita", "Columbia", "Jefferson", "Springfield", "Louisville",
+        "Lexington", "Knoxville", "Chattanooga", "Birmingham", "Montgomery", "Mobile", "Jackson",
+        "Biloxi", "Shreveport", "Baton", "Rouge", "Lafayette", "Lake", "Charles", "Tallahassee",
+        "Jacksonville", "Savannah", "Augusta", "Columbus", "Cincinnati", "Toledo", "Akron",
+        "Dayton", "Indianapolis", "Milwaukee", "Madison", "Gary", "Peoria", "Rockford", "Hartford",
+        "Providence", "Albany", "Buffalo", "Rochester", "Syracuse", "Newark", "Trenton",
+        "Wilmington", "Dover", "Annapolis", "Norfolk", "Raleigh", "Durham", "Greensboro",
+        "Charleston", "Greenville", "Alabama", "Arizona", "Arkansas", "California", "Colorado",
+        "Connecticut", "Delaware", "Florida", "Georgia", "Idaho", "Illinois", "Indiana", "Iowa",
+        "Kansas", "Kentucky", "Louisiana", "Maine", "Maryland", "Massachusetts", "Michigan",
+        "Minnesota", "Mississippi", "Missouri", "Montana", "Nebraska", "Nevada", "Ohio", "Oklahoma",
+        "Oregon", "Pennsylvania", "Tennessee", "Texas", "Utah", "Vermont", "Virginia", "Wisconsin",
+        "Wyoming", "Carolina", "Dakota", "Hampshire", "Jersey", "Ontario", "Alberta", "Quebec", "Angeles", "Alamos", "Gatos", "Altos", "Cruces",
+        "Juan", "Rafael", "Mateo", "Clara", "Monica", "Lauderdale", "Petersburg", "Paso",
+        "Japanese", "Korean", "Mexican", "Canadian", "Brazilian", "Italian", "Australian",
+        "Dutch", "Swiss", "Swedish", "Norwegian", "Danish", "Russian", "Polish", "Irish",
+        "Scottish", "African", "Latin", "Hispanic", "Texan", "Californian", "Argentine",
+        "Chilean", "Venezuelan", "Colombian", "Peruvian", "Indonesian", "Philippine", "Thai",
+        "Vietnamese", "Turkish", "Greek", "Egyptian", "Nigerian", "Israeli", "Saudi", "Arab",
+        "Manitoba", "Saskatchewan"
+    )
+)  # fmt: skip
 
 # Real names that the rules cannot catch (e.g. an unusual first name the corpus also writes in
 # lower case), stored only as sha256(lower-cased token) so the repository never holds them in
@@ -1103,5 +1467,9 @@ CONTEXT_STOP: frozenset[str] = frozenset(
 HASHED_DENY: frozenset[str] = frozenset(
     {
         "d0bb22efaa420a9f274d5ae2bfb867f8138932fbcadf7137f11ff4da7e994e0e",
+        "4458e908dd9a5440ad70b4d0ee13ebe96f0d25bb263b80169b3de5a9a0b90e3d",  # a politician of the period
+        "e1ec0ed202255ee8f930fdf38613ca611d46190979222a8b3ac6fa8516ff29ec",  # a politician of the period
+        "5072f198bd5e3aabc87e7affa1895be59117fb214381e431ba85ae0e26131678",  # a politician of the period
+        "749a1a16c343bf7b315a2142e36adcda6abecf8d04019f512d6b200286d660f4",  # a politician of the period
     }
 )
