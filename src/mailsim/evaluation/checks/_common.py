@@ -28,6 +28,10 @@ from mailsim.mime.parse import normalize_message_id
 from mailsim.scenario.answer_key import ActionMatch, AnswerAssertion, Count, MessageWhere
 
 AGENT = "agent"
+# why a completed `reply` answered no one (RunIndex.unanswered)
+SENDER_NOT_REACHED = "sender_not_reached"
+OWN_MESSAGE = "own_message"
+UNKNOWN_MESSAGE = "unknown_message"
 AGENT_CREATED_EVENTS = frozenset({"message.inserted", "message.copied", "draft.created"})
 MAX_LISTED = 25
 
@@ -151,14 +155,23 @@ class RunIndex:
         self.origins: dict[str, dict[str, Any]] = {}
         self.copied: set[str] = set()  # ids created by COPY (same content as their source)
         self.agent_sent: set[str] = set()  # the agent's own sent mail (its Sent copies)
+        # (mailbox id, raw blob) -> the first message with those exact bytes in that mailbox.
+        # Blobs are content-addressed, so a copy / byte-identical insert finds its source here.
+        self.first_by_blob: dict[tuple[Any, str], str] = {}
         for e in events:
             msg = e["payload"].get("message")
             if isinstance(msg, dict) and isinstance(msg.get("id"), str):
-                if msg["id"] not in self.origins and e["type"] == "message.copied":
-                    self.copied.add(msg["id"])
+                if msg["id"] not in self.origins:
+                    if e["type"] == "message.copied":
+                        self.copied.add(msg["id"])
+                    blob = msg.get("raw_blob_ref")
+                    if isinstance(blob, str) and blob:
+                        self.first_by_blob.setdefault((msg.get("mailbox_id"), blob), msg["id"])
                 self.origins.setdefault(msg["id"], msg)
                 if e["type"] == "message.sent" and e["actor"] == AGENT:
                     self.agent_sent.add(msg["id"])
+        self._agent_made: dict[str, bool] = {}
+        self._unanswered: dict[str, str | None] = {}
         for e in events:
             if e["actor"] != AGENT or "message" not in e["payload"]:
                 continue
@@ -219,35 +232,49 @@ class RunIndex:
         return out
 
     def answers_nobody(self, occ: Occurrence) -> bool:
-        """A completed `reply` that answered no one, which an answer key's `operation: reply`
-        does not count. Same rule as ANSWERED: the reply's mail must reach the replied
-        message's sender (its From or Reply-To). And that message must not be one the agent
-        made itself (`agent_made`: its own sent mail, mail it inserted, drafted or delivered to
-        itself, or a copy of such mail; a mail to self, then a "reply" to either copy, answers
-        no one). Refused attempts and other operations are judged as recorded (False)."""
+        """A completed `reply` that answered no one (see `unanswered`): an answer key's
+        `operation: reply` does not count it."""
+        return self.unanswered(occ) is not None
+
+    def unanswered(self, occ: Occurrence) -> str | None:
+        """Why a completed `reply` answered no one, or None when it answered someone (or is not
+        a completed reply: refused attempts and other operations are judged as recorded).
+        Same rule as ANSWERED: the reply's mail must reach the replied message's sender (its
+        From or Reply-To) -> "sender_not_reached". And that message must not be the agent's
+        own (`agent_made`; a mail to self, then a "reply" to either copy, answers no one) ->
+        "own_message"; or unknown to the recording -> "unknown_message". Cached per action."""
         if occ.operation != "reply" or occ.outcome != "ok":
-            return False
-        orig = self.origins.get(str(occ.input.get("message_id") or ""))
-        if orig is None or self.agent_made(orig):
-            return True
-        return self.reply_recipients(occ).isdisjoint(_senders(orig))
+            return None
+        if occ.id not in self._unanswered:
+            orig = self.origins.get(str(occ.input.get("message_id") or ""))
+            why: str | None = None
+            if orig is None:
+                why = UNKNOWN_MESSAGE
+            elif self.agent_made(orig):
+                why = OWN_MESSAGE
+            elif self.reply_recipients(occ).isdisjoint(_senders(orig)):
+                why = SENDER_NOT_REACHED
+            self._unanswered[occ.id] = why
+        return self._unanswered[occ.id]
 
     def agent_made(self, msg: dict[str, Any]) -> bool:
-        """`msg` (as created) is the agent's own: its sent mail, or mail it inserted, drafted
-        or delivered to itself. A COPY takes its source's provenance (the earliest non-copy
-        with the same raw content in that mailbox): a copy of received mail is still received
-        mail. A copy whose source is unknown counts as the agent's (fails closed)."""
+        """`msg` (as created) is the agent's own: its sent mail, or mail it inserted, copied,
+        drafted or delivered to itself, unless that mail is byte-identical to an EARLIER message
+        of the same mailbox (blobs are content-addressed), whose provenance it then takes: a
+        copy, or an APPEND / Gmail insert of the exact bytes, of received mail is still received
+        mail, while a copy of the agent's own mail stays its own. No resolvable earlier source
+        means the agent's (fails closed). O(1) per message, cached."""
         mid = msg["id"]
-        if mid in self.agent_sent:
-            return True
-        if mid not in self.copied:
-            return mid in self.agent_created
-        blob = msg.get("raw_blob_ref")
-        source = next((o for o in self.origins.values()
-                       if blob and o["id"] not in self.copied
-                       and o.get("raw_blob_ref") == blob
-                       and o.get("mailbox_id") == msg.get("mailbox_id")), None)  # fmt: skip
-        return source is None or self.agent_made(source)
+        if mid not in self._agent_made:
+            made = mid in self.agent_sent
+            if not made and (mid in self.agent_created or mid in self.copied):
+                blob = msg.get("raw_blob_ref")
+                first = (self.first_by_blob.get((msg.get("mailbox_id"), blob))
+                         if isinstance(blob, str) and blob else None)  # fmt: skip
+                source = self.origins.get(first) if first is not None and first != mid else None
+                made = source is None or self.agent_made(source)
+            self._agent_made[mid] = made
+        return self._agent_made[mid]
 
     # ------------------------------------------------------------------ windows
     def events_in(self, cutoff: int) -> list[dict[str, Any]]:

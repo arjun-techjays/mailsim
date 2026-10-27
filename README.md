@@ -98,14 +98,18 @@ Expired idempotency records are swept on each claim; `python -m mailsim.serve sw
   temporal `first`/`then` action refs, a completed `reply` counts only when its mail reached
   the replied message's sender (`From` or `Reply-To`, any case; Cc and Bcc count). It must also
   answer a message the agent did not make itself: replies to its own sent mail, or to mail it
-  sent to itself, inserted or drafted (or a copy of such mail), never count; a copy of
-  received mail counts like the original. Every interface records a client's reply as one
-  `reply`, whoever it is addressed to: SMTP or Gmail mail whose In-Reply-To (else References)
-  names a message, Graph `reply` with `toRecipients`, a reply draft re-addressed and sent. So a
-  "reply" sent only to self or to a third party is in the action log but is not counted. The
-  `action` diff lists such replies under `excluded_not_answering`. Refused attempts (`outcome`
-  an error code or `any`) are matched as recorded. A policy `forbid: {operation: reply}` still
-  matches **every** reply operation, whoever it reached: use it to prohibit replying at all.
+  sent to itself, inserted or drafted (or a copy of such mail), never count. Mail the agent
+  copied or inserted that is byte-identical to an earlier message of its mailbox (IMAP COPY /
+  APPEND, Gmail insert of the same bytes) counts like that message, so a copy of received mail
+  counts like the original. Every interface records a client's reply as one `reply`, whoever
+  it is addressed to: SMTP or Gmail mail whose In-Reply-To (else References) names a message,
+  Graph `reply` with `toRecipients`, a reply draft re-addressed and sent. So a "reply" sent
+  only to self or to a third party is in the action log but is not counted. The `action` diff
+  lists such replies under `excluded_not_answering`, with `excluded_reasons` per action
+  (`sender_not_reached`, `own_message`, `unknown_message`). Refused attempts are not
+  affected: with `outcome: any` or an error code (e.g. `PERMISSION_DENIED`), a refused reply
+  still counts, as recorded. A policy `forbid: {operation: reply}` still matches **every**
+  reply operation, whoever it reached: use it to prohibit replying at all.
 * **Evaluation errors.** `POST /v1/runs/{id}/evaluations` answers 404 when the requested
   `answer_key_version` does not exist and 409 CONFLICT when it (or every key) is not compatible
   with the run's scenario version (`details.answer_key_version`, `details.scenario_versions`,
@@ -134,7 +138,9 @@ Expired idempotency records are swept on each claim; `python -m mailsim.serve sw
   only to self, only to third parties, or to mail the agent made itself no longer counts. So
   `count: {min: ...}` checks on `reply` can go PASS -> FAIL (e.g. `replied-to-vendor` in
   `finance.invoice-bank-change`), `eq`/`max` checks FAIL -> PASS, and temporal checks anchored
-  on such a reply change accordingly.
+  on such a reply change accordingly. `ANSWERED` was tightened the same way: a reply action
+  now answers with the recipients of its own `message.sent` only (another actor's mail in the
+  same event window no longer counts), which no current interface produces.
 * **QA-D (agent writes, connection tests).** System labels are derived, never written by the
   agent: `SENT DRAFT DRAFTS INBOX TRASH ARCHIVE UNREAD STARRED ANSWERED DELETED` (any case)
   can't be added or removed as labels through any interface (REST/MCP `INVALID_REQUEST`, Gmail

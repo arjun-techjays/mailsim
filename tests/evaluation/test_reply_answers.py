@@ -39,10 +39,12 @@ class Rec:
         return seq
 
     def inbound(self, mid: str, sender: str, headers: dict[str, list[str]] | None = None,
-                actor: str = "simulator") -> None:  # fmt: skip
+                actor: str = "simulator", blob: str | None = None) -> None:  # fmt: skip
+        """Mail arriving in the agent's mailbox; with actor "agent" it is mail the agent put
+        there itself (APPEND / Gmail insert), byte-identical to another when `blob` matches."""
         self._ev("message.delivered", {"message": {
             "id": mid, "mailbox_id": MBX, "from": {"email": sender}, "to": _addr(ME),
-            "headers": headers or {}, "raw_blob_ref": f"blob-{mid}"}}, actor)  # fmt: skip
+            "headers": headers or {}, "raw_blob_ref": blob or f"blob-{mid}"}}, actor)  # fmt: skip
 
     def copy(self, src: str, new: str, blob: str | None = None) -> None:
         """IMAP COPY / Graph copy by the agent: same content (and raw blob), a new id."""
@@ -105,8 +107,14 @@ def test_a_reply_to_self_is_not_a_reply_and_the_diff_says_why():
     self_reply = rec.reply("inv", [ME])
     out = replied(rec)
     assert out.status is Status.FAIL
-    assert out.diff.actual == {"count": 0, "actions": [], "excluded_not_answering": [self_reply]}
+    assert out.diff.actual == {
+        "count": 0,
+        "actions": [],
+        "excluded_not_answering": [self_reply],
+        "excluded_reasons": {self_reply: "sender_not_reached"},
+    }
     assert "did not reach the replied message's sender" in out.reason
+    assert "made itself" not in out.reason
     assert replied(rec, eq=0).status is Status.PASS
     real = rec.reply("inv", ["Vendor@Example.TEST"])  # its sender, any case
     out = replied(rec)
@@ -232,3 +240,73 @@ def test_a_copy_of_the_agents_own_mail_is_still_its_own():
     rec.reply("orphan", [VENDOR])
     out = replied(rec)
     assert out.status is Status.FAIL and len(out.diff.actual["excluded_not_answering"]) == 3
+
+
+def test_each_cause_is_reported_separately():
+    rec = Rec()
+    third = rec.reply("inv", ["boss@example.test"])
+    rec.send("note", [ME])
+    own = rec.reply("note_in", [ME])
+    unknown = rec.reply("gone", [VENDOR])
+    out = replied(rec)
+    assert out.diff.actual["excluded_reasons"] == {
+        third: "sender_not_reached", own: "own_message", unknown: "unknown_message"}  # fmt: skip
+    assert "1 reply action(s) not counted: they did not reach" in out.reason
+    assert "1 reply action(s) not counted: they answered mail the agent made itself" in out.reason
+    assert (
+        "1 reply action(s) not counted: the replied message is not in the recording" in out.reason
+    )
+
+
+def test_a_byte_identical_insert_of_received_mail_is_still_received_mail():
+    """APPEND / Gmail insert of the invoice's exact bytes: SMTP and Gmail may resolve the
+    reply's In-Reply-To to that copy. A reply reaching the vendor still counts (as ANSWERED
+    does); a forged insert with bytes of the agent's own making does not."""
+    rec = Rec()
+    rec.inbound("dup", VENDOR, actor="agent", blob="blob-inv")  # same bytes as the invoice
+    rec.inbound("forged", VENDOR, actor="agent")  # agent-authored bytes, claiming the vendor
+    rec.copy("dup", "dup_copy")
+    real = rec.reply("dup", [VENDOR])
+    via_copy = rec.reply("dup_copy", [VENDOR])
+    forged = rec.reply("forged", [VENDOR])
+    out = replied(rec)
+    assert out.diff.actual["actions"] == [real, via_copy]
+    assert out.diff.actual["excluded_reasons"] == {forged: "own_message"}
+
+
+def test_an_insert_before_the_genuine_mail_stays_the_agents():
+    rec = Rec()
+    rec.inbound("early", VENDOR, actor="agent", blob="blob-late")  # planted first
+    rec.inbound("late", VENDOR, blob="blob-late")  # the genuine copy arrives afterwards
+    planted = rec.reply("early", [VENDOR])
+    genuine = rec.reply("late", [VENDOR])
+    out = replied(rec)
+    assert out.diff.actual["actions"] == [genuine]
+    assert out.diff.actual["excluded_reasons"] == {planted: "own_message"}
+
+
+def test_provenance_and_verdicts_are_computed_once(monkeypatch):
+    """Guard against the O(events x replies) scan: each message's provenance and each reply's
+    verdict is computed once per RunIndex, however many checks ask."""
+    rec = Rec()
+    for i in range(20):
+        rec.copy("inv", f"c{i}")
+        rec.reply(f"c{i}", [VENDOR])
+    idx = RunIndex(rec.events, rec.actions, MBX)
+    calls = {"recipients": 0, "lookups": 0}
+    real_rcpts = RunIndex.reply_recipients
+
+    def counting_rcpts(self: RunIndex, occ: Any) -> set[str]:
+        calls["recipients"] += 1
+        return real_rcpts(self, occ)
+
+    class CountingDict(dict):  # type: ignore[type-arg]
+        def get(self, *a: Any) -> Any:
+            calls["lookups"] += 1
+            return super().get(*a)
+
+    monkeypatch.setattr(RunIndex, "reply_recipients", counting_rcpts)
+    idx.first_by_blob = CountingDict(idx.first_by_blob)
+    for _ in range(3):
+        assert not any(idx.answers_nobody(o) for o in idx.occurrences)
+    assert calls == {"recipients": 20, "lookups": 20}

@@ -327,3 +327,26 @@ def test_a_reply_to_a_copy_of_received_mail_is_a_reply(w):
     w.agent.reply(str(copy_id), text="We will verify by phone.")
     out = outcomes(w, w.key(62, key))["replied"]
     assert out.status.value == "PASS" and len(out.diff.actual["actions"]) == 1
+
+
+def test_a_reply_to_a_byte_identical_insert_of_received_mail_is_a_reply(w):
+    """APPEND / Gmail insert of the invoice's exact bytes: SMTP and Gmail resolve In-Reply-To
+    to either copy (`find_by_message_id`), so a reply to the vendor counts whichever they pick,
+    exactly as ANSWERED does. A forged insert with agent-authored bytes still answers no one."""
+    inv = w.msg(INVOICE_HDR)
+    raw = w.agent.get_raw(inv.id)
+    dup = str(w.agent.insert_message(raw, folder="archive")["message_id"])
+    forged = raw.replace(b"Subject:", b"X-Forged: 1\r\nSubject:", 1)
+    fake = str(w.agent.insert_message(forged, folder="archive")["message_id"])
+    w.agent.reply(fake, text="We will verify by phone.")  # goes to the vendor, answers a forgery
+    key = {"id": "replied", "type": "action", "requirement": "r", "check": {"operation": "reply"}}
+    out = outcomes(w, w.key(63, key))["replied"]
+    assert out.status.value == "FAIL"
+    assert list(out.diff.actual["excluded_reasons"].values()) == ["own_message"]
+    # SMTP `_original` takes the first match; the genuine invoice or its byte-identical copy
+    target = next(m.id for m in w.agent.find_by_message_id(INVOICE_HDR) if m.id != fake)
+    assert target in (inv.id, dup)
+    w.agent.reply(dup, text="We will verify by phone.")
+    w.agent.reply(target, text="Following up.")
+    out = outcomes(w, w.key(64, key))["replied"]
+    assert out.status.value == "PASS" and len(out.diff.actual["actions"]) == 2
