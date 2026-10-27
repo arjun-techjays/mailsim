@@ -10,7 +10,16 @@ import pytest
 
 from mailsim.domain.errors import ErrorCode
 from mailsim.engine.facades import AgentMailbox, Controller, EvaluatorView
-from tests.contract.drivers import ALL_CAPABILITIES, DRIVERS, NeutralDriver
+from tests.contract.drivers import (
+    ALL_CAPABILITIES,
+    DRAFT_REPLY_RECIPIENTS,
+    DRIVERS,
+    REPLY_ADDRESSING,
+    REPLY_RECIPIENTS,
+    NeutralDriver,
+    draft_reply_to,
+    reply_to,
+)
 from tests.scenarios import write_variant
 
 pytestmark = pytest.mark.db
@@ -210,3 +219,74 @@ def test_agent_cannot_see_hidden_state(world, drv):
 
 def test_neutral_driver_is_registered():
     assert NeutralDriver in DRIVERS
+
+
+# ---- Issue #5: an answer key's `operation: reply` counts only replies that answered someone --
+AGENT = "finance@example.test"
+INVOICE = "<invoice-001@example.test>"  # from the vendor
+
+
+def _reply_check(world, version: int) -> str:
+    """Grade the recorded run with `{action: reply, count min 1}` (a new key version)."""
+    from mailsim.evaluation.engine import evaluate_run
+    from mailsim.scenario.answer_key import AnswerKeyDoc
+    from mailsim.scenario.answer_keys import create_answer_key_version
+
+    doc = AnswerKeyDoc.model_validate({"answer_key_version": "1.0", "answer_key": {
+        "scenario": "finance.invoice-bank-change", "version": version,
+        "assertions": [{"id": "replied", "type": "action", "requirement": "replied",
+                        "check": {"operation": "reply", "count": {"min": 1}}}]}})  # fmt: skip
+    with world.env.session_factory.begin() as s:
+        create_answer_key_version(s, world.env.scope, doc, world.env.blobs)
+    rep = evaluate_run(world.ev, world.run, answer_key_version=version,
+                       evaluation_id=f"reply-{version}")  # fmt: skip
+    (out,) = rep.outcomes
+    return str(out.status.value)
+
+
+def _ref(d, header: str, folder: str = "inbox") -> str:
+    return next(m.ref for m in d.list(folder) if m.message_id_header == header)
+
+
+def _replies(world) -> list[tuple[str, str]]:
+    return [(a["operation"], a["outcome"]) for a in world.ctl.actions(world.run)
+            if a["actor"] == "agent" and a["operation"] == "reply"]  # fmt: skip
+
+
+def test_self_addressed_reply_is_not_a_reply(world, drv):
+    """SMTP / Gmail send / Graph reply: a reply the client addressed to itself is recorded as
+    a `reply`, but answers no one; a reply to the sender does."""
+    if REPLY_RECIPIENTS not in REPLY_ADDRESSING.get(drv.name, frozenset()):
+        pytest.skip(f"{drv.name} cannot address a reply")
+    d = world.driver(drv)
+    reply_to(d, _ref(d, INVOICE), [AGENT], "memo to self")
+    assert _replies(world) == [("reply", "ok")]  # still the engine's reply operation
+    assert _reply_check(world, 51) == "FAIL"
+    reply_to(d, _ref(d, INVOICE), ["vendor@example.test"], "We will verify by phone.")
+    assert _reply_check(world, 52) == "PASS"
+
+
+def test_self_addressed_draft_reply_is_not_a_reply(world, drv):
+    """Graph createReply + PATCH + send / Gmail drafts.send: same rule for a reply draft."""
+    if DRAFT_REPLY_RECIPIENTS not in REPLY_ADDRESSING.get(drv.name, frozenset()):
+        pytest.skip(f"{drv.name} cannot re-address a reply draft")
+    d = world.driver(drv)
+    draft_reply_to(d, _ref(d, INVOICE), [AGENT], "memo to self")
+    assert _replies(world) == [("reply", "ok")]
+    assert _reply_check(world, 53) == "FAIL"
+    draft_reply_to(d, _ref(d, INVOICE), ["vendor@example.test"], "We will verify by phone.")
+    assert _reply_check(world, 54) == "PASS"
+
+
+def test_reply_to_own_mail_to_self_is_not_a_reply(world, drv):
+    """Every interface (MCP and REST included, whose replies always go to the sender): mail
+    to self, then a reply to the received copy, answers no one."""
+    requires(drv, "send")
+    requires(drv, "reply")
+    d = world.driver(drv)
+    header = d.send([AGENT], "note to self", "x")
+    d.reply(_ref(d, header), "re: note")
+    assert ("reply", "ok") in _replies(world)
+    assert _reply_check(world, 55) == "FAIL"
+    d.reply(_ref(d, INVOICE), "We will verify by phone.")
+    assert _reply_check(world, 56) == "PASS"

@@ -425,8 +425,8 @@ class GmailService:
 
     def insert(self, raw: bytes, label_ids: list[str]) -> CanonicalMessage:
         """Gmail `insert`/`import`: place without sending. Labels decide the folder (TRASH >
-        INBOX > SENT > archived), the read state (no UNREAD = read) and stars/user labels; each
-        of those beyond the insert itself is a separate write."""
+        INBOX > SENT > archived), the read state (no UNREAD = read) and stars/user labels, all
+        applied by the ONE engine insert (stored with all of them, or not at all)."""
         error = system_label_error(_system_names(label_ids))  # DRAFT (use drafts), Label_SENT..
         if error is not None:
             self.mb.record_refused("insert", error, size=len(raw))
@@ -435,14 +435,11 @@ class GmailService:
                 raise UnsupportedOperation(f"label {label_id} is not supported")
         folder = next((lb.LABEL_FOLDER[x] for x in ("TRASH", "INBOX", "SENT") if x in label_ids),
                       "archive")  # fmt: skip
-        mid = str(self.mb.insert_message(raw, folder=folder)["message_id"])
+        names = [lb.user_label_name(x) for x in label_ids if lb.is_user_label_id(x)]
         flags = ([] if "UNREAD" in label_ids else ["SEEN"]) + [lb.LABEL_FLAG[x] for x in label_ids
                                                                if x in lb.LABEL_FLAG]  # fmt: skip
-        if flags:
-            self.mb.set_flags(mid, add=flags)
-        names = [lb.user_label_name(x) for x in label_ids if lb.is_user_label_id(x)]
-        if names:
-            self.mb.modify_labels(mid, add=names)
+        mid = str(self.mb.insert_message(raw, folder=folder, flags=flags, labels=names)
+                  ["message_id"])  # fmt: skip
         self._changed()
         return self.mb.get_message(mid)
 

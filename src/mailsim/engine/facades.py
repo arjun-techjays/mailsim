@@ -30,6 +30,7 @@ from mailsim.engine.core import (
     DraftThreading,
     ReplayResult,
     SimEngine,
+    labels_per_message_exceeded,
 )
 from mailsim.engine.pagination import Page
 from mailsim.store.repos import Scope
@@ -148,6 +149,26 @@ class AgentMailbox:
         self._e.record_refused(*self._a(), operation, error, message_id=message_id, add=add,
                                remove=remove, folder=folder, size=size, actor=AGENT)  # fmt: skip
 
+    def session_mailbox(self) -> dict[str, Any]:
+        """For a protocol login: this mailbox's address and the run's latest event sequence,
+        after the agent guard (run active, permission, own mailbox), unaudited and outside the
+        read/event caps."""
+        return self._e.session_mailbox(*self._a())
+
+    def check_new_message_labels(self, names: Sequence[str], *, folder: str,
+                                 size: int) -> None:  # fmt: skip
+        """Before storing a message that gets labels (Gmail insert/import labelIds, IMAP APPEND
+        keywords): refuse (and record, as a refused `insert`, budgeted like the write) more
+        distinct labels than the run's max_labels_per_message, so nothing is stored. No-op
+        within the cap."""
+        count = len(set(names))
+        if count == 0:
+            return
+        limit = self._e.label_cap(self._scope, self.run_id)
+        if count > limit:
+            self.record_refused("insert", labels_per_message_exceeded(limit), folder=folder,
+                                size=size)  # fmt: skip
+
     def sent_copy(self, folder: str, size: int) -> None:
         """Record a client's copy of a sent message filed into Sent (stores nothing)."""
         self._e.sent_copy(*self._a(), folder, size, actor=AGENT)
@@ -182,8 +203,11 @@ class AgentMailbox:
         return _agent_send_result(self._e.forward(*self._a(), message_id, to=to, text=text, cc=cc,
                                                   actor=AGENT))  # fmt: skip
 
-    def insert_message(self, raw: bytes, *, folder: str = "inbox") -> dict[str, Any]:
-        return self._e.insert_message(*self._a(), raw, folder=folder, actor=AGENT)
+    def insert_message(self, raw: bytes, *, folder: str = "inbox", flags: Sequence[str] = (),
+                       labels: Sequence[str] = ()) -> dict[str, Any]:  # fmt: skip
+        """Insert with its initial flags and labels as ONE write (all or nothing)."""
+        return self._e.insert_message(*self._a(), raw, folder=folder, flags=flags, labels=labels,
+                                      actor=AGENT)  # fmt: skip
 
     def create_draft(self, *, to: list[str], subject: str, text: str = "",
                      cc: list[str] | None = None, bcc: list[str] | None = None,

@@ -1,4 +1,5 @@
 import { useBuilder } from '../context';
+import { RUN_CAPS } from '../model';
 import { TextField } from '../fields';
 import { fromIsoInput, toIsoInput } from '../time';
 
@@ -51,6 +52,19 @@ export function LimitsSection() {
         help="86400 is one virtual day."
         onChange={(v) => updateForm((d) => void (d.maxDuration = v))}
       />
+      {RUN_CAPS.map((cap) => (
+        <TextField
+          key={cap.key}
+          path={`scenario.evaluation.limits.${cap.key}`}
+          label={cap.label}
+          type="number"
+          min={1}
+          value={f.caps?.[cap.key] ?? ''}
+          placeholder={String(cap.fallback)}
+          help={`${cap.help} Leave empty for the default (${cap.fallback}).`}
+          onChange={(v) => updateForm((d) => void (d.caps = { ...d.caps, [cap.key]: v }))}
+        />
+      ))}
     </>
   );
 }

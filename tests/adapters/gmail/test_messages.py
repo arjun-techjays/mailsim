@@ -215,7 +215,8 @@ def test_insert_and_import(gm):
         "/messages", json={"raw": b64(raw), "labelIds": ["INBOX", "UNREAD", "STARRED", label]}
     )
     assert set(out["labelIds"]) == {"INBOX", "UNREAD", "STARRED", label}
-    assert [a[0] for a in gm.actions()[-4:]] == ["insert", "flag", "label", "read"]
+    # ONE insert carries the flags and labels (all or nothing), then the read-back
+    assert [a[0] for a in gm.actions()[-2:]] == ["insert", "read"]
     archived = gm.post("/messages/import", json={"raw": b64(raw)})
     assert archived["labelIds"] == []  # no labels: archived and read (Gmail insert semantics)
     trashed = gm.post("/messages", json={"raw": b64(raw), "labelIds": ["TRASH", "INBOX", "UNREAD"]})

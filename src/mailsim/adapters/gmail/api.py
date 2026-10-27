@@ -24,6 +24,7 @@ from mailsim.adapters.gmail.service import GmailService
 from mailsim.adapters.gmail.uploads import read_upload
 from mailsim.domain.errors import InvalidRequest, NotFound, UnsupportedOperation
 from mailsim.domain.models import MAX_LABEL_CHARS, MAX_LABELS_PER_CHANGE, CanonicalMessage
+from mailsim.engine.context import use_request_item
 
 BASE = "/gmail/v1/users/{user_id}"
 UPLOAD = "/upload/gmail/v1/users/{user_id}"
@@ -148,14 +149,16 @@ def batch_modify(user_id: str, gmail: Gmail, body: JsonBody = None) -> Response:
     body = body or {}
     add, remove = _label_ids(body, "addLabelIds"), _label_ids(body, "removeLabelIds")
     for gid in _ids(body):
-        gmail.modify(gmail.message(gid), add, remove)
+        with use_request_item():  # each id's reads count until its own write (read caps)
+            gmail.modify(gmail.message(gid), add, remove)
     return _no_content()
 
 
 @router.post(BASE + "/messages/batchDelete")
 def batch_delete(user_id: str, gmail: Gmail, body: JsonBody = None) -> Response:
     for gid in _ids(body or {}):
-        gmail.delete(gmail.message(gid))
+        with use_request_item():
+            gmail.delete(gmail.message(gid))
     return _no_content()
 
 
@@ -213,7 +216,8 @@ def modify_thread(request: Request, user_id: str, thread_id: str, gmail: Gmail,
     body = body or {}
     add, remove = _label_ids(body, "addLabelIds"), _label_ids(body, "removeLabelIds")
     for msg in gmail.thread(thread_id):
-        gmail.modify(msg, add, remove)
+        with use_request_item():
+            gmail.modify(msg, add, remove)
     return _out(request, _thread_summary(gmail, thread_id))
 
 
@@ -222,14 +226,16 @@ def modify_thread(request: Request, user_id: str, thread_id: str, gmail: Gmail,
 def trash_thread(request: Request, user_id: str, thread_id: str, gmail: Gmail) -> Response:
     restore = request.url.path.endswith("/untrash")
     for msg in gmail.thread(thread_id):
-        gmail.trash(msg, restore=restore)
+        with use_request_item():
+            gmail.trash(msg, restore=restore)
     return _out(request, _thread_summary(gmail, thread_id))
 
 
 @router.delete(BASE + "/threads/{thread_id}")
 def delete_thread(user_id: str, thread_id: str, gmail: Gmail) -> Response:
     for msg in gmail.thread(thread_id):
-        gmail.delete(msg)
+        with use_request_item():
+            gmail.delete(msg)
     return _no_content()
 
 

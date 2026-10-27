@@ -98,6 +98,16 @@ class Run(Base):
     next_seq: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
     id_counter: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     agent_actions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # per-run resource caps (spec 10), current epoch: guarded agent reads/searches and
+    # sent_copy commands (counted with their audit row), and events attributed to the agent
+    # (counted as they are appended, so replay rebuilds it)
+    agent_reads: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    agent_sent_copies: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    agent_events: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     start_time: Mapped[datetime | None] = mapped_column(TS)
     replay_of: Mapped[str | None] = mapped_column(String)
     created_at: Mapped[datetime] = _created()

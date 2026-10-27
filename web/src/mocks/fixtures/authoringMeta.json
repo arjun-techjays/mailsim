@@ -330,6 +330,62 @@
       "exclusiveMinimum": 0,
       "title": "Max Virtual Duration Seconds",
       "type": "integer"
+     },
+     "max_agent_reads": {
+      "anyOf": [
+       {
+        "exclusiveMinimum": 0,
+        "maximum": 1000000,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Max Agent Reads"
+     },
+     "max_sent_copies": {
+      "anyOf": [
+       {
+        "exclusiveMinimum": 0,
+        "maximum": 100000,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Max Sent Copies"
+     },
+     "max_agent_events": {
+      "anyOf": [
+       {
+        "exclusiveMinimum": 0,
+        "maximum": 1000000,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Max Agent Events"
+     },
+     "max_labels_per_message": {
+      "anyOf": [
+       {
+        "exclusiveMinimum": 0,
+        "maximum": 1000,
+        "type": "integer"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Max Labels Per Message"
      }
     },
     "title": "LimitsSpec",
@@ -1923,6 +1979,26 @@
       ],
       "title": "Invariant",
       "type": "string"
+     },
+     "limit": {
+      "anyOf": [
+       {
+        "enum": [
+         "max_agent_actions",
+         "max_virtual_duration_seconds",
+         "max_agent_reads",
+         "max_sent_copies",
+         "max_agent_events",
+         "max_labels_per_message"
+        ],
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Limit"
      }
     },
     "required": [
@@ -2091,6 +2167,26 @@
       ],
       "title": "Invariant",
       "type": "string"
+     },
+     "limit": {
+      "anyOf": [
+       {
+        "enum": [
+         "max_agent_actions",
+         "max_virtual_duration_seconds",
+         "max_agent_reads",
+         "max_sent_copies",
+         "max_agent_events",
+         "max_labels_per_message"
+        ],
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "default": null,
+      "title": "Limit"
      }
     },
     "required": [

@@ -76,7 +76,7 @@ All paths are under `/gmail/v1/users/{userId}`; media uploads under
 | `messages.list` | `q`, `labelIds` (repeated, AND), `maxResults` (default 100, max 500), `pageToken`, `includeSpamTrash` | read; free text also `search` |
 | `messages.get` | `format=minimal\|metadata\|full\|raw`, `metadataHeaders` | read |
 | `messages.send` | JSON `raw` (+`threadId`); upload `media`/`multipart` | `send`, or one `reply` (see below) |
-| `messages.insert`, `messages.import` | JSON `raw` + `labelIds`; upload `media`/`multipart` | `insert` (+`flag`, +`label`) |
+| `messages.insert`, `messages.import` | JSON `raw` + `labelIds`; upload `media`/`multipart` | `insert` (flags and labels in the same write) |
 | `messages.modify`, `batchModify` | `addLabelIds`, `removeLabelIds` | `move` / `flag` / `label` |
 | `messages.trash`, `untrash` | yes | `move` |
 | `messages.delete`, `batchDelete` | yes (permanent) | `delete` |
@@ -117,8 +117,9 @@ All paths are under `/gmail/v1/users/{userId}`; media uploads under
 
 Places a message without sending it (never delivered to anyone). `labelIds` decide the result:
 folder by precedence `TRASH` > `INBOX`, otherwise archived; without `UNREAD` the message
-is read; `STARRED`/`ANSWERED`/`DELETED` set flags; user labels are applied. Each of those after the
-insert itself is a separate write. `DRAFT` is refused (400, use drafts) and, unlike Gmail, so is
+is read; `STARRED`/`ANSWERED`/`DELETED` set flags; user labels are applied. All of it is ONE
+`insert` write: the message is stored with all of them or not at all (a refused label, the
+per-message label cap, the budget). `DRAFT` is refused (400, use drafts) and, unlike Gmail, so is
 `SENT` (403 `PERMISSION_DENIED`): Sent holds only mail this account actually sent, so an inserted
 message can't stand in for a sent one. `internalDateSource` is
 ignored (the `Date` header is used, else the virtual clock). The raw message needs a `From`.
@@ -283,7 +284,10 @@ Engine budget and run-state errors read neutrally to agents (`api/agent_errors.p
 
 Note that google-api-python-client retries 429 and 5xx when `num_retries` is set; the budget
 error (`QUOTA_EXCEEDED`, "action limit reached") is raised before the write and costs nothing to retry, but
-retrying it never succeeds. Request bodies over the server's size cap are refused by the shared
+retrying it never succeeds. The per-run caps (reads, agent events, labels per message; see the
+README) answer the same 429, also before anything is written: the message a send, insert or
+modify returns is read back without counting against the caps, so a 429 never follows a
+committed write. Only a label-cap refusal is a failed write that costs budget. Request bodies over the server's size cap are refused by the shared
 middleware with the REST error envelope (400), not the Gmail shape.
 
 ## Known deviations (summary)

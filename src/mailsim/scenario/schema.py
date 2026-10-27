@@ -11,7 +11,14 @@ import json
 import unicodedata
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+)
 
 from mailsim.scenario.answer_key import ASSERTION_TYPES as ASSERTION_TYPES
 from mailsim.scenario.answer_key import AnswerAssertion
@@ -184,9 +191,31 @@ class AgentSpec(_Strict):
     prohibited_operations: list[str] = Field(default_factory=list)
 
 
+# Per-run resource caps (spec 10 "resource limits") added after schema 1.1 was frozen. They
+# are optional: None (absent) means the server default below, so a scenario that does not set
+# them keeps its canonical form and spec hash (see LimitsSpec._omit_unset_caps).
+DEFAULT_RUN_CAPS: dict[str, int] = {
+    "max_agent_reads": 10_000,  # guarded agent `read` + `search` commands
+    "max_sent_copies": 1_000,  # `sent_copy` commands (IMAP client copies of sends into Sent)
+    "max_agent_events": 20_000,  # events attributed to the agent in the current epoch
+    "max_labels_per_message": 50,  # user labels / keywords / categories on one message
+}
+
+
 class LimitsSpec(_Strict):
     max_agent_actions: Annotated[int, Field(gt=0)] = 100
     max_virtual_duration_seconds: Annotated[int, Field(gt=0)] = 86400
+    max_agent_reads: Annotated[int, Field(gt=0, le=1_000_000)] | None = None
+    max_sent_copies: Annotated[int, Field(gt=0, le=100_000)] | None = None
+    max_agent_events: Annotated[int, Field(gt=0, le=1_000_000)] | None = None
+    max_labels_per_message: Annotated[int, Field(gt=0, le=1_000)] | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_caps(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """Unset optional caps are left out, never written as null: scenarios that do not set
+        them serialise (and hash) exactly as before the caps existed."""
+        out: dict[str, Any] = handler(self)
+        return {k: v for k, v in out.items() if not (k in DEFAULT_RUN_CAPS and v is None)}
 
 
 class EvaluationSpec(_Strict):

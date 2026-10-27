@@ -37,6 +37,8 @@ PROJECTION_MODELS: tuple[type[m.Base], ...] = (
     m.Organization,
 )
 
+AGENT_ACTOR = "agent"  # engine.core.AGENT (the log module sits below the engine)
+
 Projector = Callable[[Session, m.Run, dict[str, Any]], None]
 PROJECTORS: dict[str, Projector] = {}
 
@@ -98,6 +100,10 @@ def append(session: Session, run: m.Run, event: Event) -> int:
     )
     session.flush()
     project(session, run, event.type, event.payload)
+    if event.actor == AGENT_ACTOR:
+        # the agent's footprint in the log (max_agent_events): derived from the events
+        # themselves, so a replay rebuilds it; zeroed by run.reset with the epoch
+        run.agent_events += 1
     return seq
 
 
@@ -138,6 +144,9 @@ def _reset(session: Session, run: m.Run, p: dict[str, Any]) -> None:
     run.epoch = int(p["epoch"])
     wipe_projection(session, run.id)
     run.agent_actions = 0
+    run.agent_reads = 0
+    run.agent_sent_copies = 0
+    run.agent_events = 0
     run.virtual_time = run.start_time
     run.status = "READY"  # reset restores the baseline; the run must be started again
 

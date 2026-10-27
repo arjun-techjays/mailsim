@@ -18,20 +18,22 @@ import contextlib
 import logging
 import re
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any
 
 from mailsim.api.agent_errors import agent_view
-from mailsim.domain.errors import SimError, UnsupportedOperation
+from mailsim.domain.errors import InvalidRequest, SimError, UnsupportedOperation
 from mailsim.domain.models import (
+    MAX_LABEL_CHARS,
+    MAX_LABELS_PER_CHANGE,
     CanonicalMessage,
     draft_flag_error,
     is_system_label,
     system_label_error,
 )
-from mailsim.engine.context import use_interface
+from mailsim.engine.context import use_agent_request, use_interface
 from mailsim.mime.build import build_mime
 from mailsim.mime.parse import parse_mime
 from mailsim.protocols import imapmime
@@ -109,6 +111,15 @@ class WriteTimeout(Exception):
 # --------------------------------------------------------------------------- helpers
 def is_keyword(name: str) -> bool:
     return bool(_KEYWORD_RE.match(name))
+
+
+def check_keyword_list(keywords: Collection[str]) -> None:
+    """The label cap every interface applies to one request (domain.models): at most
+    MAX_LABELS_PER_CHANGE keywords of at most MAX_LABEL_CHARS characters. Checked before
+    anything is written; NO [CANNOT] INVALID_REQUEST, like a REST/Gmail/Graph/MCP 400."""
+    if len(keywords) > MAX_LABELS_PER_CHANGE or any(len(k) > MAX_LABEL_CHARS for k in keywords):
+        raise InvalidRequest(f"at most {MAX_LABELS_PER_CHANGE} keywords of at most "
+                             f"{MAX_LABEL_CHARS} characters per command")  # fmt: skip
 
 
 def wildcard_match(pattern: str, name: str, *, fold: bool = False) -> bool:
@@ -273,7 +284,8 @@ class ImapSession:
         tag, name, args = str(tokens[0]), str(tokens[1]).upper(), tokens[2:]
         out: list[bytes] = []
         try:
-            reply = self._dispatch(tag, name, args, out)
+            with use_agent_request():  # one command: the re-sync after its write is a read-back
+                reply = self._dispatch(tag, name, args, out)
         except ParseError as exc:
             return Reply([*out, f"{tag} BAD {_one_line(str(exc))}\r\n".encode()])
         except imapmime.SectionError as exc:
@@ -409,7 +421,8 @@ class ImapSession:
             if exc.code is not None:
                 return self._failed(tag, f"NO [AUTHORIZATIONFAILED] {_one_line(exc.reason)}")
             return self._failed(tag, "NO [AUTHENTICATIONFAILED] Authentication failed")
-        self._seq = int(self._mb.list_changes(0, limit=1)["latest_sequence"])
+        # where this session's change feed starts: part of logging in, not an agent read
+        self._seq = int(self._mb.session_mailbox()["latest_sequence"])
         caps = " ".join(self.capabilities())
         return f"OK [CAPABILITY {caps}] authenticated as {self.agent.address}"
 
@@ -846,6 +859,7 @@ class ImapSession:
                 raise ParseError(f"invalid flag {flag[:40]}")
             else:
                 keywords.add(flag)
+        check_keyword_list(keywords)
         by_uid = self._sync(out, expunges=uid_mode)
         targets = self._targets(args[0], uid_mode, by_uid)
         # refused (and recorded) before any write: a keyword "Sent" is no system flag, and
@@ -976,6 +990,7 @@ class ImapSession:
                 keywords.append(flag)
             else:
                 raise ParseError(f"invalid flag {flag[:40]}")
+        check_keyword_list(set(keywords))
         self._poll()  # UIDVALIDITY in APPENDUID must be current
         dest = self._folder(astring(args[0]))
         if dest is None:
@@ -992,11 +1007,9 @@ class ImapSession:
         )
         if error is not None:
             self._mb.record_refused("insert", error, folder=str(dest["name"]), size=len(raw))
-        new_id = str(self._mb.insert_message(raw, folder=str(dest["name"]))["message_id"])
-        if system:
-            self._mb.set_flags(new_id, add=sorted(set(system)))
-        if keywords:
-            self._mb.modify_labels(new_id, add=sorted(set(keywords)))
+        # one insert with its flags and keywords: stored with all of them or not at all
+        new_id = str(self._mb.insert_message(raw, folder=str(dest["name"]), flags=system,
+                                             labels=keywords)["message_id"])  # fmt: skip
         if self.selected is not None and self.selected.engine_folder == str(dest["name"]):
             self._sync(out, expunges=False)
         uids = self._new_uids(dest, [new_id])
@@ -1035,6 +1048,7 @@ class ImapSession:
         error = system_label_error(keywords)
         if error is not None:
             self._mb.record_refused("insert", error, folder=str(dest["name"]), size=len(raw))
+        self._mb.check_new_message_labels(keywords, folder=str(dest["name"]), size=len(raw))
         draft = self._mb.create_draft(
             to=[a.email for a in parsed.to], cc=[a.email for a in parsed.cc],
             bcc=[a.email for a in parsed.bcc], subject=parsed.subject,

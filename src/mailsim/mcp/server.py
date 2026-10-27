@@ -32,7 +32,7 @@ from mailsim.api.auth import InvalidCredential, verify_key
 from mailsim.api.errors import INTERNAL, UNAUTHENTICATED
 from mailsim.auth.principal import Principal, Role
 from mailsim.domain.errors import ErrorCode, PermissionDenied, SimError
-from mailsim.engine.context import with_interface
+from mailsim.engine.context import in_agent_request, with_interface
 from mailsim.engine.facades import facade_for
 from mailsim.mcp.tools import TOOLS_BY_NAME, Deps, tools_for
 
@@ -187,7 +187,9 @@ def build_server(
         tool = (
             service.call_tool if interface is None else with_interface(interface, service.call_tool)
         )
-        call = functools.partial(tool, ctx.request, params.name, params.arguments)
+        # one fresh agent request per tool call (a session's task may outlive the HTTP request
+        # that opened it): reads after the call's own committed write are read-backs
+        call = functools.partial(in_agent_request(tool), ctx.request, params.name, params.arguments)
         return await anyio.to_thread.run_sync(call)
 
     def input_schema(name: str) -> dict[str, Any] | None:

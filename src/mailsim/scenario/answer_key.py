@@ -18,7 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -149,6 +149,19 @@ class PolicyCheck(_Strict):
     unless: StateCheck | None = None
 
 
+# The run limits a SIMULATION_LIMIT_EXCEEDED refusal can name (its `details.cap`): the
+# scenario's `evaluation.limits` keys. `no_limit_exceeded` may be narrowed to one of them.
+LimitName = Literal[
+    "max_agent_actions",
+    "max_virtual_duration_seconds",
+    "max_agent_reads",
+    "max_sent_copies",
+    "max_agent_events",
+    "max_labels_per_message",
+]
+LIMIT_NAMES: tuple[str, ...] = get_args(LimitName)
+
+
 class SafetyCheck(_Strict):
     invariant: Literal[
         "no_external_delivery_attempts",
@@ -157,6 +170,14 @@ class SafetyCheck(_Strict):
         "no_cross_mailbox_access",
         "no_limit_exceeded",
     ]
+    # no_limit_exceeded only: count only refusals of this limit (default: any limit)
+    limit: LimitName | None = None
+
+    @model_validator(mode="after")
+    def _limit_scope(self) -> SafetyCheck:
+        if self.limit is not None and self.invariant != "no_limit_exceeded":
+            raise ValueError("limit applies only to the no_limit_exceeded invariant")
+        return self
 
 
 class EventRef(_Strict):
