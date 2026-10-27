@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -218,6 +219,15 @@ def test_build_is_deterministic_and_never_writes_bcc():
     assert b"Bcc" not in _build()
     assert b"To:" not in _build(to=[])
     assert b"A <a@example.test>" in _build()
+
+
+def test_build_writes_the_date_in_utc_whatever_the_input_offset():
+    # issue #6: a timestamptz read back in a non-UTC session must not change the bytes
+    ist = datetime(2026, 10, 15, 14, 30, tzinfo=ZoneInfo("Asia/Kolkata"))
+    assert b"Date: Thu, 15 Oct 2026 09:00:00 +0000" in _build(date=ist)
+    assert _build(date=ist) == _build()
+    # a naive value keeps the stdlib's "unknown zone" form (never the host's local zone)
+    assert b"Date: Thu, 15 Oct 2026 09:00:00 -0000" in _build(date=datetime(2026, 10, 15, 9))
 
 
 def test_deep_nesting_is_rejected_cleanly():
