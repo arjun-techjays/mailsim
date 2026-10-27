@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Any
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 DEFAULT_URL = "postgresql+psycopg://mailsim:mailsim@localhost:54329/mailsim"
@@ -15,8 +16,24 @@ def database_url() -> str:
     return os.environ.get("MAILSIM_DATABASE_URL", DEFAULT_URL)
 
 
+def _pin_session_to_utc(dbapi_connection: Any, _record: Any) -> None:
+    """psycopg returns timestamptz values in the session's TimeZone: pin it to UTC so no
+    server or role default can leak into output (defence in depth; the engine formats
+    timestamps in UTC itself)."""
+    autocommit = dbapi_connection.autocommit
+    dbapi_connection.autocommit = True  # a session-level SET, outside any transaction
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("SET TIME ZONE 'UTC'")
+    finally:
+        cursor.close()
+        dbapi_connection.autocommit = autocommit
+
+
 def make_engine(url: str | None = None) -> Engine:
-    return create_engine(url or database_url(), future=True, pool_pre_ping=True)
+    engine = create_engine(url or database_url(), future=True, pool_pre_ping=True)
+    event.listen(engine, "connect", _pin_session_to_utc)
+    return engine
 
 
 def make_session_factory(engine: Engine) -> sessionmaker[Session]:

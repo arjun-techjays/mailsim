@@ -71,6 +71,8 @@ def scratch_database(suffix: str) -> Iterator[str]:
 def db_engine() -> Iterator[Engine]:
     url = recreate_database(TEST_DB)
     run_migrations(url)
+    # Deliberately not make_engine: without its UTC pin, a run with a non-UTC session (e.g.
+    # PGTZ=Asia/Kolkata) exercises the engine's own UTC handling across the suite (issue #6).
     engine = create_engine(url, future=True)
     yield engine
     engine.dispose()
