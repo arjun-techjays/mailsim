@@ -1,4 +1,5 @@
 import threading
+from datetime import UTC
 
 import pytest
 from sqlalchemy import func, select
@@ -35,8 +36,9 @@ def test_append_assigns_gapless_sequences_and_projects(session_factory, scoped_r
         assert (a, b, c, d) == (1, 2, 3, 4)
     with session_factory() as s:
         run = repos.get_run(s, scope, run_id)
-        assert run.status == "READY" and run.virtual_time.minute == 1
-        assert run.start_time.minute == 0 and run.next_seq == 6
+        # timestamptz is read back in the session's TimeZone (issue #6): compare in UTC
+        assert run.status == "READY" and run.virtual_time.astimezone(UTC).minute == 1
+        assert run.start_time.astimezone(UTC).minute == 0 and run.next_seq == 6
         ev = (
             s.execute(
                 select(m.EventRow).where(m.EventRow.run_id == run_id).order_by(m.EventRow.sequence)

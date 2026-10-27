@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
@@ -129,7 +129,8 @@ class Ctx:
     @property
     def now(self) -> datetime:
         assert self.run.virtual_time is not None
-        return self.run.virtual_time
+        # UTC whatever the DB session's TimeZone (psycopg returns timestamptz in that zone)
+        return self.run.virtual_time.astimezone(UTC)
 
     @property
     def config(self) -> dict[str, Any]:
