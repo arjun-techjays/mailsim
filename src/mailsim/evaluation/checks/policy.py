@@ -43,7 +43,9 @@ class PolicyPlugin:
             if missing is not None:
                 return missing
         idx = index(ctx)
-        hits = [o for o in idx.occurrences_in(point.cutoff) if action_matches(check.forbid, o)]
+        # a policy forbids the operation itself: every recorded reply counts, whoever it reached
+        hits = [o for o in idx.occurrences_in(point.cutoff)
+                if action_matches(check.forbid, o, idx=idx, answers_only=False)]  # fmt: skip
         violations: list[dict[str, Any]] = []
         evidence: list[EvidenceRef] = []
         for occ in hits:

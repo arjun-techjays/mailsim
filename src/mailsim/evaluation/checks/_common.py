@@ -146,6 +146,16 @@ class RunIndex:
             e["payload"]["message"]["id"] for e in events
             if e["type"] == "message.sent" and isinstance(e["payload"].get("message"), dict)
         }  # fmt: skip
+        # each message as it was created (From, headers incl. Reply-To), whatever happened to
+        # it later: whom a reply had to reach is fixed when the replied message arrived
+        self.origins: dict[str, dict[str, Any]] = {}
+        self.agent_sent: set[str] = set()  # the agent's own sent mail (its Sent copies)
+        for e in events:
+            msg = e["payload"].get("message")
+            if isinstance(msg, dict) and isinstance(msg.get("id"), str):
+                self.origins.setdefault(msg["id"], msg)
+                if e["type"] == "message.sent" and e["actor"] == AGENT:
+                    self.agent_sent.add(msg["id"])
         for e in events:
             if e["actor"] != AGENT or "message" not in e["payload"]:
                 continue
@@ -186,11 +196,7 @@ class RunIndex:
         for o in self.occurrences_in(cutoff):
             if (o.actor == AGENT and o.outcome == "ok" and o.operation == "reply"
                     and o.input.get("message_id") and o.wrote_events):  # fmt: skip
-                sent = [self.by_seq.get(q) for q in range(o.seq_start, o.seq_end + 1)]
-                rcpts = by_id.setdefault(str(o.input["message_id"]), set())
-                for e in sent:
-                    if e is not None and e["type"] == "message.sent":
-                        rcpts |= _recipients(e["payload"].get("message"))
+                by_id.setdefault(str(o.input["message_id"]), set()).update(self.reply_recipients(o))
         by_header: dict[str, set[str]] = {}
         for e in self.events_in(cutoff):
             msg = e["payload"].get("message")
@@ -198,6 +204,29 @@ class RunIndex:
             if e["type"] == "message.sent" and e["actor"] == AGENT and header:
                 by_header.setdefault(header, set()).update(_recipients(msg))
         return Answered(by_id, by_header)
+
+    def reply_recipients(self, occ: Occurrence) -> set[str]:
+        """Normalised To/Cc/Bcc of the mail an action sent (its own `message.sent` events)."""
+        out: set[str] = set()
+        for q in range(occ.seq_start, occ.seq_end + 1):
+            e = self.by_seq.get(q)
+            if e is not None and e["type"] == "message.sent":
+                out |= _recipients(e["payload"].get("message"))
+        return out
+
+    def answers_nobody(self, occ: Occurrence) -> bool:
+        """A completed `reply` that answered no one, which an answer key's `operation: reply`
+        does not count. Same rule as ANSWERED: the reply's mail must reach the replied
+        message's sender (its From or Reply-To). And that message must not be one the agent
+        made itself: its own sent mail, or mail it inserted, copied, drafted or delivered to
+        itself (a mail to self, then a "reply" to either copy, answers no one). Refused attempts
+        and other operations are judged as recorded (False)."""
+        if occ.operation != "reply" or occ.outcome != "ok":
+            return False
+        orig = self.origins.get(str(occ.input.get("message_id") or ""))
+        if orig is None or orig["id"] in self.agent_created or orig["id"] in self.agent_sent:
+            return True
+        return self.reply_recipients(occ).isdisjoint(_senders(orig))
 
     # ------------------------------------------------------------------ windows
     def events_in(self, cutoff: int) -> list[dict[str, Any]]:
@@ -345,12 +374,18 @@ def subset(expected: Any, actual: Any) -> bool:
     return bool(expected == actual)
 
 
-def action_matches(match: ActionMatch, occ: Occurrence) -> bool:
+def action_matches(
+    match: ActionMatch, occ: Occurrence, *, idx: RunIndex, answers_only: bool = True
+) -> bool:
+    """`match` against one recorded action. With `answers_only` (action and temporal checks)
+    a completed `reply` counts only when it answered someone (RunIndex.answers_nobody); a
+    policy `forbid` passes False, so it sees every reply operation the agent ran."""
     return (
         occ.actor == match.actor
         and occ.operation == match.operation
         and (match.outcome == "any" or occ.outcome == match.outcome)
         and subset(match.input, occ.input)
+        and not (answers_only and idx.answers_nobody(occ))
     )
 
 

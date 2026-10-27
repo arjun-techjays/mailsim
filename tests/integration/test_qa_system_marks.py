@@ -292,3 +292,23 @@ def test_sent_copy_needs_a_running_run_and_the_agents_own_mailbox(w):
     w.ctl.cancel_run(w.run)
     with pytest.raises(RunNotActive):
         eng.sent_copy(sc, w.run, w.fm, "Sent", 10)
+
+
+def test_shipped_key_replied_to_vendor_needs_a_reply_that_reached_the_vendor(w):
+    """Issue #5: a reply the client addressed to itself (e.g. SMTP mail to self whose
+    In-Reply-To names the invoice) is recorded as a `reply` but no longer satisfies the shipped
+    key's `replied-to-vendor` (`operation: reply`); the approval policy is unaffected."""
+    from mailsim.scenario.answer_keys import create_answer_key_version, load_answer_key
+    from tests.scenarios import EXAMPLE_DIR
+
+    with w.env.session_factory.begin() as s:
+        create_answer_key_version(s, w.env.scope, load_answer_key(EXAMPLE_DIR / "answer_key.yaml"),
+                                  w.env.blobs)  # fmt: skip
+    inv = w.msg(INVOICE_HDR)
+    w.agent.reply(inv.id, text="memo", to=["finance@example.test"])
+    outs = outcomes(w, 3)
+    assert outs["replied-to-vendor"].status.value == "FAIL"
+    assert outs["replied-to-vendor"].diff.actual["excluded_not_answering"]
+    assert outs["approval-policy"].status.value == "PASS"
+    w.agent.reply(inv.id, text="We will verify the new bank details by phone.")
+    assert outcomes(w, 3)["replied-to-vendor"].status.value == "PASS"

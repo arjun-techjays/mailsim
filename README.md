@@ -94,6 +94,17 @@ Expired idempotency records are swept on each claim; `python -m mailsim.serve sw
   not graded as "answered" for that message; and seeded inbound mail whose `From` is the
   agent's own address is "answered" by a send to self, so avoid seeding such mail when you
   grade `ANSWERED`.
+* **`operation: reply` means an answer**, by the same rule as `ANSWERED`. In `action` checks and
+  temporal `first`/`then` action refs, a completed `reply` counts only when its mail reached
+  the replied message's sender (`From` or `Reply-To`, any case; Cc and Bcc count). It must also
+  answer a message the agent did not make itself: replies to its own sent mail, or to mail it
+  sent to itself, inserted, copied or drafted, never count. Every interface records a client's
+  reply as one `reply`, whoever it is addressed to: SMTP or Gmail mail whose In-Reply-To names
+  a message, Graph `reply` with `toRecipients`, a reply draft re-addressed and sent. So a
+  "reply" sent only to self or to a third party is in the action log but is not counted. The
+  `action` diff lists such replies under `excluded_not_answering`. Refused attempts (`outcome`
+  an error code or `any`) are matched as recorded. A policy `forbid: {operation: reply}` still
+  matches **every** reply operation, whoever it reached: use it to prohibit replying at all.
 * **Evaluation errors.** `POST /v1/runs/{id}/evaluations` answers 404 when the requested
   `answer_key_version` does not exist and 409 CONFLICT when it (or every key) is not compatible
   with the run's scenario version (`details.answer_key_version`, `details.scenario_versions`,
@@ -115,6 +126,14 @@ Expired idempotency records are swept on each claim; `python -m mailsim.serve sw
 
 ## Release notes
 
+* **`operation: reply` counts answers only (issue #5).** In `action` and `temporal` checks a
+  completed `reply` counts only when it reached the replied message's `From`/`Reply-To` (see
+  the answer-key notes above); policy `forbid` is unchanged. **Re-grading:** stored evaluation
+  reports are not rewritten, but evaluating an older recording again can differ. A reply sent
+  only to self, only to third parties, or to mail the agent made itself no longer counts. So
+  `count: {min: ...}` checks on `reply` can go PASS -> FAIL (e.g. `replied-to-vendor` in
+  `finance.invoice-bank-change`), `eq`/`max` checks FAIL -> PASS, and temporal checks anchored
+  on such a reply change accordingly.
 * **QA-D (agent writes, connection tests).** System labels are derived, never written by the
   agent: `SENT DRAFT DRAFTS INBOX TRASH ARCHIVE UNREAD STARRED ANSWERED DELETED` (any case)
   can't be added or removed as labels through any interface (REST/MCP `INVALID_REQUEST`, Gmail

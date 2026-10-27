@@ -42,7 +42,7 @@ def _hits(ctx: EvaluationContext, ref: EventRef, p: Point) -> list[Hit]:
     else:
         assert ref.action is not None  # enforced by EventRef
         for o in idx.occurrences_in(p.cutoff):
-            if action_matches(ref.action, o):
+            if action_matches(ref.action, o, idx=idx):
                 # an action that wrote no events sits just after event seq_start - 1; several
                 # such actions in a row keep their recorded order (action ids are monotonic)
                 order = int(o.id) if str(o.id).isdigit() else 0
