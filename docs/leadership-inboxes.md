@@ -58,7 +58,8 @@ git status --porcelain scenarios/leadership      # empty unless the generator it
 All three commands use the committed key by default (`--id-key` to point elsewhere; any other
 key is refused). When only the generator changed, steps 2-5 are enough: keep `corpus.jsonl`
 and `registry.json` and do not re-import. If you do not have them, step 1 rebuilds both from
-the public dataset.
+the public dataset, but see the known issue below: a from-scratch import does not yet
+reproduce the committed pack exactly.
 
 Generator options:
 
@@ -81,8 +82,14 @@ the command above.
 
 `var/enron/corpus.jsonl` (templates and metadata) and `var/enron/registry.json` (the real names
 found by the import) stay in the git-ignored `var/`. **Never commit them**, `registry.json` in
-particular: it lists real names. Neither needs a backup: `sim import enron` rebuilds both from
-the public dataset and the committed key.
+particular: it lists real names. `sim import enron` rebuilds both from the public dataset and
+the committed key, so neither holds anything that cannot be recreated.
+
+**Known issue ([#19](https://github.com/arjun-techjays/mailism/issues/19)):** the committed pack
+was generated from a corpus made by an earlier importer revision. A from-scratch import today
+gives a slightly different corpus, and regenerating from it changes one pseudonym in
+`ceo/fixtures/025-i-must-agree-with-mila.eml`, so step 5 is not empty on a fresh checkout until
+#19 is fixed. The registry comes back identical.
 
 ## Identifier key
 
