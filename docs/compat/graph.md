@@ -247,7 +247,7 @@ Body: `{"error": {"code", "message", "innerError": {"request-id", "client-reques
 | `CONFLICT` | 409 | `ErrorIrresolvableConflict` |
 | `RUN_NOT_ACTIVE` | 412 | `ErrorPreconditionFailed` ("mailbox is not available") |
 | `RATE_LIMITED` | 429 (+ `Retry-After: 1`) | `ErrorTooManyRequests` |
-| `SIMULATION_LIMIT_EXCEEDED` | 429 | `ErrorQuotaExceeded` ("action limit reached") |
+| `SIMULATION_LIMIT_EXCEEDED` (the action budget and the per-run caps, see the README) | 429 | `ErrorQuotaExceeded` ("action limit reached") |
 | `UNSUPPORTED_OPERATION` (incl. any path outside the profile) | 501 | `ErrorNotSupported` |
 | `UPSTREAM_UNAVAILABLE` | 503 | `ErrorServiceUnavailable` |
 | stale delta token | 410 | `SyncStateNotFound` |

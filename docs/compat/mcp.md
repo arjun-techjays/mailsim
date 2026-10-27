@@ -133,7 +133,7 @@ correct course. Protocol errors are not used for them:
 `code` is one of the spec 7.4 codes (`INVALID_REQUEST`, `NOT_FOUND`, `PERMISSION_DENIED`,
 `UNSUPPORTED_OPERATION`, `CONFLICT`, `RATE_LIMITED`, `SIMULATION_LIMIT_EXCEEDED`,
 `RUN_NOT_ACTIVE`, `EXTERNAL_DELIVERY_BLOCKED`, `UPSTREAM_UNAVAILABLE`), plus the ones below.
-Engine budget and run-state errors read neutrally to agents (`api/agent_errors.py`, the same on every interface): `SIMULATION_LIMIT_EXCEEDED` is shown as `QUOTA_EXCEEDED` with the message "action limit reached" and no details; `RUN_NOT_ACTIVE` keeps its code with the message "mailbox is not available". Operators (controller/evaluator routes, actions, events) keep the engine codes and messages. For an agent session the budget error is therefore `QUOTA_EXCEEDED`.
+Engine budget and run-state errors read neutrally to agents (`api/agent_errors.py`, the same on every interface): `SIMULATION_LIMIT_EXCEEDED` is shown as `QUOTA_EXCEEDED` with the message "action limit reached" and no details; `RUN_NOT_ACTIVE` keeps its code with the message "mailbox is not available". Operators (controller/evaluator routes, actions, events) keep the engine codes and messages. For an agent session the budget error is therefore `QUOTA_EXCEEDED`, as is a reached per-run cap (reads, agent events, labels per message; see the README).
 
 
 - `UNAUTHENTICATED`: the key stopped being valid mid-session.

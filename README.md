@@ -418,6 +418,33 @@ Re-grading a run recorded before this change can give a different result:
 * Reset is allowed only from READY/RUNNING. Only agent WRITES consume the action budget
   (`max_agent_actions`), whether they succeed or fail; reads and polling (list, get, search,
   threads, change feed) are free but still recorded as actions for efficiency metrics.
+* Per-run resource caps (spec 10), optional in the scenario's `evaluation.limits`, bound what
+  the budget does not: `max_agent_reads` (agent `read`/`search` commands, failed ones included;
+  default 10000), `max_sent_copies` (IMAP copies filed into Sent; default 1000),
+  `max_agent_events` (events attributed to the agent since the last reset; default 20000) and
+  `max_labels_per_message` (labels/keywords/categories the agent leaves on one message; default
+  50; removing is always allowed). Unset caps use the defaults and are not written into the
+  scenario's canonical form, so existing versions keep their spec hash. A reached cap is the
+  same quota error as the budget on every interface (agents see `QUOTA_EXCEEDED` / "action
+  limit reached"), recorded as a `SIMULATION_LIMIT_EXCEEDED` action whose `details.cap` names
+  the cap; `invariant: no_limit_exceeded` fails on any of them and takes an optional
+  `limit: <cap name>` to check one. Reads count engine reads, not client requests: an IMAP
+  command polls the change feed (one read) and a body FETCH reads each message. Reads an
+  interface makes to answer a write that request already committed (Gmail returning the sent
+  message, a REST/Graph PATCH returning the message, an IMAP re-sync after STORE) are recorded
+  but neither counted nor refused, so a committed write never answers "quota exceeded"; reads
+  before the write, and requests that write nothing, count as usual. The event cap is checked
+  before a command, so the command that reaches it completes and may exceed it by its own
+  events (a send: its copies and deliveries; an expunge or bulk delete: one per message). A
+  label-cap refusal is a failed write and costs budget; a new message (Gmail insert/import,
+  IMAP APPEND) with more labels than the cap is refused before it is stored. Each item of a
+  Gmail batch or thread operation counts its own reads (one item's write exempts nothing for
+  the next). The mailbox check at IMAP LOGIN / SMTP AUTH is not an agent read: an agent at its
+  read cap can still connect and send. Refusals still write an audit row each.
+* **Gmail insert/import and IMAP APPEND are one write.** A message's initial flags and labels
+  (`labelIds`, APPEND flags/keywords) are applied in the same `insert`: stored with all of them
+  or not at all, and one budget unit where it used to be up to three (`insert`, `flag`,
+  `label`). `after_agent_action` triggers on `flag` / `label` still fire for such an insert.
 * The audit action log records recipients, counts and sizes but not subjects, bcc or bodies.
 * `actor` is a trusted-caller argument; Phase 2/3 must expose agent-facing facades that hard-code it.
 

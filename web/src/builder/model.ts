@@ -91,10 +91,21 @@ export interface ScenarioForm {
   personaReplies: boolean;
   maxActions: string;
   maxDuration: string;
+  /** Optional per-run resource caps; a missing or blank entry means the server default. */
+  caps?: Partial<Record<CapKey, string>>;
   /** Parts of the document the form does not edit (kept verbatim; editable in YAML). */
   relationships: unknown[];
   projects: unknown[];
 }
+
+/** Optional per-run resource caps (scenario `evaluation.limits`); unset = server default. */
+export const RUN_CAPS = [
+  { key: 'max_agent_reads', label: 'Maximum agent reads', fallback: 10000, help: 'Reads and searches by the agent (each message fetched or listing page counts).' },
+  { key: 'max_sent_copies', label: 'Maximum sent copies', fallback: 1000, help: 'Copies of sent mail an email client files into Sent over IMAP.' },
+  { key: 'max_agent_events', label: 'Maximum agent events', fallback: 20000, help: 'Changes the agent causes in the run, counted since the last reset.' },
+  { key: 'max_labels_per_message', label: 'Maximum labels per message', fallback: 50, help: 'Labels, keywords or categories the agent can leave on one message.' },
+] as const;
+export type CapKey = (typeof RUN_CAPS)[number]['key'];
 
 let counter = 0;
 // Per page load, so ids from a draft restored from sessionStorage never collide with new ones.
@@ -205,6 +216,7 @@ export function blankForm(now: Date = new Date()): ScenarioForm {
     personaReplies: true,
     maxActions: '100',
     maxDuration: '86400',
+    caps: {},
     relationships: [],
     projects: [],
   };
@@ -326,7 +338,12 @@ export function toDocument(f: ScenarioForm): Json {
     allowed_operations: [...f.allowed],
     prohibited_operations: [...f.prohibited],
   };
-  scenario.evaluation = { limits: { max_agent_actions: num(f.maxActions), max_virtual_duration_seconds: num(f.maxDuration) } };
+  const limits: Json = { max_agent_actions: num(f.maxActions), max_virtual_duration_seconds: num(f.maxDuration) };
+  for (const cap of RUN_CAPS) {
+    const value = f.caps?.[cap.key] ?? '';
+    if (value.trim() !== '') limits[cap.key] = num(value);
+  }
+  scenario.evaluation = { limits };
   return { schema_version: usesV11(f) ? SCHEMA_VERSION : f.schemaVersion, scenario };
 }
 
@@ -444,6 +461,7 @@ export function fromDocument(doc: unknown): Imported {
     personaReplies: delivery.persona_replies !== 'disabled',
     maxActions: str(limits.max_agent_actions) || '100',
     maxDuration: str(limits.max_virtual_duration_seconds) || '86400',
+    caps: Object.fromEntries(RUN_CAPS.filter((cap) => str(limits[cap.key]) !== '').map((cap) => [cap.key, str(limits[cap.key])])),
     relationships: mapRelations(arr(s.relationships), ['source', 'target'], null, ref),
     projects: mapRelations(arr(s.projects), [], 'participants', ref),
   };
@@ -552,7 +570,7 @@ const KNOWN: Shape = {
       },
     ],
     agent: { mailbox: true, allowed_operations: true, prohibited_operations: true },
-    evaluation: { assertions: true, limits: { max_agent_actions: true, max_virtual_duration_seconds: true } },
+    evaluation: { assertions: true, limits: { max_agent_actions: true, max_virtual_duration_seconds: true, ...Object.fromEntries(RUN_CAPS.map((cap) => [cap.key, true])) } },
   },
 };
 

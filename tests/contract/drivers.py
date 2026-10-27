@@ -1005,6 +1005,60 @@ class ImapSmtpDriver(NeutralDriver):
 DRIVERS.append(ImapSmtpDriver)
 
 
+# ---- issue #7: per-run resource caps (quota refusals as each interface shows them) ---------
+_QUOTA = "QUOTA_EXCEEDED"  # api.agent_errors: how an agent sees SIMULATION_LIMIT_EXCEEDED
+
+
+def quota_refusal(exc: BaseException) -> str | None:
+    """Which interface's native quota refusal `exc` is (None if it is not one): neutral
+    SIMULATION_LIMIT_EXCEEDED; REST 429 QUOTA_EXCEEDED; Gmail 429 RESOURCE_EXHAUSTED with an
+    ErrorInfo reason QUOTA_EXCEEDED; Graph 429 ErrorQuotaExceeded; MCP tool error
+    QUOTA_EXCEEDED; IMAP `NO [LIMIT] QUOTA_EXCEEDED`; SMTP `452 4.5.3 quota exceeded`."""
+    import smtplib
+
+    if isinstance(exc, SimError):
+        return "neutral" if exc.code == ErrorCode.SIMULATION_LIMIT_EXCEEDED else None
+    if isinstance(exc, GmailApiError):
+        ok = exc.status == 429 and exc.body["error"]["status"] == "RESOURCE_EXHAUSTED"
+        return "gmail" if ok and exc.code == _QUOTA else None
+    if isinstance(exc, RestError) and exc.status == 429:
+        return {_QUOTA: "rest", "ErrorQuotaExceeded": "graph"}.get(exc.code)
+    if isinstance(exc, McpToolError):
+        return "mcp" if exc.code == _QUOTA else None
+    if isinstance(exc, ImapSmtpError | smtplib.SMTPException):
+        text = str(exc)
+        if "[LIMIT]" in text and _QUOTA in text:
+            return "imap"
+        return "smtp" if "4.5.3 quota exceeded" in text else None
+    return None
+
+
+def agent_error_text(exc: BaseException) -> str:
+    """Everything the agent was told about a refusal through its interface."""
+    import json
+
+    if isinstance(exc, GmailApiError | RestError):
+        return json.dumps(exc.body)
+    if isinstance(exc, McpToolError):
+        return json.dumps(exc.error)
+    return str(exc)
+
+
+def imap_append_sent(driver: ImapSmtpDriver, raw: bytes) -> None:
+    """IMAP APPEND to Sent: a client filing its copy of a message it sent over SMTP (the
+    engine records it as `sent_copy`)."""
+    import imaplib
+
+    with driver._imap() as c:
+        try:
+            driver._ok(c.append("Sent", None, None, raw))
+        except imaplib.IMAP4.error as exc:
+            raise ImapSmtpError(_code_in(str(exc)), str(exc)) from None
+
+
+__all__ += ["agent_error_text", "imap_append_sent", "quota_refusal"]
+
+
 # ---- Issue #5: replies whose recipients the client chooses -----------------------------------
 # Grading counts `operation: reply` only when the reply reached the replied message's sender
 # (From / Reply-To), so the contract needs replies addressed to anyone (e.g. to self). Kept as

@@ -221,6 +221,12 @@ describe('builder sections', () => {
     expect(await s.findByText('Input should be greater than 0', {}, SLOW)).toBeInTheDocument();
     await user.clear(s.getByLabelText(/Maximum virtual duration/));
     await user.type(s.getByLabelText(/Maximum virtual duration/), '60');
+    const reads = s.getByLabelText(/Maximum agent reads/);
+    expect(reads).toHaveValue(null);
+    expect(reads).toHaveAttribute('placeholder', '10000');
+    await user.type(reads, '25');
+    expect(s.getByLabelText(/Maximum agent reads/)).toHaveValue(25);
+    expect(s.getByLabelText(/Maximum labels per message/)).toHaveAttribute('placeholder', '50');
     await user.clear(s.getByLabelText(/Clock start/));
     await user.type(s.getByLabelText(/Clock start/), '2026-01-01T00:00');
     await waitFor(() => expect(s.getByLabelText(/Clock start/)).toHaveValue('2026-01-01T00:00'));
