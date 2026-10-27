@@ -355,6 +355,10 @@ against the CEO pack and checks that the results agree.
   * agreement negotiation by or with the executive assistant or a board member;
   * clerical requests to an executive ("please print in color"), finance and trading work for
     the head of people, and the CEO thanking a subordinate for an opportunity;
+  * company-secretarial paperwork (incumbency, secretary's or officer's certificates, good
+    standing, specimen signatures, minute book, articles of incorporation, banking
+    resolutions) written by the CEO, CFO, CBO or COO: that is counsel's or the company
+    secretary's work (`curation.CORPORATE_SECRETARIAL`);
   * internal mail forwarded to an outsider.
   After rendering, a message is also skipped when a person pseudonym sits where a place, desk
   or asset belongs ("Long Term X", "Port X", "Street, X Y, CA") or when the body opens by
@@ -401,8 +405,14 @@ against the CEO pack and checks that the results agree.
   checks that claims and files agree both ways. The kind comes from the file's own name or the
   sentence that announces it before the rest of the mail: credit watch list, presentation,
   invoice, draft agreement (clauses and signature blocks), schedule, management report,
-  contact list, spreadsheet (`.xlsx`; a list of people when the mail is about rotations or
-  staff) or memo. Titles come from a clean stub name, the noun phrase the claim names
+  contact list, spreadsheet (`.xlsx`) or memo. Spreadsheets follow their title: a **credit
+  worksheet** is about the counterparty the mail names ("for Dunmore", else a seeded
+  fictional firm) and carries its rating, two or three years of financials in USD millions
+  with ratios computed from them, proposed terms per master agreement the mail mentions
+  (ISDA, EEI, NAESB), a collateral threshold matrix when the mail mentions one, and a
+  recommendation that follows the rating; a **threshold table** lists both parties' collateral
+  thresholds by rating for the same counterparty; a list of people when the mail is about
+  rotations or staff; otherwise a list of trades. Titles come from a clean stub name, the noun phrase the claim names
   ("attached is the revised Precedent Agreement" -> "Precedent Agreement"), a title-like
   original subject or the kind's generic title, never a sentence fragment. Documents carry
   the sender's organisation (letterhead, footer, PDF producer): only company staff send

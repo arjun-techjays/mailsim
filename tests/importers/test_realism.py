@@ -613,3 +613,111 @@ def test_curation_edge_branches():
     assert C.derive_subject("Hi,\n\nOK.\n\nThe plan (draft is ready for the board") == (
         "The plan draft is ready"
     )
+
+
+# -- issue #12: credit worksheets and threshold tables that fit the mail -------------------
+
+
+def _credit_ctx(subject: str, body: str, key: str = "k") -> DOC.Context:
+    return DOC.Context(7, key, subject, body, "Fiona Reyes", "Credit Analyst", "Rohan Desai",
+                       datetime(2026, 10, 7, 9, tzinfo=UTC))  # fmt: skip
+
+
+def _cells(rows) -> dict[str, list]:
+    return {str(r[0]): list(r[1:]) for r in rows if r}
+
+
+def test_credit_worksheet_follows_the_mail():
+    ctx = _credit_ctx("A revised credit worksheet for Dunmore", "Please find attached a revised "
+                      "credit worksheet for Dunmore with the collateral threshold matrix.")  # fmt: skip
+    doc = DOC.build("spreadsheet", ctx, filename_title="Credit Worksheet")
+    text = xlsx_text(doc.data)
+    assert doc.filename == "Credit-Worksheet.xlsx" and "Dunmore" in text
+    assert "Debt / EBITDA (x)" in text and "Collateral threshold matrix" in text
+    assert "Item" not in text.split()  # not the generic trade list
+    assert Scanner().scan_text(extract_text(doc.data, doc.filename)) == []
+    assert DOC.build("spreadsheet", ctx, filename_title="Credit Worksheet").data == doc.data
+    rows = DOC._credit_worksheet(ctx, "Credit Worksheet")
+    cells = _cells(rows)
+    debt, ebitda, interest = cells["Total debt"], cells["EBITDA"], cells["Interest expense"]
+    assert cells["Debt / EBITDA (x)"] == [
+        round(d / e, 2) for d, e in zip(debt, ebitda, strict=True)
+    ]
+    assert cells["EBITDA / interest (x)"] == [
+        round(e / i, 1) for e, i in zip(ebitda, interest, strict=True)
+    ]
+    years = cells["Financial summary (USD mm)"]
+    assert years[0] == "FY2025" and len(years) in (2, 3) and len(debt) == len(years)
+    matrix = rows[[r[:1] for r in rows].index(["Collateral threshold matrix"]) + 1 :]
+    thresholds = [r[1] for r in matrix if r and r[0] in DOC._RATINGS]
+    assert thresholds == sorted(thresholds, reverse=True) and thresholds[-1] == 0.0
+
+
+def test_credit_worksheets_name_each_agreement_and_differ_by_counterparty():
+    body = "Attached please find the credit worksheets for an ISDA and EEI Master Power Purchase."
+    rows = DOC._credit_worksheet(_credit_ctx("The credit worksheets for an ISDA", body), "CW")
+    terms = [r[0] for r in rows if r and str(r[0]).startswith("Proposed terms")]
+    assert terms == ["Proposed terms: ISDA Master Agreement",
+                     "Proposed terms: EEI Master Power Purchase and Sale Agreement"]  # fmt: skip
+    assert "Cross-default threshold (USD mm)" in _cells(rows)  # ISDA only
+    assert "Collateral threshold matrix" not in _cells(rows)  # the mail mentions no matrix
+    party = _cells(rows)["Counterparty"][0]
+    assert party not in ("ISDA", "EEI") and party.split()[0] in N.FAKE_ORG_NAMES
+    shapes, values, recommendations, supports = set(), set(), set(), set()
+    for i in range(80):
+        ctx = _credit_ctx(f"Credit worksheet {i}", "Please review the attached credit worksheet.",
+                          key=f"k{i}")  # fmt: skip
+        out = DOC._credit_worksheet(ctx, "Credit Worksheet")
+        cells = _cells(out)
+        shapes.add(tuple(str(r[0]) for r in out if r))
+        values.add(cells["Revenue"][0])
+        recommendations.add(cells["Recommendation"][0].split(":")[0].split(" ")[0])
+        supports.add(cells["Credit support"][0])
+        limit = cells["Unsecured credit limit (USD mm)"][0]
+        assert (limit == 0.0) == cells["Recommendation"][0].startswith("Decline")
+    assert len(shapes) >= 4 and len(values) >= 60  # rows and figures vary with the counterparty
+    assert recommendations == {"Approve", "Decline"} and len(supports) == 3
+
+
+def test_threshold_table_falls_with_the_rating():
+    one_way = two_way = False
+    for i in range(12):
+        ctx = _credit_ctx(f"Threshold table {i}", "Rohan - Credit Worksheet and Threshold table.",
+                          key=f"t{i}")  # fmt: skip
+        rows = DOC._threshold_table(ctx, "Threshold Table")
+        ladder = [r for r in rows if r and r[0] in DOC._RATINGS]
+        a = [r[1] for r in ladder]
+        b = [r[2] for r in ladder]
+        assert a == sorted(a, reverse=True) and a[0] > 0 and b == sorted(b, reverse=True)
+        assert _cells(rows)["Below BBB- / Baa3 or unrated"][:2] == [0.0, 0.0]
+        assert _cells(rows)["Party A"] == [N.COMPANY_LONG]
+        independent = _cells(rows)["Independent amount (USD mm)"][0]
+        one_way |= set(b) == {0.0} and independent > 0
+        two_way |= b[0] > 0 and independent == 0.0
+    assert one_way and two_way
+    doc = DOC.build("spreadsheet", ctx, filename_title="Threshold Table")
+    assert doc.filename == "Threshold-Table.xlsx"
+    assert Scanner().scan_text(extract_text(doc.data, doc.filename)) == []
+    # both files of one mail are about the same counterparty
+    worksheet = _cells(DOC._credit_worksheet(ctx, "Credit Worksheet"))["Counterparty"]
+    assert _cells(rows)["Party B"] == worksheet
+
+
+def test_other_spreadsheets_keep_their_layout():
+    ctx = _credit_ctx("The revised model", "Attached is the revised model.")
+    text = xlsx_text(DOC.build("spreadsheet", ctx, filename_title="Model").data)
+    assert "Counterparty" in text and "Volume" in text and "Debt / EBITDA" not in text
+
+
+def test_company_secretarial_work_is_not_done_by_executives():
+    text = "We may want to circulate the CNA Incumbency Certificate for the escrow."
+    for exec_id in ("ceo", "cfo", "cbo", "coo"):
+        assert C.role_reason("exec", text, sender_id=exec_id) == "secretarial-work-by-executive"
+    assert C.role_reason("exec", text, "lawyer", sender_id="general_counsel") is None
+    for form in ("the secretary's certificate", "specimen signatures", "the minute book",
+                 "articles of incorporation", "the banking resolution"):  # fmt: skip
+        assert C.CORPORATE_SECRETARIAL.search(f"Please send {form}.")
+    # a resolution of an issue, or a board resolution in general, is not secretarial paperwork
+    assert (
+        C.role_reason("exec", "We need a resolution of the pricing issue.", sender_id="ceo") is None
+    )

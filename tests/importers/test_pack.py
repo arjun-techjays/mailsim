@@ -5,6 +5,7 @@ that grade generated data (published, run, evaluated)."""
 from __future__ import annotations
 
 import email
+import email.utils
 import json
 import re
 from email import policy
@@ -13,6 +14,7 @@ import pytest
 
 from mailsim.engine.facades import AgentMailbox, Controller, EvaluatorView
 from mailsim.evaluation.engine import evaluate_run
+from mailsim.importers import curation as C
 from mailsim.importers import enron, leadership
 from mailsim.importers import names as N
 from mailsim.importers.pii import Scanner
@@ -291,3 +293,32 @@ def test_pack_weekday_dates_are_not_in_the_past_unless_said_so(slug):
             assert _WEEKDAYS[when.weekday()] == hit.group(1), hit.group(0)  # weekdays stay right
             context = own[max(0, hit.start() - 30) : hit.end() + 20]
             assert when >= sent or past.search(context), (m["Subject"], hit.group(0))
+
+
+EXECUTIVE_EMAILS = {leadership.BY_ID[p].email for p in C.SECRETARIAL_OFF_LIMITS}
+
+
+@pytest.mark.parametrize("slug", sorted(ROLES))
+def test_pack_executives_do_no_company_secretarial_work(slug):
+    # issue #12: incumbency certificates and the like come from counsel, never the CEO
+    _, msgs = _fixtures(slug)
+    for m in msgs:
+        if email.utils.parseaddr(str(m["From"]))[1] in EXECUTIVE_EMAILS:
+            text = str(m["Subject"]) + "\n" + m.get_body(("plain",)).get_content()
+            assert not C.CORPORATE_SECRETARIAL.search(text), m["Subject"]
+
+
+def test_pack_credit_worksheets_are_specific():
+    # issue #12: each credit worksheet is about its counterparty, not a generic trade list
+    from mailsim.importers.attachments import xlsx_text
+
+    sheets = []
+    for slug in ROLES:
+        for m in _fixtures(slug)[1]:
+            for att in m.iter_attachments():
+                name = att.get_filename() or ""
+                if re.search(r"(?i)credit-worksheet", name):
+                    text = xlsx_text(att.get_payload(decode=True))
+                    assert "Counterparty" in text and "Debt / EBITDA (x)" in text, name
+                    sheets.append(text)
+    assert len(sheets) >= 3 and len(set(sheets)) == len(sheets)

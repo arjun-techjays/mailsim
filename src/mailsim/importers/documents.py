@@ -690,7 +690,170 @@ _PEOPLE_SHEET = re.compile(r"\b(?:rotations?|participants?|staff|people|employee
                            r"attendees|headcount|team members)\b", re.I)  # fmt: skip
 
 
+_CREDIT_SHEET = re.compile(r"\bcredit (?:work)?sheets?\b|\bcredit (?:review|approval|analysis)\b",
+                           re.I)  # fmt: skip
+_THRESHOLD_SHEET = re.compile(r"\bthreshold (?:table|matrix|schedule)\b|\bcollateral matrix\b",
+                              re.I)  # fmt: skip
+_MATRIX = re.compile(r"\bmatrix\b|\bthresholds?\b", re.I)
+# "a revised credit worksheet for Dunmore": the counterparty the worksheet is about
+_WORKSHEET_FOR = re.compile(
+    r"(?i:credit work ?sheets?) for (?:the )?([A-Z][\w&'.-]*(?: [A-Z][\w&'.-]*){0,2})"
+)
+_AGREEMENTS = (
+    ("ISDA", re.compile(r"\bisda\b", re.I), "ISDA Master Agreement"),
+    ("EEI", re.compile(r"\beei\b|master power purchase", re.I),
+     "EEI Master Power Purchase and Sale Agreement"),
+    ("NAESB", re.compile(r"\bnaesb\b|\bgisb\b|base contract", re.I),
+     "NAESB Base Contract (natural gas)"),
+)  # fmt: skip
+_AGREEMENT_WORDS = frozenset({"ISDA", "EEI", "NAESB", "GISB", "Annex", "Master", "Corvane"})
+# the two agencies' ladders side by side, best first (no agency names: the scanner treats them
+# as real organisations)
+_RATINGS = ("A / A2", "A- / A3", "BBB+ / Baa1", "BBB / Baa2", "BBB- / Baa3", "BB+ / Ba1",
+            "BB / Ba2", "BB- / Ba3")  # fmt: skip
+_INVESTMENT_GRADE = 5  # the first five ratings
+
+
+def _credit_party(ctx: Context) -> str:
+    """The counterparty a credit document is about: named in the mail ("for Dunmore"), else a
+    fictional firm seeded by the message (so every credit file of one mail agrees)."""
+    m = _WORKSHEET_FOR.search(ctx.subject + "\n" + ctx.body)
+    if m and m.group(1).split()[0] not in _AGREEMENT_WORDS:
+        return m.group(1)
+    return _org(ctx.seed, f"credit:{ctx.subject}:{ctx.when.isoformat()}", 0)
+
+
+def _agreements(ctx: Context) -> list[tuple[str, str]]:
+    """(short, full) names of the master agreements the mail mentions, else a seeded one."""
+    text = ctx.subject + "\n" + ctx.body
+    found = [(short, full) for short, rx, full in _AGREEMENTS if rx.search(text)]
+    if found:
+        return found
+    short, _rx, full = _AGREEMENTS[stable_hash(ctx.seed, ctx.key, "agreement") % len(_AGREEMENTS)]
+    return [(short, full)]
+
+
+def _credit_worksheet(ctx: Context, title: str) -> list[list[str | float | int]]:
+    """A counterparty credit worksheet: ratings, two or three years of financials (USD mm) with
+    the ratios computed from them, proposed terms per master agreement, an optional collateral
+    threshold matrix and a recommendation that follows the rating. Size, leverage, coverage and
+    rating are seeded per counterparty, so worksheets differ in shape and values."""
+    party = _credit_party(ctx)
+
+    def h(*p: object) -> int:
+        return stable_hash(ctx.seed, "credit", party, *p)
+
+    scale = (0.25, 1.0, 3.5, 11.0)[h("size") % 4]
+    revenue = (400 + h("rev") % 2000) * scale
+    margin = (6 + h("margin") % 17) / 100
+    leverage = (10 + h("lev") % 46) / 10  # debt / EBITDA, 1.0x - 5.5x
+    coverage = (25 + h("cov") % 96) / 10  # EBITDA / interest, 2.5x - 12.0x
+    years = 2 + h("years") % 2
+    fy = ctx.when.year - 1
+    rows: list[list[str | float | int]] = [
+        [title], [f"Prepared by {ctx.sender_name}", ctx.when.strftime("%Y-%m-%d")], [],
+        ["Counterparty", party],
+    ]  # fmt: skip
+    if h("guarantor") % 2:
+        rows.append(["Guarantor", f"{party.split()[0]} Holdings Inc."])
+    notch = min(len(_RATINGS) - 1, int(leverage) - 1 + (2 if coverage < 4 else 0)
+                + h("notch") % 2)  # fmt: skip
+    outlook = ("Stable", "Stable", "Negative", "Positive")[h("outlook") % 4]
+    rows += [["Senior unsecured rating", _RATINGS[notch]], ["Outlook", outlook], []]
+    rows.append(["Financial summary (USD mm)", *(f"FY{fy - y}" for y in range(years))])
+    figures: dict[str, list[float]] = {
+        k: [] for k in ("rev", "ebitda", "int", "debt", "tnw", "cash")
+    }
+    for y in range(years):
+        f = 1.0  # earlier years: undo a seeded -5% .. +12% growth per year
+        for back in range(y):
+            f /= (95 + h("growth", back) % 18) / 100
+        rev = revenue * f
+        ebitda = rev * margin * (96 + h("m", y) % 9) / 100  # the ratios move a little by year
+        figures["rev"].append(round(rev, 1))
+        figures["ebitda"].append(round(ebitda, 1))
+        figures["int"].append(round(ebitda / (coverage * (92 + h("c", y) % 17) / 100), 1))
+        figures["debt"].append(round(ebitda * leverage * (90 + h("l", y) % 21) / 100, 1))
+        figures["tnw"].append(round(rev * (15 + h("tnw") % 46) / 100, 1))
+        figures["cash"].append(round(rev * (3 + h("cash") % 10) / 100, 1))
+    labels = {"rev": "Revenue", "ebitda": "EBITDA", "int": "Interest expense",
+              "debt": "Total debt", "tnw": "Tangible net worth", "cash": "Cash"}  # fmt: skip
+    rows += [[labels[k], *v] for k, v in figures.items()]
+    rows += [[], ["Ratios", *(f"FY{fy - y}" for y in range(years))]]
+    rows.append(["Debt / EBITDA (x)", *(round(d / e, 2) for d, e in
+                                         zip(figures["debt"], figures["ebitda"], strict=True))])  # fmt: skip
+    rows.append(["EBITDA / interest (x)", *(round(e / i, 1) for e, i in
+                                             zip(figures["ebitda"], figures["int"], strict=True))])  # fmt: skip
+    rows.append(["Debt / capital (%)", *(round(100 * d / (d + t), 1) for d, t in
+                                          zip(figures["debt"], figures["tnw"], strict=True))])  # fmt: skip
+    tnw = figures["tnw"][0]
+    limit = round(tnw * (12 - notch) / 100, 1)
+    for short, full in _agreements(ctx):
+        k = (short,)
+        rows += [[], [f"Proposed terms: {full}"]]
+        rows.append(
+            ["Unsecured credit limit (USD mm)", limit if notch < _INVESTMENT_GRADE else 0.0]
+        )
+        rows.append(["Collateral threshold (USD mm)",
+                     round(limit * (40 + h("thr", *k) % 41) / 100, 1)
+                     if notch < _INVESTMENT_GRADE else 0.0])  # fmt: skip
+        rows.append(["Minimum transfer amount (USD mm)", (0.25, 0.5, 1.0)[h("mta", *k) % 3]])
+        if short == "ISDA":
+            rows.append(["Cross-default threshold (USD mm)", round(tnw * 0.03, 1)])
+        rows.append(["Maximum tenor (months)", (60, 36, 24, 18, 12, 12, 6, 3)[notch]])
+        support = ("None" if notch < 3 else "Parent guaranty" if notch < _INVESTMENT_GRADE
+                   else "Letter of credit or prepayment")  # fmt: skip
+        rows.append(["Credit support", support])
+    if _MATRIX.search(ctx.body):
+        rows += [[], ["Collateral threshold matrix", "Threshold (USD mm)"]]
+        top = max(limit, 5.0)
+        rows += [[r, round(top * (len(_RATINGS) - 3 - i) / (len(_RATINGS) - 3), 1) if i < 5
+                  else 0.0] for i, r in enumerate(_RATINGS)]  # fmt: skip
+    recommendation = (
+        "Approve" if notch < 3
+        else "Approve with conditions: parent guaranty before the first trade" if notch < 5
+        else "Decline unsecured credit; trade against a letter of credit or prepayment"
+    )  # fmt: skip
+    rows += [[], ["Recommendation", recommendation]]
+    return rows
+
+
+def _threshold_table(ctx: Context, title: str) -> list[list[str | float | int]]:
+    """Collateral thresholds by rating for both parties of a master agreement: thresholds fall
+    with the rating and are zero below investment grade."""
+    party = _credit_party(ctx)
+
+    def h(*p: object) -> int:
+        return stable_hash(ctx.seed, "threshold", party, *p)
+
+    _short, full = _agreements(ctx)[0]
+    top_a = float(25 + 5 * (h("a") % 11))
+    ratio_b = (40 + h("b") % 61) / 100
+    two_way = h("way") % 3 != 0
+    rows: list[list[str | float | int]] = [
+        [title], [f"Prepared by {ctx.sender_name}", ctx.when.strftime("%Y-%m-%d")], [],
+        ["Agreement", full], ["Party A", N.COMPANY_LONG], ["Party B", party], [],
+        ["Rating (lower of the two agencies)", "Party A threshold (USD mm)", "Party B threshold (USD mm)",
+         "Minimum transfer amount (USD mm)"],
+    ]  # fmt: skip
+    steps = (1.0, 0.8, 0.6, 0.4, 0.2)
+    mta = (0.25, 0.5, 1.0)[h("mta") % 3]
+    for i, rating in enumerate(_RATINGS[:_INVESTMENT_GRADE]):
+        a = round(top_a * steps[i], 1)
+        b = round(top_a * ratio_b * steps[i], 1) if two_way else 0.0
+        rows.append([rating, a, b, mta])
+    rows.append(["Below BBB- / Baa3 or unrated", 0.0, 0.0, mta])
+    rows += [[], ["Independent amount (USD mm)", 0.0 if two_way else round(top_a * 0.1, 1)],
+             ["Notes", "Thresholds drop to zero on an event of default or a downgrade below "
+                       "investment grade; ratings are the lower of the two agencies."]]  # fmt: skip
+    return rows
+
+
 def _spreadsheet(ctx: Context, title: str) -> bytes:
+    if _THRESHOLD_SHEET.search(title):
+        return xlsx_bytes(_threshold_table(ctx, title), sheet=title[:31] or "Sheet1")
+    if _CREDIT_SHEET.search(title):
+        return xlsx_bytes(_credit_worksheet(ctx, title), sheet=title[:31] or "Sheet1")
     rows: list[list[str | float | int]] = [[title], [f"Prepared by {ctx.sender_name}",
                                                      ctx.when.strftime("%Y-%m-%d")], []]  # fmt: skip
     if _PEOPLE_SHEET.search(title + " " + ctx.body):  # a list of people, not of trades
