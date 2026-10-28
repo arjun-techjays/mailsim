@@ -38,6 +38,7 @@ from mailsim.domain.models import (
     AttachmentRef,
     CanonicalMessage,
     draft_flag_error,
+    is_self_addressed,
     normalize_address,
     refuse_system_labels,
 )
@@ -1370,8 +1371,10 @@ class SimEngine:
             refs = [*orig.references, orig.message_id_header]
             result = self._send(c, mailbox_id, rcpt_to, rcpt_cc, list(bcc or []), subj, text, html,
                                 orig.message_id_header, refs, actor, "reply")  # fmt: skip
-            c.emit("message.flags_changed", {"mailbox_id": mailbox_id, "message_id": orig.id, "add": ["ANSWERED"], "remove": []},
-                   actor=actor, operation="reply")  # fmt: skip
+            if not is_self_addressed([*rcpt_to, *rcpt_cc, *(bcc or [])], [me]):
+                # a reply only to oneself answers nothing: the original stays un-ANSWERED
+                c.emit("message.flags_changed", {"mailbox_id": mailbox_id, "message_id": orig.id, "add": ["ANSWERED"], "remove": []},
+                       actor=actor, operation="reply")  # fmt: skip
             return result
 
         return self._command(
@@ -1916,7 +1919,8 @@ class SimEngine:
             self._emit_delete(c, d, actor, op)
             result = self._send(c, mailbox_id, to, cc, bcc, subject, text, html, irt,
                                 refs or None, actor, op, attachments=atts)  # fmt: skip
-            if op == "reply" and orig is not None:
+            own = [self._mailbox(c, mailbox_id).email]
+            if op == "reply" and orig is not None and not is_self_addressed([*to, *cc, *bcc], own):
                 c.emit("message.flags_changed", {"mailbox_id": mailbox_id, "message_id": orig.id, "add": ["ANSWERED"], "remove": []},
                        actor=actor, operation="reply")  # fmt: skip
             return result

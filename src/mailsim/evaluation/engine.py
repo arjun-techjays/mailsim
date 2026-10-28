@@ -14,7 +14,7 @@ from typing import Any, Protocol
 import mailsim.evaluation.checks  # noqa: F401  (registers the assertion plugins)
 from mailsim.engine.snapshot import state_hash
 from mailsim.evaluation import registry
-from mailsim.evaluation.checks._common import AGENT, action_position, index, outcome
+from mailsim.evaluation.checks._common import AGENT, action_position, index, is_reply_sent, outcome
 from mailsim.evaluation.contract import AssertionOutcome, Efficiency, EvaluationReport, Status
 from mailsim.evaluation.registry import EvaluationContext
 from mailsim.evaluation.rules import accuracy, category_metrics, decide_verdict, resolve_checks
@@ -94,11 +94,7 @@ def _efficiency(ctx: EvaluationContext) -> tuple[Efficiency, list[str]]:
     # a client's copy of a sent message filed into Sent (`sent_copy`) is not the agent's work
     agent = [o for o in idx.occurrences_in(idx.last_seq)
              if o.actor == AGENT and o.operation not in UNGATED_AGENT_OPERATIONS]  # fmt: skip
-    replies = sum(
-        1 for e in window
-        if e["type"] == "message.sent" and e["actor"] == AGENT
-        and e["payload"]["message"].get("in_reply_to")
-    )  # fmt: skip
+    replies = sum(1 for e in window if is_reply_sent(e))  # self-addressed sends are no reply
     started = [e["sequence"] for e in window
                if e["type"] == "run.status_changed" and e["payload"].get("to") == "RUNNING"]  # fmt: skip
     duration = 0.0

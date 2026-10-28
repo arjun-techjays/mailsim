@@ -68,6 +68,15 @@ def normalize_address(email: str | None) -> str:
     return (email or "").strip().lower()
 
 
+def is_self_addressed(recipients: Iterable[str | None], own: Iterable[str | None]) -> bool:
+    """A send whose every recipient is one of the sender's own addresses (or that has none):
+    it reaches nobody else, so it answers nothing. The one rule for "self-addressed" used by
+    the engine (no ANSWERED on the original after such a reply) and by grading (such mail is
+    no answer and no `replies_sent`). Addresses compare in `normalize_address` form."""
+    mine = {normalize_address(a) for a in own}
+    return {normalize_address(a) for a in recipients} - {""} <= mine
+
+
 SYSTEM_FOLDERS: tuple[tuple[str, str], ...] = (
     ("INBOX", "inbox"),
     ("Sent", "sent"),

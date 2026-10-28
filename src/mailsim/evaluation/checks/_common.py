@@ -20,7 +20,7 @@ from email.utils import getaddresses
 from typing import Any
 
 from mailsim.domain.clock import parse_ts
-from mailsim.domain.models import is_system_label, normalize_address
+from mailsim.domain.models import is_self_addressed, is_system_label, normalize_address
 from mailsim.evaluation.contract import AssertionDiff, AssertionOutcome, EvidenceRef, Status
 from mailsim.evaluation.registry import EvaluationContext
 from mailsim.evaluation.rules import pre_status
@@ -122,6 +122,23 @@ def _recipients(msg: Any) -> set[str]:
             for a in msg.get(k) or [] if isinstance(a, dict)} - {""}  # fmt: skip
 
 
+def answering_recipients(msg: Any) -> set[str]:
+    """The recipients of sent mail that can answer someone: none when it is self-addressed
+    (`is_self_addressed`, the engine's rule for ANSWERED too), else its To/Cc/Bcc."""
+    if not isinstance(msg, dict):
+        return set()
+    rcpts = _recipients(msg)
+    return set() if is_self_addressed(rcpts, [(msg.get("from") or {}).get("email")]) else rcpts
+
+
+def is_reply_sent(e: dict[str, Any]) -> bool:
+    """An event that is the agent's sent reply (`replies_sent`): its own `message.sent` with
+    In-Reply-To that reaches someone other than itself."""
+    msg = e["payload"].get("message")
+    return (e["type"] == "message.sent" and e["actor"] == AGENT and isinstance(msg, dict)
+            and bool(msg.get("in_reply_to")) and bool(answering_recipients(msg)))  # fmt: skip
+
+
 def _senders(msg: dict[str, Any]) -> set[str]:
     out = {normalize_address((msg.get("from") or {}).get("email"))}
     headers = msg.get("headers") or {}
@@ -155,19 +172,21 @@ class RunIndex:
         self.origins: dict[str, dict[str, Any]] = {}
         self.copied: set[str] = set()  # ids created by COPY (same content as their source)
         self.agent_sent: set[str] = set()  # the agent's own sent mail (its Sent copies)
-        # (mailbox id, raw blob) -> the first message with those exact bytes in that mailbox.
-        # Blobs are content-addressed, so a copy / byte-identical insert finds its source here.
+        # (mailbox id, raw blob) -> the first message with those exact bytes in that mailbox in
+        # the current epoch. Blobs are content-addressed, so a copy / byte-identical insert finds
+        # its source here.
         self.first_by_blob: dict[tuple[Any, str], str] = {}
         for e in events:
             msg = e["payload"].get("message")
             if isinstance(msg, dict) and isinstance(msg.get("id"), str):
-                if msg["id"] not in self.origins:
-                    if e["type"] == "message.copied":
-                        self.copied.add(msg["id"])
-                    blob = msg.get("raw_blob_ref")
-                    if isinstance(blob, str) and blob:
-                        self.first_by_blob.setdefault((msg.get("mailbox_id"), blob), msg["id"])
+                if msg["id"] not in self.origins and e["type"] == "message.copied":
+                    self.copied.add(msg["id"])
                 self.origins.setdefault(msg["id"], msg)
+                blob = msg.get("raw_blob_ref")
+                # current epoch only: mail from before a reset is no "earlier" source (a reset
+                # re-emits the baseline under the same ids, so those are found again here)
+                if isinstance(blob, str) and blob and e["sequence"] >= self.epoch_start:
+                    self.first_by_blob.setdefault((msg.get("mailbox_id"), blob), msg["id"])
                 if e["type"] == "message.sent" and e["actor"] == AGENT:
                     self.agent_sent.add(msg["id"])
         self._agent_made: dict[str, bool] = {}
@@ -212,23 +231,27 @@ class RunIndex:
         for o in self.occurrences_in(cutoff):
             if (o.actor == AGENT and o.outcome == "ok" and o.operation == "reply"
                     and o.input.get("message_id") and o.wrote_events):  # fmt: skip
-                by_id.setdefault(str(o.input["message_id"]), set()).update(self.reply_recipients(o))
+                by_id.setdefault(str(o.input["message_id"]), set()).update(
+                    self.reply_recipients(o, answering=True)
+                )
         by_header: dict[str, set[str]] = {}
         for e in self.events_in(cutoff):
             msg = e["payload"].get("message")
             header = normalize_message_id(msg.get("in_reply_to")) if isinstance(msg, dict) else None
             if e["type"] == "message.sent" and e["actor"] == AGENT and header:
-                by_header.setdefault(header, set()).update(_recipients(msg))
+                by_header.setdefault(header, set()).update(answering_recipients(msg))
         return Answered(by_id, by_header)
 
-    def reply_recipients(self, occ: Occurrence) -> set[str]:
+    def reply_recipients(self, occ: Occurrence, *, answering: bool = False) -> set[str]:
         """Normalised To/Cc/Bcc of the mail an action sent: the `message.sent` events in its
-        window written by its own actor (anyone else's mail there is not this reply)."""
+        window written by its own actor (anyone else's mail there is not this reply). With
+        `answering`, self-addressed mail contributes none (`answering_recipients`)."""
+        pick = answering_recipients if answering else _recipients
         out: set[str] = set()
         for q in range(occ.seq_start, occ.seq_end + 1):
             e = self.by_seq.get(q)
             if e is not None and e["type"] == "message.sent" and e["actor"] == occ.actor:
-                out |= _recipients(e["payload"].get("message"))
+                out |= pick(e["payload"].get("message"))
         return out
 
     def answers_nobody(self, occ: Occurrence) -> bool:
