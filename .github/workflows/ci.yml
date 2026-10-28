@@ -112,3 +112,41 @@ jobs:
             ${{ runner.temp }}/e2e-real/api.log
           if-no-files-found: ignore
           retention-days: 7
+  # Network-level "no external delivery" (spec section 10): every simulator container sits only on
+  # the internal `sandbox` network; outbound SMTP 25/465/587 and arbitrary HTTP(S) must fail from
+  # inside each of them, while the allowlist egress proxy still tunnels to the LLM endpoint.
+  egress:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      COMPOSE_PROFILES: app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - run: docker compose build
+      - run: docker compose up -d --wait postgres egress-proxy
+      - run: docker compose run --rm app db-upgrade
+      - run: docker compose up -d --wait api
+      - name: Control - the probe detects open egress (bridge network; HTTPS only, no SMTP)
+        run: |
+          docker run --rm --network bridge -v "$PWD/tests/egress:/probe:ro" \
+            --entrypoint python mailsim-sim:local -I /probe/egress_check.py --expect-open
+      - name: egress-check service (simulator image, sandbox network, proxy env)
+        run: |
+          docker compose run --rm egress-check --proxy http://egress-proxy:3128 \
+            --allowed api.anthropic.com:443 --reachable postgres:5432 \
+            --reachable api:8000 --reachable api:1143 --reachable api:1587
+      - name: Inside the app (CLI/runner) container
+        run: |
+          docker compose run --rm --no-deps -v "$PWD/tests/egress:/probe:ro" --entrypoint python app \
+            -I /probe/egress_check.py --proxy http://egress-proxy:3128 --allowed api.anthropic.com:443 \
+            --reachable postgres:5432
+      - name: Inside the running api (REST + IMAP/SMTP listeners) container
+        run: |
+          docker compose cp tests/egress/egress_check.py api:/tmp/egress_check.py
+          docker compose exec -T api python -I /tmp/egress_check.py --proxy http://egress-proxy:3128 \
+            --allowed api.anthropic.com:443 --reachable postgres:5432 --reachable 127.0.0.1:8000
+      - name: Logs
+        if: failure()
+        run: docker compose logs --no-color
+      - if: always()
+        run: docker compose down -v

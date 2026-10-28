@@ -1,7 +1,24 @@
-# Phase 1: PostgreSQL for the engine + an optional sandboxed CLI container.
-# The `sandbox` network is internal (no egress): nothing attached only to it can reach
-# the public internet. PostgreSQL additionally joins `host-access` so developers/CI on the
-# host can connect to the published loopback port; the app service never does.
+# PostgreSQL for the engine, plus the optional sandboxed simulator containers (profile `app`).
+#
+# Egress (spec section 10, "No external delivery"; docs/egress.md):
+# * `sandbox` is an internal network: no default route and no external DNS. Every simulator
+#   container (`app` CLI/runner, `api` REST + IMAP/SMTP listeners, `egress-check`) is attached
+#   ONLY to it, so outbound SMTP (25/465/587) and any other direct egress fail at the network
+#   level, whatever the application does.
+# * `egress-proxy` is the sole bridge: it joins `sandbox` and the routable `egress` network and
+#   tunnels only HTTPS CONNECT to EGRESS_ALLOWLIST (the LLM endpoint). Plain HTTP forwarding and
+#   every other destination are refused.
+# * PostgreSQL additionally joins `host-access` so developers/CI on the host can connect to the
+#   published loopback port. It runs no agent code; the simulator containers never join it.
+# Prove it: `docker compose --profile app run --rm egress-check` (CI job `egress`).
+
+x-sandboxed-env: &sandboxed-env
+  MAILSIM_DATABASE_URL: postgresql+psycopg://mailsim:mailsim@postgres:5432/mailsim
+  MAILSIM_ENV: deployment
+  HTTPS_PROXY: http://egress-proxy:3128
+  HTTP_PROXY: http://egress-proxy:3128
+  NO_PROXY: postgres,localhost,127.0.0.1
+
 services:
   postgres:
     image: postgres:16
@@ -24,19 +41,77 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  # The only container with a route out, and only to the allowlisted LLM endpoint(s).
+  egress-proxy:
+    profiles: ["app"]
+    build: ./deploy/egress_proxy
+    environment:
+      EGRESS_ALLOWLIST: ${MAILSIM_EGRESS_ALLOWLIST:-api.anthropic.com:443}
+      EGRESS_LISTEN_HOST: 0.0.0.0  # reachable only from `sandbox` (no published port)
+      EGRESS_LISTEN_PORT: "3128"
+    networks: [sandbox, egress]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  # `sim` CLI / scenario runner.
   app:
     profiles: ["app"]
     build: .
-    environment:
-      MAILSIM_DATABASE_URL: postgresql+psycopg://mailsim:mailsim@postgres:5432/mailsim
+    image: mailsim-sim:local
+    environment: *sandboxed-env
     depends_on:
       postgres:
         condition: service_healthy
+      egress-proxy:
+        condition: service_started
+    networks: [sandbox]
+
+  # REST API + IMAP/SMTP listeners. Reachable only from containers on `sandbox` (an internal
+  # network publishes no host ports): run the agent under test in a container on `sandbox`.
+  api:
+    profiles: ["app"]
+    build: .
+    image: mailsim-sim:local
+    entrypoint: ["/app/.venv/bin/python", "-m", "mailsim.serve"]
+    command: ["serve", "--host", "0.0.0.0", "--port", "8000",
+              "--imap-port", "1143", "--smtp-port", "1587", "--tls-self-signed"]
+    environment:
+      <<: *sandboxed-env
+      MAILSIM_BLOB_DIR: /tmp/mailsim-blobs
+    healthcheck:
+      test: ["CMD", "python", "-I", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/health', timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      postgres:
+        condition: service_healthy
+      egress-proxy:
+        condition: service_started
+    networks: [sandbox]
+
+  # Network-level egress proof, run in the simulator image with the simulator's networks/env.
+  egress-check:
+    profiles: ["app"]
+    build: .
+    image: mailsim-sim:local
+    entrypoint: ["python", "-I", "/egress/egress_check.py"]
+    command: ["--proxy", "http://egress-proxy:3128",
+              "--allowed", "${MAILSIM_EGRESS_CHECK_ALLOWED:-api.anthropic.com:443}"]
+    environment: *sandboxed-env
+    volumes:
+      - ./tests/egress/egress_check.py:/egress/egress_check.py:ro
+    depends_on:
+      egress-proxy:
+        condition: service_started
     networks: [sandbox]
 
 networks:
   sandbox:
     internal: true
+  egress: {}
   host-access: {}
 
 volumes:
