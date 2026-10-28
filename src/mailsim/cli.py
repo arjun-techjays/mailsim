@@ -2,7 +2,8 @@
 
 Talks to the engine directly (no HTTP client: `publish --api-key-env` runs the API routes
 in-process). All output is JSON on stdout so it can be used from CI; errors are JSON on stderr
-with exit code 2 (replay mismatch: 3). Keys are read from the environment and never printed.
+with exit code 2 (replay mismatch: 3; `bench run` / `bench compare` gate failed: 1). Keys are
+read from the environment and never printed.
 """
 
 from __future__ import annotations
@@ -102,6 +103,8 @@ def _parser() -> argparse.ArgumentParser:
     names.add_argument("--no-names", action="store_true",
                        help="scan only against the built-in lists (weaker; prints a warning)")  # fmt: skip
 
+    _bench_parser(sub)
+
     for name, help_ in (
         ("run-create", "create+seed a run from a scenario version id"),
         ("run-start", "start a READY run"),
@@ -119,6 +122,59 @@ def _parser() -> argparse.ArgumentParser:
         if name == "run-advance":
             sp.add_argument("--seconds", type=float, required=True)
     return p
+
+
+def _bench_parser(sub: Any) -> None:
+    bench = sub.add_parser("bench", help="CI regression suite: run an agent build over fixed "
+                           "scenario packs (repeated trials), compare two builds")  # fmt: skip
+    bsub = bench.add_subparsers(dest="bench_cmd", required=True)
+    br = bsub.add_parser("run", help="run every scenario pack against one agent build and "
+                         "gate on the pass rate (exit 0 pass, 1 gate failed, 2 error)")  # fmt: skip
+    br.add_argument("suite", type=Path, nargs="+",
+                    help="scenario files, pack directories, or directories of packs")  # fmt: skip
+    br.add_argument("--build", required=True, help="agent build id recorded on every run")
+    agent = br.add_mutually_exclusive_group(required=True)
+    agent.add_argument("--agent-cmd", help="command that runs the agent (no shell; it gets "
+                       "MAILSIM_API_KEY, MAILSIM_RUN_ID, MAILSIM_MAILBOX_ID, ...)")  # fmt: skip
+    agent.add_argument("--agent-callable", metavar="MODULE:FUNCTION",
+                       help="in-process Python agent called with an AgentContext")  # fmt: skip
+    br.add_argument("--pass-env", action="append", default=[], metavar="VAR",
+                    help="also pass this environment variable to --agent-cmd (repeatable)")  # fmt: skip
+    br.add_argument("--agent-cwd", type=Path, default=None, help="working directory of the agent")
+    br.add_argument("--agent-model", default=None,
+                    help="the agent's own LLM provider/model/version, recorded as given")  # fmt: skip
+    br.add_argument("--api-url", default=None,
+                    help="base URL of a running `serve`, given to the agent as MAILSIM_API_URL")  # fmt: skip
+    br.add_argument("--trials", type=_positive, default=1, help="runs per scenario (>= 1)")
+    br.add_argument("--rounds", type=_positive, default=1,
+                    help="agent invocations per trial, each followed by --advance-seconds")  # fmt: skip
+    br.add_argument("--advance-seconds", type=_non_negative, default=0.0,
+                    help="virtual seconds to advance after each round (personas reply, events "
+                    "fire)")  # fmt: skip
+    br.add_argument("--timeout", type=_positive_float, default=600.0,
+                    help="wall-clock seconds per --agent-cmd round")  # fmt: skip
+    br.add_argument("--checks", choices=("on", "off"), default=None,
+                    help="hidden deterministic checks (default: the answer key's checks_default)")  # fmt: skip
+    br.add_argument("--min-pass-rate", type=_rate, default=1.0,
+                    help="gate: every scenario's pass rate must reach this (0..1, default 1)")  # fmt: skip
+    br.add_argument("--max-variance", type=_non_negative, default=None,
+                    help="gate: every scenario's accuracy variance must not exceed this")  # fmt: skip
+    br.add_argument("--json", dest="json_out", type=Path, default=None,
+                    help="also write the result document here")  # fmt: skip
+    br.add_argument("--junit", type=Path, default=None, help="write a JUnit XML report here")
+    br.add_argument("--project", default=None,
+                    help="an existing project id (default: MAILSIM_LOCAL_PROJECT_ID, else the only "
+                    "project in the database)")  # fmt: skip
+    bc = bsub.add_parser("compare", help="compare two `bench run --json` results (no database); "
+                         "exit 1 when the candidate regressed")  # fmt: skip
+    bc.add_argument("baseline", type=Path)
+    bc.add_argument("candidate", type=Path)
+    bc.add_argument("--tolerance", type=_rate, default=0.0,
+                    help="allowed drop of a pass rate / mean accuracy (0..1, default 0)")  # fmt: skip
+    bc.add_argument("--fail-on-missing", action="store_true",
+                    help="also fail when a baseline scenario is missing from the candidate")  # fmt: skip
+    bc.add_argument("--json", dest="json_out", type=Path, default=None,
+                    help="also write the comparison here")  # fmt: skip
 
 
 def _target_arguments(p: argparse.ArgumentParser) -> None:
@@ -283,7 +339,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _emit(exc.error, sys.stderr)
         return 2
     except (ValueError, OSError) as exc:
-        if args.cmd not in ("import", "generate"):
+        if args.cmd not in ("import", "generate", "bench"):
             raise
         _emit({"code": "INVALID_REQUEST", "message": str(exc)}, sys.stderr)
         return 2
@@ -294,6 +350,27 @@ def _positive(value: str) -> int:
     if n < 1:
         raise argparse.ArgumentTypeError("must be >= 1")
     return n
+
+
+def _non_negative(value: str) -> float:
+    x = float(value)
+    if not (x >= 0 and x != float("inf")):
+        raise argparse.ArgumentTypeError("must be a finite number >= 0")
+    return x
+
+
+def _positive_float(value: str) -> float:
+    x = _non_negative(value)
+    if x == 0:
+        raise argparse.ArgumentTypeError("must be > 0")
+    return x
+
+
+def _rate(value: str) -> float:
+    x = _non_negative(value)
+    if x > 1:
+        raise argparse.ArgumentTypeError("must be between 0 and 1")
+    return x
 
 
 def _at_least_two(value: str) -> int:
@@ -381,6 +458,80 @@ def _generate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _write(path: Path | None, data: bytes) -> None:
+    if path is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+
+
+def _as_json(obj: Any) -> bytes:
+    return (json.dumps(obj, indent=2, sort_keys=True, default=str) + "\n").encode()
+
+
+def _bench_run(args: argparse.Namespace, sf: Any, blobs: Any, sim: SimEngine) -> int:
+    """`sim bench run`: publish the suite, run N trials per scenario, write JSON/JUnit, gate."""
+    from mailsim.bench import report, suite
+    from mailsim.bench.run import BenchConfig, BenchDeps, run_bench
+    from mailsim.evaluation.service import EvaluationService
+    from mailsim.llm.config import LLMConfig
+    from mailsim.llm.gateway import LLMGateway
+    from mailsim.llm.judge import LLMJudge
+    from mailsim.personas.runtime import PersonaRuntime, advance_clock
+    from mailsim.runner.command import CommandRunner
+    from mailsim.runner.python import CallableRunner
+
+    runner: CommandRunner | CallableRunner
+    if args.agent_cmd is not None:
+        runner = CommandRunner(args.agent_cmd, pass_env=args.pass_env, cwd=args.agent_cwd)
+    else:
+        try:
+            runner = CallableRunner(args.agent_callable)
+        except (ImportError, AttributeError) as exc:
+            raise InvalidRequest(
+                f"cannot load agent callable {args.agent_callable!r}: {exc}"
+            ) from exc
+    scope = _default_scope(sf, args.project)
+    entries = suite.discover(args.suite)
+    published = suite.publish(sf, scope, blobs, entries)
+    llm_cfg = LLMConfig.from_env()
+    gateway = LLMGateway.from_config(llm_cfg, session_factory=sf)
+    deps = BenchDeps(
+        engine=sim, session_factory=sf, scope=scope,
+        evaluator=EvaluationService(sim, sf, blobs, judge_factory=lambda run_id: LLMJudge(
+            gateway, run_id=run_id)),
+        advance=lambda ctl, run_id, seconds: advance_clock(ctl, PersonaRuntime(ctl, gateway),
+                                                           run_id, seconds),
+        llm={"provider": llm_cfg.provider, "model": llm_cfg.model}, llm_usage=gateway.usage,
+    )  # fmt: skip
+    config = BenchConfig(
+        build=args.build, trials=args.trials, rounds=args.rounds,
+        advance_seconds=args.advance_seconds, timeout_seconds=args.timeout, checks=args.checks,
+        agent_model=args.agent_model, min_pass_rate=args.min_pass_rate,
+        max_variance=args.max_variance, api_url=args.api_url,
+    )  # fmt: skip
+    doc = run_bench(deps, runner, published, config)
+    _write(args.json_out, _as_json(doc))
+    _write(args.junit, report.render_junit(doc))
+    _emit(doc)
+    return 0 if doc["gate"]["passed"] else 1
+
+
+def _bench_compare(args: argparse.Namespace) -> int:
+    from mailsim.bench.compare import compare
+
+    docs = []
+    for path in (args.baseline, args.candidate):
+        try:
+            docs.append(json.loads(path.read_text(encoding="utf-8")))
+        except ValueError as exc:
+            raise InvalidRequest(f"{path} is not JSON: {exc}") from exc
+    result = compare(docs[0], docs[1], tolerance=args.tolerance,
+                     fail_on_missing=args.fail_on_missing)  # fmt: skip
+    _write(args.json_out, _as_json(result))
+    _emit(result)
+    return 0 if result["gate"]["passed"] else 1
+
+
 def _dispatch(args: argparse.Namespace) -> int:
     if args.cmd == "validate":
         try:
@@ -396,6 +547,8 @@ def _dispatch(args: argparse.Namespace) -> int:
         return _import(args)
     if args.cmd == "generate":
         return _generate(args)
+    if args.cmd == "bench" and args.bench_cmd == "compare":
+        return _bench_compare(args)
 
     if args.cmd == "db-upgrade":
         run_migrations()
@@ -417,6 +570,8 @@ def _dispatch(args: argparse.Namespace) -> int:
         if args.cmd in ("publish", "answer-key"):
             _emit(_publish(args, sf, blobs, sim))
             return 0
+        if args.cmd == "bench":
+            return _bench_run(args, sf, blobs, sim)
         scope = _scope(sf, args.project)
 
         if args.cmd == "run-create":
