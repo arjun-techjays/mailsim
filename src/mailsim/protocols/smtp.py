@@ -36,7 +36,7 @@ from aiosmtpd.smtp import MISSING, SMTP, AuthResult, Envelope, Session
 from mailsim.api.agent_errors import agent_view
 from mailsim.domain.errors import SimError
 from mailsim.domain.models import CanonicalMessage
-from mailsim.engine.context import with_interface
+from mailsim.engine.context import in_agent_request, with_interface
 from mailsim.mime.limits import MimeLimits
 from mailsim.mime.parse import ParsedMessage, parse_mime
 from mailsim.protocols.auth import AgentSession, Authenticator, AuthFailed
@@ -213,7 +213,10 @@ class SandboxHandler:
             return agent
         raw = envelope.original_content or b""
         rcpts = [str(r).lower() for r in envelope.rcpt_tos]
-        return await asyncio.to_thread(with_interface("smtp", self.deliver), agent, raw, rcpts)
+        # one SMTP transaction is one agent request (like an IMAP command or HTTP request):
+        # its reads (the replied message's lookup) cost one read, its read-backs none
+        deliver = with_interface("smtp", in_agent_request(self.deliver))
+        return await asyncio.to_thread(deliver, agent, raw, rcpts)
 
     def deliver(self, agent: AgentSession, raw: bytes, rcpts: list[str]) -> str:
         try:

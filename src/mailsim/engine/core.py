@@ -47,6 +47,8 @@ from mailsim.engine.context import (
     connection_test,
     current_interface,
     is_read_back,
+    is_read_paid,
+    note_agent_read,
     note_agent_write,
 )
 from mailsim.engine.delivery import DeliveryPolicy, ExternalMode
@@ -252,12 +254,17 @@ class SimEngine:
         # the interface building its response to a write this request already committed:
         # recorded, but not counted against or refused by the read/event caps (context.py)
         read_back = actor == AGENT and operation in READ_OPERATIONS and is_read_back()
+        # one budgeted read per agent request (context.py, issue #24): once the request paid
+        # its read, its later reads are recorded but neither counted nor refused by the read cap
+        paid = (actor == AGENT and not probe and operation in READ_OPERATIONS and not read_back
+                and is_read_paid())  # fmt: skip
         try:
             with self._sf.begin() as s:
                 run = lock_run(s, scope, run_id)
                 seq_start = run.next_seq
                 ctx = Ctx(s, run, id_generator(run))
-                self._guard(ctx, actor, operation, mailbox_id, require_running, uncapped=read_back)
+                self._guard(ctx, actor, operation, mailbox_id, require_running, uncapped=read_back,
+                            read_paid=paid)  # fmt: skip
                 if probe and operation not in READ_OPERATIONS:
                     raise PermissionDenied("a connection test may only read")
                 guarded = True
@@ -280,7 +287,7 @@ class SimEngine:
                         )
                     for triggered in (operation, *ctx.also_triggers):
                         self._arm_triggers(ctx, triggered)
-                    if not read_back:
+                    if not read_back and not paid:
                         self._count_usage(run, operation)
                 if ctx.gen.counter != run.id_counter:
                     # ids were drawn after the last event: record it so replay stays exact
@@ -302,10 +309,13 @@ class SimEngine:
                 )
             if actor == AGENT and not probe and operation not in READ_OPERATIONS:
                 note_agent_write()  # committed: this request's later reads are read-backs
+            elif actor == AGENT and not probe and not read_back:
+                note_agent_read()  # counted (or already paid): the request's read is paid
             return result
         except SimError as exc:
             # Budget rule: every agent command that passed the permission/mailbox/limit guard
             # consumes budget, whether it then succeeds or fails.
+            usage = guarded and actor == AGENT and not probe and not read_back and not paid
             self._record_denied(
                 scope,
                 run_id,
@@ -314,15 +324,18 @@ class SimEngine:
                 input_,
                 exc,
                 count=guarded and actor == AGENT and not probe and counts_against_budget(operation),
-                usage=guarded and actor == AGENT and not probe and not read_back,
+                usage=usage,
             )
+            if usage and operation in READ_OPERATIONS:
+                note_agent_read()  # a failed read still paid the request's read
             raise
 
     @staticmethod
     def _count_usage(run: m.Run, operation: str) -> None:
         """Resource-cap counters of a guarded agent command, kept on the run row in the same
         transaction as the audit row that records it (no event: reads and sent_copy write
-        none). Successful or failed alike, like the write budget; refused by the guard: no."""
+        none). Successful or failed alike, like the write budget; refused by the guard: no.
+        Reads: once per agent request (the caller skips the request's later reads)."""
         if operation in READ_OPERATIONS:
             run.agent_reads += 1
         elif operation == "sent_copy":
@@ -420,6 +433,7 @@ class SimEngine:
         require_running: bool,
         *,
         uncapped: bool = False,
+        read_paid: bool = False,
     ) -> None:
         run = ctx.run
         if run.replay_of is not None and not (actor != AGENT and operation in READ_OPERATIONS):
@@ -448,7 +462,7 @@ class SimEngine:
             return
         # per-run resource caps (spec 10): checked before the command, so one command may
         # overshoot max_agent_events by the events it writes itself
-        if operation in READ_OPERATIONS:
+        if operation in READ_OPERATIONS and not read_paid:  # one read unit per agent request
             limit = run_cap(ctx.config, "max_agent_reads")
             if run.agent_reads >= limit:
                 raise _limit_exceeded("agent read", "max_agent_reads", limit)

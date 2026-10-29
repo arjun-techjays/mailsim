@@ -27,7 +27,7 @@ Failures: IMAP `NO [AUTHENTICATIONFAILED]` (bad/unknown key or username),
 `NO [UNAVAILABLE] RUN_NOT_ACTIVE` (run not started / reset in progress). Three failures close
 the connection. SMTP answers `535 5.7.8` (with the engine code when the engine refused).
 
-Every IMAP/SMTP command runs as the `agent` actor: reads are free but audited (`read` actions),
+Every IMAP/SMTP command runs as the `agent` actor: reads cost no budget but are audited (`read` actions; one `max_agent_reads` unit per command),
 writes go through the same permission, mailbox and budget guards as REST and count against
 `max_agent_actions`. Denials are audited by the engine.
 
@@ -137,7 +137,9 @@ follow RFC 3501 (e.g. `UID FETCH 99:*` returns the highest UID even if it is bel
 
 **Change detection.** A session keeps its folder list and the selected folder's listing and
 asks the engine change feed (`list_changes`, one audited `read`) whether anything changed in the
-mailbox; only then does it re-list. An idle `NOOP` therefore records one read action. A run
+mailbox; only then does it re-list. An idle `NOOP` therefore records one read action and
+costs one `max_agent_reads` unit; the poll every other command makes is part of that command's
+one read (reads are budgeted per command, see **Errors**). A run
 reset seen on the feed ends a selected session as described above.
 
 **Unsolicited updates.** New messages are always announced
@@ -154,7 +156,7 @@ with `EXISTS`; flag changes made by other sessions/adapters are sent as `FETCH (
 (never re-serialized); ENVELOPE keeps header values verbatim (encoded-words, 8-bit text as a
 literal). FETCH modifiers (`CHANGEDSINCE`) answer `BAD UNSUPPORTED_OPERATION`. Message bytes
 come from `AgentMailbox.get_raw` (one audited read per message, cached per session up to
-64 MiB); FETCH responses are streamed to the client message by message.
+64 MiB, all within the command's one budgeted read); FETCH responses are streamed to the client message by message.
 
 **`\Seen` (RFC 3501 6.4.5).** A non-PEEK `BODY[...]`, `RFC822` or `RFC822.TEXT` fetch in a
 read-write `SELECT` marks the message seen through `AgentMailbox.mark_seen` (recorded as a
@@ -223,11 +225,16 @@ applies to one request). More keywords than the scenario's `max_labels_per_messa
 `UNAVAILABLE`, `SIMULATION_LIMIT_EXCEEDED`/`RATE_LIMITED` -> `LIMIT`, `INVALID_REQUEST`/
 `UNSUPPORTED_OPERATION` -> `CANNOT`, `CONFLICT` -> `INUSE`). The budget error reads
 `NO [LIMIT] QUOTA_EXCEEDED: action limit reached`, and so do the per-run caps (reads,
-`sent_copy`, agent events, labels per message; see the README). Every command polls the change
-feed (one read) and a body `FETCH` reads each message, so once `max_agent_reads` is reached
-every command but `LOGIN` and `LOGOUT` answers `NO [LIMIT]` (the login's mailbox check is not
-an agent read: an agent at its read cap can still log in, and send over SMTP); a `FETCH` that reaches it ends with
-`NO [LIMIT]` after the responses already sent. The re-sync a `STORE`, `APPEND`, `COPY` or `MOVE`
+`sent_copy`, agent events, labels per message; see the README). Reads are budgeted per command
+(issue #24), like one Gmail/REST page: a command that reads (its change-feed poll, listing pages,
+every message of a `FETCH`/`SEARCH`, `\Seen` updates) costs one `max_agent_reads` unit, however
+many messages it covers, and every engine read is still audited as a `read` action. So a client
+can `FETCH 1:*` a mailbox much larger than the cap, and once the cap is reached every command
+that reads (all but `LOGIN`, `LOGOUT`, `CAPABILITY`, `ID`, `UNSELECT`) answers `NO [LIMIT]` before
+any response (the login's mailbox check is not an agent read: an agent at its read cap can still
+log in, and send over SMTP). One SMTP transaction is likewise one read (the replied-message
+lookups). The agent-event cap is still checked before each engine call, so a body `FETCH` that
+marks messages `\Seen` can end with `NO [LIMIT]` after the responses already sent. The re-sync a `STORE`, `APPEND`, `COPY` or `MOVE`
 does after its write is not counted or refused, so a command whose write happened never
 answers `NO [LIMIT]`. A run that is not active reads
 `RUN_NOT_ACTIVE: mailbox is not available` (also at LOGIN).

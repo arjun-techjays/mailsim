@@ -21,6 +21,15 @@ refused by the read/event caps: a write that already happened must not answer "q
 exceeded". Reads before the first write, and every read of a request that writes nothing, count
 as usual, so an agent cannot obtain uncapped reads of its own choosing; the most a write buys is
 the read-back of the request that made it, and writes are themselves budgeted.
+
+Reads are budgeted per agent request, not per engine read (issue #24): the first counted read of
+a request pays the request's one `max_agent_reads` unit (and is the one refused at the cap);
+every later read of the same request is recorded but rides on it, neither counted nor refused
+by the read cap (the event cap still applies to each). So an IMAP command (its implicit
+change-feed poll, listing pages and every message of a FETCH), a Gmail/REST/Graph page and an
+MCP tool call each cost one read, whatever number of engine reads they make. An item of a loop
+over agent-supplied ids (``use_request_item``) pays its own read, so repeating an id never
+multiplies the reads one unit buys.
 """
 
 from __future__ import annotations
@@ -41,9 +50,11 @@ connection_test: ContextVar[bool] = ContextVar("mailsim_connection_test", defaul
 
 @dataclass
 class AgentRequest:
-    """One agent request; `wrote` once an agent write in it has committed."""
+    """One agent request; `wrote` once an agent write in it has committed, `read_paid` once
+    one of its reads was counted against max_agent_reads (its later reads are free)."""
 
     wrote: bool = False
+    read_paid: bool = False
 
 
 agent_request: ContextVar[AgentRequest | None] = ContextVar("mailsim_agent_request", default=None)
@@ -85,13 +96,17 @@ def use_agent_request() -> Iterator[AgentRequest]:
 @contextmanager
 def use_request_item() -> Iterator[AgentRequest]:
     """One item of a request that loops over agent-supplied ids (Gmail batchModify/batchDelete,
-    thread operations): its reads count until ITS OWN write, so one item's write never
-    exempts another item's reads (an id repeated a thousand times buys nothing). A write in
-    it still marks the enclosing request, whose response building after the loop remains a
-    read-back."""
+    thread operations): it pays its own read and its reads count until ITS OWN write, so one
+    item's write or read never exempts another item's reads (an id repeated a thousand times
+    buys nothing). A write or counted read in it still marks the enclosing request, whose
+    response building after the loop is then a read-back or already paid."""
     parent = agent_request.get()
     with use_agent_request() as item:
-        yield item
+        try:
+            yield item
+        finally:
+            if parent is not None and item.read_paid:
+                parent.read_paid = True
     if parent is not None and item.wrote:
         parent.wrote = True
 
@@ -112,6 +127,19 @@ def note_agent_write() -> None:
     request = agent_request.get()
     if request is not None:
         request.wrote = True
+
+
+def note_agent_read() -> None:
+    """Called by the engine after it counted an agent read: the request's read is paid."""
+    request = agent_request.get()
+    if request is not None:
+        request.read_paid = True
+
+
+def is_read_paid() -> bool:
+    """This agent request already paid its one budgeted read (later reads are free)."""
+    request = agent_request.get()
+    return request is not None and request.read_paid
 
 
 def is_read_back() -> bool:
@@ -139,6 +167,8 @@ __all__ = [
     "current_interface",
     "in_agent_request",
     "is_read_back",
+    "is_read_paid",
+    "note_agent_read",
     "note_agent_write",
     "use_agent_request",
     "use_connection_test",

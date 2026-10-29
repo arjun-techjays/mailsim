@@ -110,6 +110,37 @@ Expired idempotency records are swept on each claim; `python -m mailsim.serve sw
   affected: with `outcome: any` or an error code (e.g. `PERMISSION_DENIED`), a refused reply
   still counts, as recorded. A policy `forbid: {operation: reply}` still matches **every**
   reply operation, whoever it reached: use it to prohibit replying at all.
+* **Budget and action accounting (for `action` counts and audit expectations).** What an
+  `action` check counts is the audit log (`GET /v1/runs/{id}/actions`): one row per engine
+  command, agent writes, reads and refusals alike. What the caps count is narrower:
+  * *Write budget (`max_agent_actions`).* One unit per agent write command, succeeded or failed
+    after the guard; reads, polling and `sent_copy` cost nothing.
+  * *One write per new message (since PR #16, issue #30).* A Gmail `messages.insert` / `import`
+    with `labelIds`, and an IMAP `APPEND` with flags or keywords, is a **single** `insert`
+    action and one budget unit, stored with all its flags and labels or not at all. Before #16
+    it recorded up to three actions (`insert`, then `flag`, then `label`). An `action` check on
+    `operation: flag` or `operation: label` (or a `max:` / `eq:` count of them, or of all writes)
+    no longer sees those implied changes: grade the result with a `state` check (`where.label`,
+    `has_flag`) or count `operation: insert`. `after_agent_action` triggers on `flag` / `label`
+    still fire for such an insert, so scenario timelines are unchanged.
+  * *Logins are not actions (since PR #16, issue #30).* A **successful** IMAP `LOGIN` /
+    `AUTHENTICATE` or SMTP `AUTH` no longer writes an agent `read` row; a refused one (run not
+    active, another persona's mailbox, ...) still records a denied agent action, and an
+    operator's connection test records its probe with the actor `connection_test` (never
+    graded). A `count` of agent `read` actions written before #16 that included one read per
+    protocol login needs lowering.
+  * *Reads (`max_agent_reads`, issue #24).* Budgeted once per agent request: one HTTP request
+    (a REST/Gmail/Graph page), MCP tool call, IMAP command (its implicit change-feed poll
+    included) or SMTP transaction is one read, however many messages it touches; an item of a
+    Gmail batch or thread operation pays its own. The audit still has one `read` row per engine
+    read, so row counts differ by interface: an IMAP `FETCH` of N bodies records about N + 1
+    `read` rows (plus one per message it marks `\Seen`), a Gmail `messages.list` page one. Do
+    not grade efficiency with exact `operation: read` counts across interfaces; bound it with
+    `evaluation.limits.max_agent_reads` and `invariant: no_limit_exceeded` (`limit:
+    max_agent_reads`) instead.
+  * Reads that build the response to a write the same request already committed (read-backs)
+    are recorded but never counted or refused, so a committed write never answers "quota
+    exceeded".
 * **Evaluation errors.** `POST /v1/runs/{id}/evaluations` answers 404 when the requested
   `answer_key_version` does not exist and 409 CONFLICT when it (or every key) is not compatible
   with the run's scenario version (`details.answer_key_version`, `details.scenario_versions`,
@@ -428,8 +459,10 @@ Re-grading a run recorded before this change can give a different result:
   same quota error as the budget on every interface (agents see `QUOTA_EXCEEDED` / "action
   limit reached"), recorded as a `SIMULATION_LIMIT_EXCEEDED` action whose `details.cap` names
   the cap; `invariant: no_limit_exceeded` fails on any of them and takes an optional
-  `limit: <cap name>` to check one. Reads count engine reads, not client requests: an IMAP
-  command polls the change feed (one read) and a body FETCH reads each message. Reads an
+  `limit: <cap name>` to check one. Reads are budgeted per agent request, not per engine read
+  (issue #24): one HTTP request (REST/Gmail/Graph page), MCP tool call, IMAP command or SMTP
+  transaction costs at most one `max_agent_reads` unit however many engine reads it makes (an
+  IMAP `FETCH 1:*` of every body, with its change-feed poll, is one read). Reads an
   interface makes to answer a write that request already committed (Gmail returning the sent
   message, a REST/Graph PATCH returning the message, an IMAP re-sync after STORE) are recorded
   but neither counted nor refused, so a committed write never answers "quota exceeded"; reads
@@ -438,8 +471,8 @@ Re-grading a run recorded before this change can give a different result:
   events (a send: its copies and deliveries; an expunge or bulk delete: one per message). A
   label-cap refusal is a failed write and costs budget; a new message (Gmail insert/import,
   IMAP APPEND) with more labels than the cap is refused before it is stored. Each item of a
-  Gmail batch or thread operation counts its own reads (one item's write exempts nothing for
-  the next). The mailbox check at IMAP LOGIN / SMTP AUTH is not an agent read: an agent at its
+  Gmail batch or thread operation pays its own read (one item's read or write exempts nothing
+  for the next, so a repeated id buys nothing). The mailbox check at IMAP LOGIN / SMTP AUTH is not an agent read: an agent at its
   read cap can still connect and send. Refusals still write an audit row each.
 * **Gmail insert/import and IMAP APPEND are one write.** A message's initial flags and labels
   (`labelIds`, APPEND flags/keywords) are applied in the same `insert`: stored with all of them
