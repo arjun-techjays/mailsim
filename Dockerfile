@@ -6,4 +6,6 @@ COPY src ./src
 COPY migrations ./migrations
 COPY alembic.ini ./
 RUN uv sync --frozen --no-dev
-ENTRYPOINT ["uv", "run", "--no-dev", "sim"]
+# run the installed venv directly: `uv run` would re-sync at startup, which needs PyPI and
+# fails behind the egress block (docs/egress.md)
+ENTRYPOINT ["/app/.venv/bin/sim"]
