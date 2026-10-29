@@ -35,7 +35,7 @@ for i in 0 1; do
     https://huggingface.co/api/datasets/LLM-PBE/enron-email/parquet/default/train/$i.parquet
 done                               # ~490 MB; redirects to Hugging Face's CDN (*.hf.co)
 
-# 1. import: sample 50k rows (seed 7), clean, split chains, pseudonymize, classify  (~15 min)
+# 1. import: sample 50k rows (seed 7), clean, split chains, pseudonymize, classify  (~15-30 min)
 uv run sim import enron --parquet var/cache/enron/0.parquet var/cache/enron/1.parquet \
   --limit 50000 --seed 7 --out var/enron/corpus.jsonl --registry-out var/enron/registry.json
 
@@ -58,8 +58,23 @@ git status --porcelain scenarios/leadership      # empty unless the generator it
 All three commands use the committed key by default (`--id-key` to point elsewhere; any other
 key is refused). When only the generator changed, steps 2-5 are enough: keep `corpus.jsonl`
 and `registry.json` and do not re-import. If you do not have them, step 1 rebuilds both from
-the public dataset, but see the known issue below: a from-scratch import does not yet
-reproduce the committed pack exactly.
+the public dataset, and steps 2-5 then reproduce the committed pack exactly.
+
+Reproducibility check for a from-scratch import (manual, needs the download, so it is not part
+of the default `pytest` run). With an unchanged importer, the files must match these sha256
+digests; step 1 also prints the corpus digest as `"sha256"`:
+
+| File | sha256 |
+| --- | --- |
+| `var/cache/enron/0.parquet` | `43bd36345aa792762f74db2d4e39f9f19231e32a3d0ada547f0a138d81a6a231` |
+| `var/cache/enron/1.parquet` | `3882e247814c93bfe48a2878c8a3a94cb9c2ee944690ef4b273dabe61eb6c56d` |
+| `var/enron/corpus.jsonl` | `6db6801ee37c068d3abc72df5d10c1e989385023fa355cebeac1a43da810e368` |
+| `var/enron/registry.json` | `d2174dfc0e42fcd0a5fe67d094cc26e92125bef7683c4f0bb6508522012e158e` |
+
+If an importer change alters `corpus.jsonl`, regenerate the pack from a fresh import (steps 1-5),
+commit the pack together with the importer change and update the digests here. A pack built
+from an older local corpus can differ from a fresh import (issue #19), so do not regenerate a
+committed pack from a stale `var/enron/`.
 
 Generator options:
 
@@ -84,12 +99,6 @@ the command above.
 found by the import) stay in the git-ignored `var/`. **Never commit them**, `registry.json` in
 particular: it lists real names. `sim import enron` rebuilds both from the public dataset and
 the committed key, so neither holds anything that cannot be recreated.
-
-**Known issue ([#19](https://github.com/arjun-techjays/mailism/issues/19)):** the committed pack
-was generated from a corpus made by an earlier importer revision. A from-scratch import today
-gives a slightly different corpus, and regenerating from it changes one pseudonym in
-`ceo/fixtures/025-i-must-agree-with-mila.eml`, so step 5 is not empty on a fresh checkout until
-#19 is fixed. The registry comes back identical.
 
 ## Identifier key
 
