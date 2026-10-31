@@ -7,9 +7,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from mailsim.domain.models import is_self_addressed
 from mailsim.evaluation import registry
-from mailsim.evaluation.checks._common import RunIndex
+from mailsim.evaluation.checks._common import RunIndex, answering_recipients, is_reply_sent
 from mailsim.evaluation.contract import Status
+from mailsim.evaluation.engine import _efficiency
 from mailsim.evaluation.registry import EvaluationContext
 from mailsim.scenario.answer_key import AnswerAssertion
 
@@ -190,8 +192,9 @@ def test_answered_and_reply_share_the_recipients_of_each_reply():
     rec.reply("inv", [ME])
     rec.reply("inv", ["boss@example.test"], cc=[VENDOR])
     idx = RunIndex(rec.events, rec.actions, MBX)
+    # self-addressed mail adds no one
     assert idx.answered_at(idx.last_seq).recipients_by_id == {
-        "inv": {ME, "boss@example.test", VENDOR}}  # fmt: skip
+        "inv": {"boss@example.test", VENDOR}}  # fmt: skip
     assert [idx.answers_nobody(o) for o in idx.occurrences] == [True, False]
 
 
@@ -310,3 +313,59 @@ def test_provenance_and_verdicts_are_computed_once(monkeypatch):
     for _ in range(3):
         assert not any(idx.answers_nobody(o) for o in idx.occurrences)
     assert calls == {"recipients": 20, "lookups": 20}
+
+
+# ------------------------------------------------------------------ issue #26
+def test_the_one_self_addressed_rule():
+    assert is_self_addressed([" Finance@Example.TEST "], [ME])
+    assert is_self_addressed([ME, ""], [ME, "alias@example.test"])
+    assert is_self_addressed([], [ME])  # reaches nobody at all
+    assert not is_self_addressed([ME, VENDOR], [ME])
+    assert not is_self_addressed([VENDOR], [])
+    assert answering_recipients({"from": {"email": ME}, "to": _addr(ME)}) == set()
+    assert answering_recipients({"from": {"email": ME}, "to": _addr(ME),
+                                 "cc": _addr(VENDOR)}) == {ME, VENDOR}  # fmt: skip
+    assert answering_recipients("not a message") == set()
+
+
+def _sent_reply(rec: Rec, sid: str, to: list[str], actor: str = "agent",
+                in_reply_to: str | None = "<inv@x>") -> None:  # fmt: skip
+    rec._ev("message.sent", {"message": {"id": sid, "mailbox_id": MBX, "from": {"email": ME},
+                                         "to": _addr(*to), "in_reply_to": in_reply_to}},
+            actor)  # fmt: skip
+
+
+def test_replies_sent_excludes_self_addressed_sends():
+    rec = Rec()
+    _sent_reply(rec, "self", [ME.upper()])  # threaded, but to the agent only
+    _sent_reply(rec, "real", [VENDOR])
+    _sent_reply(rec, "both", [ME, VENDOR])
+    _sent_reply(rec, "plain", [VENDOR], in_reply_to=None)  # not a reply
+    _sent_reply(rec, "persona", [ME], actor="vendor")  # not the agent's
+    rec._ev("message.sent", {"message": "not a message"}, "agent")
+    assert [is_reply_sent(e) for e in rec.events[1:]] == [False, True, True, False, False, False]
+    eff, _ = _efficiency(rec.ctx())
+    assert eff.replies_sent == 2
+    # a self-addressed reply answers nothing by header either (ANSWERED provenance)
+    idx = RunIndex(rec.events, rec.actions, MBX)
+    assert idx.answered_at(idx.last_seq).recipients_by_header == {"<inv@x>": {VENDOR, ME}}
+
+
+def test_first_by_blob_is_scoped_to_the_current_epoch():
+    """A message from before a reset is no "earlier" source for a byte-identical insert made
+    after it; the baseline the reset re-emits (same ids) is found again in the new epoch."""
+    rec = Rec()
+    rec.inbound("old", VENDOR, blob="blob-x")  # genuine, but in the old epoch only
+    rec._ev("run.reset", {"epoch": 1, "from_epoch": 0}, "controller")
+    inv = next(e for e in rec.events if e["payload"].get("message", {}).get("id") == "inv")
+    rec._ev("message.delivered", inv["payload"], "simulator")  # baseline re-emitted
+    rec.inbound("dup", VENDOR, actor="agent", blob="blob-x")  # same bytes as `old`
+    rec.copy("inv", "inv_copy")
+    idx = RunIndex(rec.events, rec.actions, MBX)
+    assert idx.first_by_blob[(MBX, "blob-x")] == "dup"
+    assert idx.first_by_blob[(MBX, "blob-inv")] == "inv"
+    forged = rec.reply("dup", [VENDOR])
+    via_copy = rec.reply("inv_copy", [VENDOR])
+    out = replied(rec)
+    assert out.diff.actual["actions"] == [via_copy]
+    assert out.diff.actual["excluded_reasons"] == {forged: "own_message"}

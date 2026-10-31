@@ -91,9 +91,9 @@ Expired idempotency records are swept on each claim; `python -m mailsim.serve sw
   so pair them with an `action` check (e.g. `operation: reply`) when that is what you grade.
   Labels match ignoring case and surrounding blanks. Two edge cases for authors: a reply to
   the agent's own sent message goes to that message's recipients, not to the agent, so it is
-  not graded as "answered" for that message; and seeded inbound mail whose `From` is the
-  agent's own address is "answered" by a send to self, so avoid seeding such mail when you
-  grade `ANSWERED`.
+  not graded as "answered" for that message; and a self-addressed send (every recipient is the
+  agent's own address) answers nothing, so seeded inbound mail whose `From` is the agent's own
+  address cannot be graded `ANSWERED` by a send to self.
 * **`operation: reply` means an answer**, by the same rule as `ANSWERED`. In `action` checks and
   temporal `first`/`then` action refs, a completed `reply` counts only when its mail reached
   the replied message's sender (`From` or `Reply-To`, any case; Cc and Bcc count). It must also
@@ -131,6 +131,15 @@ Expired idempotency records are swept on each claim; `python -m mailsim.serve sw
 
 ## Release notes
 
+* **Self-addressed replies are no replies anywhere (issue #26).** A reply whose every recipient
+  is the replier's own address no longer marks the original `ANSWERED` (IMAP `\Answered`,
+  Gmail `ANSWERED` label, Graph replied marker), and the efficiency metric `replies_sent` no
+  longer counts such sends. Engine and grading share one rule (`is_self_addressed` in
+  `domain/models.py`). Recorded event logs are unchanged and replay as recorded: an older run
+  whose log holds an `ANSWERED` flag change after a self-reply keeps that flag on replay;
+  re-grading it ignores the flag (grading derives `ANSWERED` from the replies, not the flag)
+  and recomputes `replies_sent`. Grading also only takes byte-identical sources for copies /
+  inserts from the current epoch (mail from before a reset no longer counts as "earlier").
 * **`operation: reply` counts answers only (issue #5).** In `action` and `temporal` checks a
   completed `reply` counts only when it reached the replied message's `From`/`Reply-To` (see
   the answer-key notes above); policy `forbid` is unchanged. **Re-grading:** stored evaluation
