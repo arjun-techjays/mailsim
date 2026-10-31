@@ -8,7 +8,8 @@ Implements **Phase 1 (core simulation engine)** of
 > post-run evaluator, LLM gateway (stub / Claude / Ollama / Claude Code CLI) with persona runtime
 > and judge, the operator dashboard (`web/`), and the agent interfaces: Gmail API v1 and Microsoft
 > Graph v1.0 compatibility profiles, IMAP4rev1 + SMTP submission listeners and an MCP server.
-> Not yet built: CI/benchmark command, hosted controls (Wave 3).
+> CI/benchmark command: `sim bench run` / `sim bench compare` ([`docs/bench.md`](docs/bench.md)).
+> Not yet built: hosted controls (Wave 3).
 
 ## Agent interfaces (all require the run's agent key)
 
@@ -40,6 +41,18 @@ endpoint for a run (`GET /v1/runs/{run_id}/connection`), tests a key through any
 (`GET /v1/runs/{run_id}/activity`). A connection test is an operator check, not agent activity:
 it only reads, arms no trigger, and is listed with the actor `connection_test` (never graded,
 never counted as an agent action). Only that operator route can mark a call this way.
+
+## CI regression suite (`sim bench`)
+
+`sim bench run <packs...> --build <id> --agent-cmd "<cmd>"` (or `--agent-callable mod:fn`)
+publishes fixed scenario packs, runs `--trials N` per scenario against the agent build,
+grades each run with the pack's answer key, and writes a JSON result (`--json`) and a JUnit
+report (`--junit`). Each run records the scenario version, build id, seed, models, duration,
+action counts and model usage. Per scenario the result gives the pass rate and the variance.
+It exits 1 when a scenario's pass rate is below `--min-pass-rate` (default 1.0) or its
+accuracy variance is above `--max-variance`. `sim bench compare base.json candidate.json`
+lists per-scenario and per-assertion deltas and exits 1 on a regression. Details and the
+agent environment contract: [`docs/bench.md`](docs/bench.md).
 
 ## Run the API and dashboard locally
 
