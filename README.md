@@ -430,9 +430,11 @@ cli -> engine -> scenario -> store -> (mime | threads | providers) -> domain
 * **No external delivery.** `DeliveryPolicy` is the only place recipients are resolved: simulated
   mailboxes, or the external mode `deny` (default, whole send rejected) / `sink` / `event`.
   There is no SMTP/socket/HTTP client in `src/` (ruff banned-api + AST test), tests patch sockets
-  to prove none is opened, and the Compose `app` service sits on an `internal` network.
-  **Gap:** the host-level egress block for real deployments is only verifiable once Phase 4
-  adds listeners; Phase 1 proves the in-process guarantee and ships the deny-by-default network.
+  to prove none is opened. At the network level every simulator container (`app`, `api` with
+  the IMAP/SMTP listeners, `egress-check`) sits only on the Compose `internal` network
+  `sandbox`; the allowlist `egress-proxy` (HTTPS CONNECT to the LLM endpoint only) is the sole
+  route out. The CI job `egress` proves from inside each container that SMTP 25/465/587 and
+  arbitrary HTTP(S) fail; see [docs/egress.md](docs/egress.md).
 * **Tenancy.** Application-scoped (`Scope(tenant, project)` on every repository/engine call;
   out-of-scope resources are `NOT_FOUND`). Row-level security is deferred to Phase 2 with auth.
 
