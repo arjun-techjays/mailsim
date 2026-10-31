@@ -8,18 +8,21 @@
 # * `egress-proxy` is the sole bridge: it joins `sandbox` and the routable `egress` network and
 #   tunnels only HTTPS CONNECT to EGRESS_ALLOWLIST (the LLM endpoint). Plain HTTP forwarding and
 #   every other destination are refused.
-# * PostgreSQL additionally joins `host-access` so developers/CI on the host can connect to the
-#   published loopback port. It runs no agent code; the simulator containers never join it.
+# * The simulator containers use their own database, `sandbox-db`, attached ONLY to `sandbox`.
+#   The developer/CI database `postgres` joins only `host-access` (for the published loopback
+#   port) and never `sandbox`: its superuser can run shell commands (`COPY ... TO PROGRAM`), so a
+#   database on both networks would hand anything on `sandbox` a route out.
 # Prove it: `docker compose --profile app run --rm egress-check` (CI job `egress`).
 
 x-sandboxed-env: &sandboxed-env
-  MAILSIM_DATABASE_URL: postgresql+psycopg://mailsim:mailsim@postgres:5432/mailsim
+  MAILSIM_DATABASE_URL: postgresql+psycopg://mailsim:mailsim@sandbox-db:5432/mailsim
   MAILSIM_ENV: deployment
   HTTPS_PROXY: http://egress-proxy:3128
   HTTP_PROXY: http://egress-proxy:3128
-  NO_PROXY: postgres,localhost,127.0.0.1
+  NO_PROXY: sandbox-db,localhost,127.0.0.1
 
 services:
+  # Developer / CI database on the host's loopback port. Never on `sandbox` (see above).
   postgres:
     image: postgres:16
     # Crash recovery syncs the data directory before replaying WAL. The default (fsync) opens
@@ -32,7 +35,7 @@ services:
       POSTGRES_DB: mailsim
     ports:
       - "127.0.0.1:54329:5432"
-    networks: [sandbox, host-access]
+    networks: [host-access]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U mailsim"]
       interval: 2s
@@ -40,6 +43,24 @@ services:
       retries: 30
     volumes:
       - pgdata:/var/lib/postgresql/data
+
+  # The simulator containers' database: on `sandbox` only, so it has no route out either.
+  sandbox-db:
+    profiles: ["app"]
+    image: postgres:16
+    command: ["postgres", "-c", "recovery_init_sync_method=syncfs"]
+    environment:
+      POSTGRES_USER: mailsim
+      POSTGRES_PASSWORD: mailsim
+      POSTGRES_DB: mailsim
+    networks: [sandbox]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mailsim"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - sandbox-pgdata:/var/lib/postgresql/data
 
   # The only container with a route out, and only to the allowlisted LLM endpoint(s).
   egress-proxy:
@@ -61,7 +82,7 @@ services:
     image: mailsim-sim:local
     environment: *sandboxed-env
     depends_on:
-      postgres:
+      sandbox-db:
         condition: service_healthy
       egress-proxy:
         condition: service_started
@@ -86,7 +107,7 @@ services:
       timeout: 3s
       retries: 30
     depends_on:
-      postgres:
+      sandbox-db:
         condition: service_healthy
       egress-proxy:
         condition: service_started
@@ -116,3 +137,4 @@ networks:
 
 volumes:
   pgdata: {}
+  sandbox-pgdata: {}

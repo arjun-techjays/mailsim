@@ -12,11 +12,14 @@ underneath them for the Docker Compose deployment.
   +-------------------------------------------------------------------+
   |  app (sim CLI / runner)   api (REST + IMAP/SMTP)   egress-check   |
   |            \                   |                    /             |
-  |             +------ postgres --+---- egress-proxy -+              |
-  +-----------------------|-----------------|-------------------------+
-                     host-access          egress (routable)
-              (published 127.0.0.1:54329)   |
+  |             +---- sandbox-db --+---- egress-proxy -+              |
+  +-------------------------------------------|-----------------------+
+                                        egress (routable)
+                                              |
                                     HTTPS CONNECT to EGRESS_ALLOWLIST only
+
+  postgres (developer/CI database) -- host-access -- published 127.0.0.1:54329
+  (never on sandbox)
 ```
 
 * **Simulator containers** (`app`, `api`, `egress-check`; profile `app`) join **only**
@@ -31,11 +34,16 @@ underneath them for the Docker Compose deployment.
   `x.api.anthropic.com` nor an IP literal passes unless listed. It runs read-only, as a non-root
   user, with all capabilities dropped.
 * The simulator containers get `HTTPS_PROXY`/`HTTP_PROXY=http://egress-proxy:3128`,
-  `NO_PROXY=postgres,localhost,127.0.0.1` and `MAILSIM_ENV=deployment`, so a non-stub LLM
+  `NO_PROXY=sandbox-db,localhost,127.0.0.1` and `MAILSIM_ENV=deployment`, so a non-stub LLM
   provider refuses to start without the proxy (`mailsim/llm/config.py`), and the Anthropic SDK
   and OpenAI-compatible client both route through it.
-* **`postgres`** also joins `host-access` so the host can reach the published loopback port.
-  It runs no simulator or agent code.
+* **`sandbox-db`** (profile `app`) is the simulator containers' PostgreSQL, attached only to
+  `sandbox`. The developer/CI database **`postgres`** joins only `host-access` (for the published
+  loopback port) and never `sandbox`. A PostgreSQL superuser can run shell commands on its
+  server (`COPY ... TO PROGRAM`), and the credentials are public, so a database on both
+  `sandbox` and a routable network would give anything on `sandbox` a route out. Never attach a
+  service with a route out to `sandbox`, other than `egress-proxy`
+  (`tests/egress/test_egress.py` enforces this).
 * The `api` service publishes no host ports (an internal network cannot). Run the agent under
   test in a container attached to `sandbox`; it then reaches `api:8000` (REST), `api:1143`
   (IMAP) and `api:1587` (SMTP submission, STARTTLS with a self-signed certificate) and, like
@@ -57,7 +65,7 @@ instead, or add its `host:port` to the allowlist (it must speak HTTPS through `C
 ```bash
 export COMPOSE_PROFILES=app
 docker compose build
-docker compose up -d --wait postgres egress-proxy
+docker compose up -d --wait sandbox-db egress-proxy
 docker compose run --rm app db-upgrade
 docker compose up -d --wait api
 docker compose run --rm egress-check     # simulator image, `sandbox` network, proxy env
@@ -73,7 +81,7 @@ asserts, from inside the container:
    to an absolute-URI `GET http://example.com/`;
 3. CONNECT to each `--allowed` endpoint is established (200), so the LLM path works; the tunnel
    is closed at once and nothing is sent through it;
-4. each `--reachable` in-sandbox service (postgres, the API and its IMAP/SMTP listeners)
+4. each `--reachable` in-sandbox service (`sandbox-db`, the API and its IMAP/SMTP listeners)
    connects, so the block is not simply "no network at all".
 
 The CI job `egress` (`.github/workflows/ci.yml`) runs the probe in the `egress-check` service,

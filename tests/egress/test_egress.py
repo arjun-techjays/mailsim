@@ -314,18 +314,23 @@ def test_compose_only_the_proxy_bridges_sandbox_to_a_routable_network() -> None:
     networks, services = compose["networks"], compose["services"]
     routable = {n for n, spec in networks.items() if not (spec or {}).get("internal")}
     assert networks["sandbox"]["internal"] is True
-    bridges = {name for name, svc in services.items() if set(svc["networks"]) & routable}
-    # postgres needs host-access for the published loopback port and runs no simulator code
-    assert bridges == {"postgres", "egress-proxy"}
-    assert services["postgres"]["networks"] == ["sandbox", "host-access"]
+    on_sandbox = {name for name, svc in services.items() if "sandbox" in svc["networks"]}
+    bridges = {name for name in on_sandbox if set(services[name]["networks"]) & routable}
+    # the proxy is the ONLY way out of `sandbox`; a database there must not have a route out
+    # either (its superuser can run programs: COPY ... TO PROGRAM)
+    assert bridges == {"egress-proxy"}
     assert services["egress-proxy"]["networks"] == ["sandbox", "egress"]
     assert "ports" not in services["egress-proxy"]
-    simulator = set(services) - bridges
-    assert {"app", "api", "egress-check"} <= simulator
-    for name in simulator:
+    assert services["postgres"]["networks"] == ["host-access"]
+    assert services["sandbox-db"]["networks"] == ["sandbox"]
+    assert on_sandbox - bridges >= {"app", "api", "egress-check", "sandbox-db"}
+    for name in on_sandbox - bridges:
         svc = services[name]
         assert svc["networks"] == ["sandbox"], name
         assert "ports" not in svc and "network_mode" not in svc, name
+    for name in ("app", "api", "egress-check"):
+        svc = services[name]
+        assert "sandbox-db:5432" in svc["environment"]["MAILSIM_DATABASE_URL"], name
         env = svc["environment"]
         assert env["HTTPS_PROXY"] == env["HTTP_PROXY"] == "http://egress-proxy:3128", name
         assert env["MAILSIM_ENV"] == "deployment", name
