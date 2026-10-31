@@ -2,7 +2,10 @@
 
 import copy
 import json
+import os
 import shutil
+import sys
+import time
 
 import pytest
 
@@ -178,3 +181,25 @@ def test_command_runner_environment_is_minimal():
     assert runner.describe()["command"] == "agent --x"
     with pytest.raises(ValueError, match="empty"):
         CommandRunner("")
+
+
+@pytest.mark.skipif(not hasattr(os, "killpg"), reason="process groups are POSIX")
+def test_command_runner_kills_background_children_after_a_normal_exit(tmp_path):
+    # the agent exits 0 but leaves a child running: it must not keep its key alive past the round
+    pid_file = tmp_path / "child.pid"
+    script = ("import subprocess, sys; "
+              "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+              f"open({str(pid_file)!r}, 'w').write(str(p.pid))")  # fmt: skip
+    runner = CommandRunner([sys.executable, "-c", script], environ=os.environ)
+    result = runner.run(mailbox=None, env={}, timeout=30)
+    assert result.ok and result.exit_code == 0
+    child = int(pid_file.read_text())
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail(f"background child {child} survived the round")

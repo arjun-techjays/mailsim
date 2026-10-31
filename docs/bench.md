@@ -60,7 +60,12 @@ variables, `PYTHONPATH`, the variables above, and only the extra variables you n
 reaches its mailbox:
 
 * **REST, Gmail, Graph, MCP over HTTP, IMAP or SMTP:** run `serve` on the same database and
-  pass `--api-url http://127.0.0.1:8000`. This is the recommended setup for untrusted agents.
+  pass `--api-url http://127.0.0.1:8000`. This keeps database credentials out of the agent's
+  environment, but it is **not a sandbox**: the agent runs as your OS user, in `--agent-cwd`
+  (the answer key files of a suite directory may be readable there), and `mailsim`'s built-in
+  default database URL still works if your database uses the default credentials. For an
+  untrusted agent, run it in its own container on the `sandbox` network instead (see
+  `docs/egress.md`), with no access to the suite directory or the operator database.
 * **MCP stdio:** the agent starts `python -m mailsim.serve mcp-stdio` itself with
   `MAILSIM_API_KEY`. This needs `--pass-env MAILSIM_DATABASE_URL`, which gives the agent
   process database access, so use it only for trusted agents.

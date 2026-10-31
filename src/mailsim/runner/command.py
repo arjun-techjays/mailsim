@@ -2,7 +2,7 @@
 from the process ban; see pyproject's per-file ignores and tests/integration/test_safety.py).
 
 The command is split with `shlex` and run WITHOUT a shell, in its own process group (killed
-as a whole on timeout). Its environment is minimal on purpose: a few basics (`PATH`, `HOME`,
+as a whole when the round ends, however it ends). Its environment is minimal on purpose: a few basics (`PATH`, `HOME`,
 locale, temp dir), the variables named with `--pass-env`, and the `MAILSIM_*` agent variables
 (runner/base.py). Operator secrets such as `MAILSIM_DATABASE_URL` or controller/evaluator keys
 are NOT inherited unless passed explicitly: with the database URL an agent could read its
@@ -77,9 +77,14 @@ class CommandRunner:
                         code = proc.wait(timeout=timeout)
                     except subprocess.TimeoutExpired:
                         timed_out = True
-                        _kill_group(proc)
-                        code = proc.wait()
                         error = f"agent timed out after {timeout:g}s"
+                    finally:
+                        # always, not only on timeout: background children left in the agent's
+                        # session must not keep acting with its key while the run is graded,
+                        # nor outlive a Ctrl-C / CI cancel of the bench
+                        _kill_group(proc)
+                    if timed_out:
+                        code = proc.wait()
             duration = self._clock() - started
             if error is None and code != 0:
                 error = f"agent exited with status {code}"
@@ -98,7 +103,7 @@ def _kill_group(proc: subprocess.Popen[bytes]) -> None:
             os.killpg(proc.pid, signal.SIGKILL)
         else:  # pragma: no cover - Windows
             proc.kill()
-    except ProcessLookupError:  # pragma: no cover - already gone
+    except ProcessLookupError:  # the agent left nothing running
         pass
 
 
