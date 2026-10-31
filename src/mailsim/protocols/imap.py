@@ -284,7 +284,10 @@ class ImapSession:
         tag, name, args = str(tokens[0]), str(tokens[1]).upper(), tokens[2:]
         out: list[bytes] = []
         try:
-            with use_agent_request():  # one command: the re-sync after its write is a read-back
+            # one command = one agent request: it pays one budgeted read however many engine
+            # reads it makes (poll, listing, every FETCHed message), and the re-sync after its
+            # write is a read-back (engine/context.py, issue #24)
+            with use_agent_request():
                 reply = self._dispatch(tag, name, args, out)
         except ParseError as exc:
             return Reply([*out, f"{tag} BAD {_one_line(str(exc))}\r\n".encode()])

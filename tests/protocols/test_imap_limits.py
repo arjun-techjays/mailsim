@@ -1,7 +1,7 @@
 """IMAP and the per-run resource caps (issue #7): keyword lists are capped per command like
 every other interface's label lists (refused before anything is written), the per-message
-label cap applies to keywords, and a read cap reached during a command ends it with
-`NO [LIMIT]`."""
+label cap applies to keywords, and reads are budgeted per command (issue #24): a command at
+the read cap answers `NO [LIMIT]`, a command under it completes whatever it reads."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from mailsim.store import models as m
-from tests.protocols.conftest import AGENT, open_agent
+from tests.protocols.conftest import AGENT, VENDOR, open_agent
 
 pytestmark = pytest.mark.db
 
@@ -73,19 +73,68 @@ def test_per_message_cap_applies_to_keywords(make_proto):
     assert _inbox(proto) == inbox + 1
 
 
-def test_read_cap_ends_a_command_with_no_limit(make_proto):
+def test_read_cap_refuses_the_next_command_before_any_response(make_proto):
     proto = make_proto(_with(max_agent_reads=40))
     c = proto.raw()
     assert c.cmd(f"a1 LOGIN {AGENT} {proto.key}".encode())[-1].startswith(b"a1 OK")
     assert c.cmd(b"a2 SELECT INBOX")[-1].startswith(b"a2 OK")
     n = 2
-    while _reads(proto) < 39:  # each NOOP polls the change feed: one read
+    while _reads(proto) < 40:  # each NOOP polls the change feed: one read
         n += 1
         assert c.cmd(b"a%d NOOP" % n)[-1].startswith(b"a%d OK" % n)
     lines = c.cmd(b"f1 FETCH 1:2 (BODY.PEEK[])")
-    assert lines[-1] == b"f1 NO [LIMIT] QUOTA_EXCEEDED: action limit reached\r\n"
+    assert lines == [b"f1 NO [LIMIT] QUOTA_EXCEEDED: action limit reached\r\n"]
     assert _reads(proto) == 40
     assert c.cmd(b"z1 LOGOUT")[0].startswith(b"* BYE")
+
+
+def _bulk(proto, n: int) -> None:
+    for i in range(n):
+        proto.ctl.inject(proto.run, proto.mailbox_id, {"from": VENDOR, "to": [AGENT],
+                                                       "subject": f"bulk {i}", "text": "t"})  # fmt: skip
+
+
+def test_fetch_of_a_whole_mailbox_is_one_read(make_proto):
+    """Issue #24: reads are budgeted per command, like one Gmail/REST page. A FETCH of every
+    body (its change-feed poll, the listing and one engine read per message, plus the \\Seen
+    side effects) costs one read, so a client can sync a mailbox far larger than its read cap.
+    Every engine read is still in the audit, and the cap still refuses the next command."""
+    proto = make_proto(_with(max_agent_reads=3))
+    _bulk(proto, 120)
+    c = proto.imap()  # LOGIN: no read
+    typ, data = c.select("INBOX")  # read 1
+    assert typ == "OK"
+    total = int(data[0])
+    assert total >= 120 and _reads(proto) == 1
+    before = len(proto.actions())
+    typ, data = c.fetch("1:*", "(UID BODY[])")  # read 2: every body, marking each seen
+    assert typ == "OK"
+    assert len([d for d in data if isinstance(d, tuple)]) == total
+    assert _reads(proto) == 2
+    audited = [a for a in proto.actions()[before:] if a[1] == "read"]
+    assert len(audited) > total and all(a == ("agent", "read", "ok") for a in audited)
+    typ, data = c.uid("SEARCH", "SEEN")  # read 3
+    assert typ == "OK" and len(data[0].split()) == total
+    assert _reads(proto) == 3
+    typ, data = c.fetch("1:*", "(BODY.PEEK[])")  # the cap: refused, nothing read
+    assert typ == "NO" and data[0].startswith(b"[LIMIT] QUOTA_EXCEEDED")
+    assert c.noop()[0] == "NO"
+    assert _reads(proto) == 3
+    assert ("agent", "read", "SIMULATION_LIMIT_EXCEEDED") in proto.actions()
+
+
+def test_smtp_transaction_is_one_read(make_proto):
+    """An SMTP submission looks up the replied message (In-Reply-To, else each References
+    entry): one read for the transaction, however many lookups it makes."""
+    proto = make_proto(_with(max_agent_reads=100))
+    before = _reads(proto)
+    lookups = len([a for a in proto.actions() if a[1] == "read"])
+    refs = " ".join(f"<gone{i}@example.test>" for i in range(5))
+    s = proto.smtp()
+    s.sendmail(AGENT, [VENDOR], (f"From: {AGENT}\r\nTo: {VENDOR}\r\nSubject: re\r\n"
+                                 f"References: {refs}\r\n\r\nx").encode())  # fmt: skip
+    assert len([a for a in proto.actions() if a[1] == "read"]) - lookups >= 5
+    assert _reads(proto) == before + 1
 
 
 def test_writes_after_the_read_cap_are_refused_cleanly_or_succeed(make_proto):

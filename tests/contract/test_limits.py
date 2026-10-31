@@ -234,7 +234,7 @@ def test_gmail_insert_over_the_label_cap_stores_nothing(env, tmp_path):
 
 def test_gmail_batch_items_count_their_own_reads(env, tmp_path):
     """One item's write never exempts another item's reads: a batch that repeats an id after
-    a single real write still counts, and is capped by, its reads."""
+    a single real write still counts, and is capped by, its reads (one per item, issue #24)."""
     from tests.contract.drivers import GmailDriver
 
     world = CappedWorld(env, tmp_path, Cap("max_agent_reads", 4, frozenset(), "imap",
@@ -246,7 +246,7 @@ def test_gmail_batch_items_count_their_own_reads(env, tmp_path):
                     json={"ids": [gid] * 1000, "addLabelIds": ["STARRED"]})  # fmt: skip
     assert r.status_code == 429  # the second item's reads hit the cap
     reads = [a for a in world.ev.actions(world.run) if a["operation"] == "read"]
-    assert sum(a["outcome"] == "ok" for a in reads) <= 6  # not ~3000
+    assert sum(a["outcome"] == "ok" for a in reads) <= 12  # list + 3 items, not ~3000
     assert world.refusals("max_agent_reads")
     flagged = [m for m in world.ev.state(world.run)["messages"] if "FLAGGED" in m["flags"]]
     assert len(flagged) == 1  # the first item's write stands

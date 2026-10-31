@@ -278,8 +278,7 @@ def test_read_backs_of_a_committed_write_are_exempt_only_in_its_request(env, tmp
     msg = env.engine.list_messages(env.scope, run, fm)[0]  # read 1
     with use_agent_request():
         env.engine.list_folders(env.scope, run, fm)  # read 2: before any write, it counts
-        with pytest.raises(SimulationLimitExceeded):  # and the cap applies
-            env.engine.list_folders(env.scope, run, fm)
+        env.engine.list_folders(env.scope, run, fm)  # the request's read is paid: free
         assert not is_read_back()
         env.engine.set_flags(env.scope, run, fm, msg.id, add=["FLAGGED"])  # events: 2
         env.engine.set_flags(env.scope, run, fm, msg.id, add=["SEEN"])  # events: 4 (= cap)
@@ -297,7 +296,7 @@ def test_read_backs_of_a_committed_write_are_exempt_only_in_its_request(env, tmp
         env.engine.get_message(env.scope, run, fm, msg.id)
     assert _counters(env, run)["reads"] == 2
     reads = [a for a in env.engine.actions(env.scope, run) if a["operation"] == "read"]
-    assert sum(a["outcome"] == "ok" for a in reads) == 5  # the read-backs are in the audit
+    assert sum(a["outcome"] == "ok" for a in reads) == 6  # the read-backs are in the audit
 
 
 def test_a_refused_write_does_not_open_the_exemption(env, tmp_path):
@@ -378,3 +377,39 @@ def test_insert_with_flags_and_labels_fires_their_triggers(env, tmp_path):
     env.engine.insert_message(env.scope, both, fm, raw, flags=["SEEN"], labels=["ops"])
     assert armed(both) == ["after-flag", "after-insert", "after-label"]
     assert _counters(env, both)["actions"] == 1  # one budget unit for all three
+
+
+def test_reads_are_budgeted_once_per_agent_request(env, tmp_path):
+    """Issue #24: the first counted read of an agent request pays its one read unit and is
+    the one the cap refuses; its later reads are audited but neither counted nor refused.
+    Outside a request every read counts. A request item pays its own read."""
+    from mailsim.engine.context import is_read_paid, use_agent_request, use_request_item
+
+    run = env.run(_limited(tmp_path, max_agent_reads=3))
+    fm = env.mbx(run, "finance_manager")
+    msg = env.engine.list_messages(env.scope, run, fm)[0]  # read 1 (no request: counts)
+    with use_agent_request():
+        assert not is_read_paid()
+        with pytest.raises(NotFound):  # read 2: a failed read pays the request's read
+            env.engine.get_message(env.scope, run, fm, "msg_nope")
+        assert is_read_paid()
+        for _ in range(5):
+            env.engine.get_message(env.scope, run, fm, msg.id)
+        env.engine.search_messages(env.scope, run, fm, "invoice")
+        with use_request_item():  # an item pays its own (read 3), and the request stays paid
+            env.engine.get_message(env.scope, run, fm, msg.id)
+            env.engine.get_message(env.scope, run, fm, msg.id)
+        with use_request_item(), pytest.raises(SimulationLimitExceeded):
+            env.engine.get_message(env.scope, run, fm, msg.id)  # the next item: at the cap
+        assert is_read_paid()
+        env.engine.list_folders(env.scope, run, fm)
+    assert _counters(env, run)["reads"] == 3
+    with use_agent_request(), pytest.raises(SimulationLimitExceeded):
+        env.engine.list_folders(env.scope, run, fm)  # a new request is refused at the cap
+    with use_agent_request():  # an operator's probe neither pays nor is refused
+        with use_connection_test():
+            env.engine.list_folders(env.scope, run, fm)
+        assert not is_read_paid()
+    reads = [a for a in env.engine.actions(env.scope, run)
+             if a["actor"] == "agent" and a["operation"] in ("read", "search")]  # fmt: skip
+    assert sum(a["outcome"] == "ok" for a in reads) == 10  # every engine read is audited
