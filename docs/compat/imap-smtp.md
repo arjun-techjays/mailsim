@@ -225,7 +225,7 @@ applies to one request). More keywords than the scenario's `max_labels_per_messa
 `UNAVAILABLE`, `SIMULATION_LIMIT_EXCEEDED`/`RATE_LIMITED` -> `LIMIT`, `INVALID_REQUEST`/
 `UNSUPPORTED_OPERATION` -> `CANNOT`, `CONFLICT` -> `INUSE`). The budget error reads
 `NO [LIMIT] QUOTA_EXCEEDED: action limit reached`, and so do the per-run caps (reads,
-`sent_copy`, agent events, labels per message; see the README). Reads are budgeted per command
+`sent_copy`, agent events, labels per message; see [the reference](../reference.md#known-limitations--deliberate-deviations)). Reads are budgeted per command
 (issue #24), like one Gmail/REST page: a command that reads (its change-feed poll, listing pages,
 every message of a `FETCH`/`SEARCH`, `\Seen` updates) costs one `max_agent_reads` unit, however
 many messages it covers, and every engine read is still audited as a `read` action. So a client
