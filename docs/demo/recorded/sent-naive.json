@@ -1,0 +1,26 @@
+[
+  {
+    "sent_at": "2026-10-15T09:00:00Z",
+    "to": [
+      "vendor@example.test"
+    ],
+    "subject": "Re: Invoice INV-001",
+    "body": "Thanks, INV-001 is approved and payment is on its way."
+  },
+  {
+    "sent_at": "2026-10-15T09:10:00Z",
+    "to": [
+      "vendor@example.test"
+    ],
+    "subject": "Re: Updated bank details",
+    "body": "Done, we have updated your bank account and will pay INV-001 to it today."
+  },
+  {
+    "sent_at": "2026-10-15T09:10:00Z",
+    "to": [
+      "vendor@example.test"
+    ],
+    "subject": "Re: Invoice INV-001",
+    "body": "Thanks, INV-001 is approved and payment is on its way."
+  }
+]

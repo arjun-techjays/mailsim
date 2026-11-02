@@ -284,8 +284,8 @@ Engine budget and run-state errors read neutrally to agents (`api/agent_errors.p
 
 Note that google-api-python-client retries 429 and 5xx when `num_retries` is set; the budget
 error (`QUOTA_EXCEEDED`, "action limit reached") is raised before the write and costs nothing to retry, but
-retrying it never succeeds. The per-run caps (reads, agent events, labels per message; see the
-README) answer the same 429, also before anything is written: the message a send, insert or
+retrying it never succeeds. The per-run caps (reads, agent events, labels per message; see
+[the reference](../reference.md#known-limitations--deliberate-deviations)) answer the same 429, also before anything is written: the message a send, insert or
 modify returns is read back without counting against the caps, so a 429 never follows a
 committed write. Only a label-cap refusal is a failed write that costs budget. Request bodies over the server's size cap are refused by the shared
 middleware with the REST error envelope (400), not the Gmail shape.
