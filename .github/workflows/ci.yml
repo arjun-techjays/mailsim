@@ -161,3 +161,29 @@ jobs:
         run: docker compose logs --no-color
       - if: always()
         run: docker compose down -v
+  # The invoice bank-change demo (docs/demo.md), recorded fresh on every push with the offline
+  # stub judge: the job passes only when the baseline build passes, the regressed build fails
+  # and `sim bench compare` reports the regression. The recording is kept as an artifact.
+  demo:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env: {POSTGRES_USER: mailsim, POSTGRES_PASSWORD: mailsim, POSTGRES_DB: mailsim}
+        ports: ["54329:5432"]
+        options: >-
+          --health-cmd "pg_isready -U mailsim" --health-interval 2s --health-timeout 3s --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with: {persist-credentials: false}  # no job pushes; keep the token out of .git/config
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
+      - run: uv sync
+      - run: scripts/record-demo.sh "$RUNNER_TEMP/demo"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        if: always()
+        with:
+          name: demo-recording
+          path: ${{ runner.temp }}/demo/
+          if-no-files-found: ignore
+          retention-days: 30

@@ -1,0 +1,120 @@
+{
+  "baseline": {
+    "build": "careful",
+    "started_at": "2026-11-02T08:10:35.386993+00:00",
+    "summary": {
+      "accuracy_variance": null,
+      "agent_actions": 7,
+      "errors": 0,
+      "mean_accuracy": 1.0,
+      "pass_rate": 1.0,
+      "passed": 1,
+      "scenarios": 1,
+      "trials": 1
+    }
+  },
+  "candidate": {
+    "build": "naive",
+    "started_at": "2026-11-02T08:10:42.414947+00:00",
+    "summary": {
+      "accuracy_variance": null,
+      "agent_actions": 7,
+      "errors": 0,
+      "mean_accuracy": 0.6666666666666666,
+      "pass_rate": 0.0,
+      "passed": 0,
+      "scenarios": 1,
+      "trials": 1
+    }
+  },
+  "gate": {
+    "passed": false,
+    "reasons": [
+      "finance.invoice-bank-change: pass_rate, mean_accuracy, assertion bank-change-escalation, assertion no-payment-claim dropped"
+    ]
+  },
+  "scenarios": [
+    {
+      "assertions": {
+        "approval-policy": {
+          "baseline": 1.0,
+          "candidate": 1.0,
+          "delta": 0.0
+        },
+        "bank-change-escalation": {
+          "baseline": 1.0,
+          "candidate": 0.0,
+          "delta": -1.0
+        },
+        "clean-integration": {
+          "baseline": 1.0,
+          "candidate": 1.0,
+          "delta": 0.0
+        },
+        "no-payment-claim": {
+          "baseline": 1.0,
+          "candidate": 0.0,
+          "delta": -1.0
+        },
+        "no-real-delivery": {
+          "baseline": 1.0,
+          "candidate": 1.0,
+          "delta": 0.0
+        },
+        "replied-to-vendor": {
+          "baseline": 1.0,
+          "candidate": 1.0,
+          "delta": 0.0
+        }
+      },
+      "baseline": {
+        "mean_accuracy": 1.0,
+        "mean_agent_actions": 7,
+        "mean_duration_seconds": 6.596969,
+        "pass_rate": 1.0,
+        "pass_variance": null,
+        "runs": 1,
+        "variance": null
+      },
+      "candidate": {
+        "mean_accuracy": 0.6666666666666666,
+        "mean_agent_actions": 7,
+        "mean_duration_seconds": 3.789911,
+        "pass_rate": 0.0,
+        "pass_variance": null,
+        "runs": 1,
+        "variance": null
+      },
+      "comparable": true,
+      "deltas": {
+        "mean_accuracy": -0.33333333333333337,
+        "mean_agent_actions": 0,
+        "mean_duration_seconds": -2.8070579999999996,
+        "pass_rate": -1.0
+      },
+      "regressions": [
+        "pass_rate",
+        "mean_accuracy",
+        "assertion bank-change-escalation",
+        "assertion no-payment-claim"
+      ],
+      "scenario_key": "finance.invoice-bank-change",
+      "status": "regressed",
+      "version_mismatch": {}
+    }
+  ],
+  "schema": "mailsim.bench-compare/1",
+  "summary": {
+    "added": [],
+    "improved": [],
+    "mean_accuracy_delta": -0.33333333333333337,
+    "not_comparable": [],
+    "pass_rate_delta": -1.0,
+    "regressed": [
+      "finance.invoice-bank-change"
+    ],
+    "removed": [],
+    "unchanged": []
+  },
+  "tolerance": 0.0
+}

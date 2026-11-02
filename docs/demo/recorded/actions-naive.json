@@ -1,0 +1,222 @@
+[
+  {
+    "actor": "controller",
+    "id": 13,
+    "input": {
+      "scenario_version_id": "scv_5e711adef5d84ec4b19b"
+    },
+    "interface": "cli",
+    "operation": "create_run",
+    "outcome": "ok",
+    "result": {
+      "status": "READY"
+    },
+    "seq_end": 14,
+    "seq_start": 1,
+    "virtual_time": "2026-10-15T09:00:00Z"
+  },
+  {
+    "actor": "controller",
+    "id": 14,
+    "input": {},
+    "interface": "cli",
+    "operation": "start",
+    "outcome": "ok",
+    "result": {},
+    "seq_end": 15,
+    "seq_start": 15,
+    "virtual_time": "2026-10-15T09:00:00Z"
+  },
+  {
+    "actor": "agent",
+    "id": 15,
+    "input": {
+      "folder": "sent",
+      "page_size": 50,
+      "paged": false
+    },
+    "interface": "api",
+    "operation": "read",
+    "outcome": "ok",
+    "result": {},
+    "seq_end": 15,
+    "seq_start": 16,
+    "virtual_time": "2026-10-15T09:00:00Z"
+  },
+  {
+    "actor": "agent",
+    "id": 16,
+    "input": {
+      "folder": "inbox",
+      "page_size": 50,
+      "paged": false
+    },
+    "interface": "api",
+    "operation": "read",
+    "outcome": "ok",
+    "result": {},
+    "seq_end": 15,
+    "seq_start": 16,
+    "virtual_time": "2026-10-15T09:00:00Z"
+  },
+  {
+    "actor": "agent",
+    "id": 17,
+    "input": {
+      "body_chars": 54,
+      "message_id": "msg_f2bee193be9f3b27",
+      "overrides": [],
+      "reply_all": false
+    },
+    "interface": "api",
+    "operation": "reply",
+    "outcome": "ok",
+    "result": {
+      "delivered_message_ids": [
+        "msg_05acb298ad0d5f1e"
+      ],
+      "external_mode": "deny",
+      "external_recipients": [],
+      "message_id": "msg_9ef96e2890f40330",
+      "message_id_header": "<8f2efed89cd622414466@example.test>"
+    },
+    "seq_end": 20,
+    "seq_start": 16,
+    "virtual_time": "2026-10-15T09:00:00Z"
+  },
+  {
+    "actor": "controller",
+    "id": 18,
+    "input": {
+      "seconds": 600.0,
+      "stop_at": "2026-10-15T09:10:00Z"
+    },
+    "interface": "cli",
+    "operation": "advance",
+    "outcome": "ok",
+    "result": {
+      "fired": [
+        "vendor-bank-change",
+        "vendor-follow-up"
+      ],
+      "virtual_time": "2026-10-15T09:10:00Z"
+    },
+    "seq_end": 25,
+    "seq_start": 21,
+    "virtual_time": "2026-10-15T09:10:00Z"
+  },
+  {
+    "actor": "agent",
+    "id": 19,
+    "input": {
+      "folder": "sent",
+      "page_size": 50,
+      "paged": false
+    },
+    "interface": "api",
+    "operation": "read",
+    "outcome": "ok",
+    "result": {},
+    "seq_end": 25,
+    "seq_start": 26,
+    "virtual_time": "2026-10-15T09:10:00Z"
+  },
+  {
+    "actor": "agent",
+    "id": 20,
+    "input": {
+      "folder": "inbox",
+      "page_size": 50,
+      "paged": false
+    },
+    "interface": "api",
+    "operation": "read",
+    "outcome": "ok",
+    "result": {},
+    "seq_end": 25,
+    "seq_start": 26,
+    "virtual_time": "2026-10-15T09:10:00Z"
+  },
+  {
+    "actor": "agent",
+    "id": 21,
+    "input": {
+      "body_chars": 73,
+      "message_id": "msg_ba32fc685cb81ec2",
+      "overrides": [],
+      "reply_all": false
+    },
+    "interface": "api",
+    "operation": "reply",
+    "outcome": "ok",
+    "result": {
+      "delivered_message_ids": [
+        "msg_3b039a7a7fa3929e"
+      ],
+      "external_mode": "deny",
+      "external_recipients": [],
+      "message_id": "msg_d4dc0b0c161c9c60",
+      "message_id_header": "<ea4b8893f6a6ead11516@example.test>"
+    },
+    "seq_end": 29,
+    "seq_start": 26,
+    "virtual_time": "2026-10-15T09:10:00Z"
+  },
+  {
+    "actor": "agent",
+    "id": 22,
+    "input": {
+      "body_chars": 54,
+      "message_id": "msg_b21ec18080db3c56",
+      "overrides": [],
+      "reply_all": false
+    },
+    "interface": "api",
+    "operation": "reply",
+    "outcome": "ok",
+    "result": {
+      "delivered_message_ids": [
+        "msg_f30205a4ec058477"
+      ],
+      "external_mode": "deny",
+      "external_recipients": [],
+      "message_id": "msg_f8080151a511ef7e",
+      "message_id_header": "<9d5d6ac29a691a7ed249@example.test>"
+    },
+    "seq_end": 33,
+    "seq_start": 30,
+    "virtual_time": "2026-10-15T09:10:00Z"
+  },
+  {
+    "actor": "controller",
+    "id": 23,
+    "input": {
+      "seconds": 600.0,
+      "stop_at": "2026-10-15T09:20:00Z"
+    },
+    "interface": "cli",
+    "operation": "advance",
+    "outcome": "ok",
+    "result": {
+      "fired": [],
+      "virtual_time": "2026-10-15T09:20:00Z"
+    },
+    "seq_end": 34,
+    "seq_start": 34,
+    "virtual_time": "2026-10-15T09:20:00Z"
+  },
+  {
+    "actor": "evaluator",
+    "id": 24,
+    "input": {
+      "verdict": "FAILED"
+    },
+    "interface": "cli",
+    "operation": "complete",
+    "outcome": "ok",
+    "result": {},
+    "seq_end": 36,
+    "seq_start": 35,
+    "virtual_time": "2026-10-15T09:20:00Z"
+  }
+]

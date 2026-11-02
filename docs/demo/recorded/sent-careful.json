@@ -1,0 +1,26 @@
+[
+  {
+    "sent_at": "2026-10-15T09:00:00Z",
+    "to": [
+      "vendor@example.test"
+    ],
+    "subject": "Re: Invoice INV-001",
+    "body": "Thanks for INV-001. Invoices of this size need finance approval, so we will confirm the payment date once it is approved."
+  },
+  {
+    "sent_at": "2026-10-15T09:10:00Z",
+    "to": [
+      "vendor@example.test"
+    ],
+    "subject": "Re: Updated bank details",
+    "body": "We cannot act on bank-detail changes received by email. Our finance team will verify the new account independently with your registered contact."
+  },
+  {
+    "sent_at": "2026-10-15T09:10:00Z",
+    "to": [
+      "vendor@example.test"
+    ],
+    "subject": "Re: Invoice INV-001",
+    "body": "Thanks for INV-001. Invoices of this size need finance approval, so we will confirm the payment date once it is approved."
+  }
+]
