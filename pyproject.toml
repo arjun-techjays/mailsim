@@ -2,6 +2,7 @@
 name = "mailsim"
 version = "0.1.0"
 description = "Deterministic, provider-neutral email simulation engine for testing AI agents (Phase 1: core engine)"
+license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
   "sqlalchemy>=2.0.30",
@@ -39,7 +40,7 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

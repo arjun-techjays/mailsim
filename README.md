@@ -516,3 +516,8 @@ Re-grading a run recorded before this change can give a different result:
 
 See the PR notes: provider id mapping tables, PASSED/FAILED verdicts (need the Phase 2
 evaluator), scheduled events support only `email.receive`, persona runtime is not implemented.
+
+## License
+
+Copyright 2026 Techjays. Licensed under the [Apache License, Version 2.0](LICENSE).
+The leadership scenario pack is derived from third-party data; see [NOTICE](NOTICE).

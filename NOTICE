@@ -1,0 +1,16 @@
+mailsim
+Copyright 2026 Techjays
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Third-party data
+----------------
+
+The leadership scenario pack (scenarios/leadership) is derived from the Hugging Face
+dataset LLM-PBE/enron-email (https://huggingface.co/datasets/LLM-PBE/enron-email),
+licensed under the Apache License, Version 2.0. That dataset is built from the Enron
+Email Dataset distributed by Carnegie Mellon University (https://www.cs.cmu.edu/~enron/).
+
+The messages were cleaned and pseudonymized into a fictional company before inclusion;
+names, addresses and identifiers do not refer to the original people. See
+docs/leadership-inboxes.md for the pipeline and how to reproduce it.
